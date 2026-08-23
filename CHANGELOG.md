@@ -7,6 +7,18 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Correctness
+
+- Recorded the AWK dispatcher blocker at main commit
+  `5648911ecf509df8ec870a1214917d9e95cf54f1`. Keep `dispatch.awk` live.
+  The focused receipt proves clean raw, production, compact, forest, and
+  incremental parity. The tracked `T.gawk` fixture uses provenance commit
+  `61a7c75e225e3035390be32d635545e40d8c5faf`. The authenticated corpus lock
+  uses AWK revision `5739fd79bcfc75ba7526773d0cf634521f8aca3c`.
+  The recovery witness still differs from locked C. Ship no parser or
+  registry change. See `docs/root-normalization-retirement.md` for the
+  route receipt, failed attempts, and reopening condition.
+
 ### Performance
 
 - Recorded the P25e issue #454 fresh-profile investigation collected at
