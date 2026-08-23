@@ -31,7 +31,10 @@ func CompileWhere(where string) (WhereFilter, error) {
 	}
 
 	// Split on semicolons and newlines to support multiple constraints.
-	clauses := splitClauses(where)
+	clauses, err := splitClauses(where)
+	if err != nil {
+		return nil, fmt.Errorf("split where clauses: %w", err)
+	}
 
 	var filters []WhereFilter
 	for _, clause := range clauses {
@@ -61,11 +64,56 @@ func CompileWhere(where string) (WhereFilter, error) {
 	}, nil
 }
 
-// splitClauses splits a where string on semicolons and newlines.
-func splitClauses(s string) []string {
-	// Replace newlines with semicolons, then split.
-	s = strings.ReplaceAll(s, "\n", ";")
-	return strings.Split(s, ";")
+// splitClauses splits a where string on semicolons and newlines that occur
+// outside of single- or double-quoted arguments. A quote opens a quoted region
+// only at an argument boundary, so apostrophes in unquoted words remain data.
+// A quote preceded by an odd run of backslashes is escaped; an even run is not.
+func splitClauses(s string) ([]string, error) {
+	var clauses []string
+	var cur strings.Builder
+	var quote byte
+	var bs int
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			cur.WriteByte(c)
+			if c == '\\' {
+				bs++
+				continue
+			}
+			if c == quote && bs%2 == 0 {
+				quote = 0
+			}
+			bs = 0
+		case c == '"' || c == '\'':
+			if !atWhereArgumentStart(cur.String()) {
+				cur.WriteByte(c)
+				continue
+			}
+			quote = c
+			bs = 0
+			cur.WriteByte(c)
+		case c == ';' || c == '\n':
+			clauses = append(clauses, cur.String())
+			cur.Reset()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated %c quote in where clause", quote)
+	}
+	clauses = append(clauses, cur.String())
+	return clauses, nil
+}
+
+func atWhereArgumentStart(s string) bool {
+	i := len(s) - 1
+	for i >= 0 && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n') {
+		i--
+	}
+	return i < 0 || s[i] == '(' || s[i] == ','
 }
 
 // compileClause compiles a single where constraint.
@@ -169,9 +217,19 @@ func parseTwoArgFunc(clause, funcName string) (capName, arg string, err error) {
 // stripQuotes removes surrounding double quotes or single quotes from s.
 func stripQuotes(s string) string {
 	if len(s) >= 2 {
-		if (s[0] == '"' && s[len(s)-1] == '"') ||
-			(s[0] == '\'' && s[len(s)-1] == '\'') {
-			return s[1 : len(s)-1]
+		q := s[0]
+		if (q == '"' || q == '\'') && s[len(s)-1] == q {
+			s = s[1 : len(s)-1]
+			var out strings.Builder
+			for i := 0; i < len(s); i++ {
+				if s[i] == '\\' && i+1 < len(s) && s[i+1] == q {
+					out.WriteByte(q)
+					i++
+					continue
+				}
+				out.WriteByte(s[i])
+			}
+			return out.String()
 		}
 	}
 	return s
