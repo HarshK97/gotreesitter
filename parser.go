@@ -4086,6 +4086,27 @@ func (p *Parser) lineContinuationEscapeByte() byte {
 	return languageLineContinuationEscapeByte(p.language)
 }
 
+// parserStackEndPoint returns the parser-owned point at a stack's current
+// byte offset. An included-range parse starts with an empty stack at the
+// first selected byte, so its point comes from the range rather than from a
+// stack entry that does not exist yet.
+func (p *Parser) parserStackEndPoint(s *glrStack) Point {
+	if s == nil {
+		return Point{}
+	}
+	top := s.top()
+	if stackEntryHasNode(top) {
+		return stackEntryNodeEndPoint(top)
+	}
+	if p != nil && len(p.included) > 0 {
+		first := p.included[0]
+		if s.byteOffset == first.StartByte {
+			return first.StartPoint
+		}
+	}
+	return stackEntryNodeEndPoint(top)
+}
+
 // materializeSkippedGapAsExtraError covers a lexer-skipped mid-production gap
 // (a stray run of bytes immediately after an anonymous separator, where the
 // real lookahead continues the production via a single deterministic shift,
@@ -4130,7 +4151,7 @@ func (p *Parser) materializeSkippedGapAsExtraError(s *glrStack, state StateID, t
 	// this branch only after p.skippedRealGapContinuesSeparatedList already
 	// returned true, and that function itself returns false for a nil p.
 	p.markCRecoveryCostCompetitionRelevant()
-	startPoint := stackEntryNodeEndPoint(s.top())
+	startPoint := p.parserStackEndPoint(s)
 	leaf := newLeafNodeInArena(arena, errorSymbol, true, s.byteOffset, tok.StartByte, startPoint, tok.StartPoint)
 	leaf.setHasError(true)
 	leaf.setExtra(true)
@@ -4174,7 +4195,7 @@ func (p *Parser) tryMaterializeSkippedRealGap(source []byte, s *glrStack, state 
 		return s.byteOffset == tok.StartByte
 	}
 	top := stackEntryNode(s.top())
-	startPoint := stackEntryNodeEndPoint(s.top())
+	startPoint := p.parserStackEndPoint(s)
 	if top != nil && top.symbol == errorSymbol {
 		if top.isMissing() ||
 			len(top.children) != 0 ||
@@ -7211,6 +7232,16 @@ func (p *Parser) newInitialParseStacks(scratch *parserScratch, reuse *reuseCurso
 		initialStackCap = parseFullEntryScratchReservation(sourceLen)
 	}
 	stacks[0] = newGLRStackWithScratchCap(p.language.InitialState, &scratch.entries, initialStackCap)
+	// Included-range parsing starts at the first selected byte. Keep the
+	// initial stack offset aligned with the token source so a skipped prefix
+	// cannot become a parser-owned ERROR span before the first token.
+	if p != nil && len(p.included) > 0 {
+		start := p.included[0].StartByte
+		if uint64(start) > uint64(sourceLen) {
+			start = uint32(sourceLen)
+		}
+		stacks[0].byteOffset = start
+	}
 	stacks[0].recoverabilityKnown = true
 	stacks[0].mayRecover = p.stateCanRecover(p.language.InitialState)
 	if timing != nil && timing.maxStacksSeen < len(stacks) {

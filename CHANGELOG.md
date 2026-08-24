@@ -91,6 +91,15 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Included-range parsing now starts byte-seek sources at the first selected
+  byte. The parser seeds its initial stack there and preserves the configured
+  start point for recovery gaps. A non-seek source preserves a complete
+  overlapping token because it cannot reproduce a trimmed boundary token.
+  The locked Go route now matches C at root byte 26. Child counts remain 10
+  for Go and seven for C. Compact and forest included-range routes remain
+  uncertified. Keep `dispatch.go.source-file-root` live until exact shape and
+  all required route proofs pass. See `docs/root-normalization-retirement.md`.
+
 - Recorded a generic Swift issue #576 recovery candidate at base
   `da6f71471aaaa835503accaa1bc2083ced90b4e6`. The active deterministic finite
   automaton (DFA) source now replays recovery from the exact skipped-prefix

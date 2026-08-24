@@ -15,6 +15,20 @@ type stubTokenSource struct {
 	relexCalls int
 }
 
+type nextOnlyTokenSource struct {
+	tokens []Token
+	i      int
+}
+
+func (s *nextOnlyTokenSource) Next() Token {
+	if s.i >= len(s.tokens) {
+		return Token{}
+	}
+	tok := s.tokens[s.i]
+	s.i++
+	return tok
+}
+
 func (s *stubTokenSource) Next() Token {
 	s.nextCalls++
 	if s.i >= len(s.tokens) {
@@ -80,6 +94,17 @@ func TestNormalizeIncludedRanges(t *testing.T) {
 	}
 }
 
+func TestIncludedRangeTokenSourceDropsAllEmptyRanges(t *testing.T) {
+	base := &nextOnlyTokenSource{tokens: []Token{{Symbol: 1, StartByte: 0, EndByte: 1}}}
+	ts := newIncludedRangeTokenSource(base, []Range{
+		{StartByte: 3, EndByte: 3},
+		{StartByte: 8, EndByte: 4},
+	})
+	if ts != base {
+		t.Fatalf("empty ranges returned %T, want the original token source", ts)
+	}
+}
+
 func TestIncludedRangeTokenSourceFiltersTokens(t *testing.T) {
 	base := &stubTokenSource{
 		tokens: []Token{
@@ -98,6 +123,68 @@ func TestIncludedRangeTokenSourceFiltersTokens(t *testing.T) {
 	tok = ts.Next()
 	if tok.Symbol != 0 {
 		t.Fatalf("second token should be EOF-like, got %d", tok.Symbol)
+	}
+}
+
+func TestIncludedRangeTokenSourceReseeksOverlappingTokenAtRangeStart(t *testing.T) {
+	base := &stubTokenSource{
+		tokens: []Token{
+			{Symbol: 1, StartByte: 0, EndByte: 5},
+			{Symbol: 2, StartByte: 3, EndByte: 5},
+			{Symbol: 3, StartByte: 12, EndByte: 15},
+			{},
+		},
+	}
+	ts := newIncludedRangeTokenSource(base, []Range{{StartByte: 3, EndByte: 20}}).(*includedRangeTokenSource)
+
+	tok := ts.Next()
+	if tok.Symbol != 2 {
+		t.Fatalf("overlapping token: got %d, want 2", tok.Symbol)
+	}
+}
+
+func TestIncludedRangeTokenSourcePreservesOverlapWithoutReseek(t *testing.T) {
+	base := &nextOnlyTokenSource{tokens: []Token{
+		{Symbol: 1, StartByte: 0, EndByte: 5},
+		{Symbol: 2, StartByte: 8, EndByte: 10},
+		{},
+	}}
+	ts := newIncludedRangeTokenSource(base, []Range{{StartByte: 3, EndByte: 12}}).(*includedRangeTokenSource)
+
+	tok := ts.Next()
+	if tok.Symbol != 1 || tok.StartByte != 0 || tok.EndByte != 5 {
+		t.Fatalf("overlapping token without seek: got %+v, want the original token", tok)
+	}
+}
+
+func TestIncludedRangeTokenSourceSkipsExcludedTokenWithoutReseek(t *testing.T) {
+	base := &nextOnlyTokenSource{tokens: []Token{
+		{Symbol: 1, StartByte: 0, EndByte: 2},
+		{Symbol: 2, StartByte: 1, EndByte: 5},
+		{Symbol: 3, StartByte: 8, EndByte: 10},
+		{},
+	}}
+	ts := newIncludedRangeTokenSource(base, []Range{{StartByte: 3, EndByte: 12}}).(*includedRangeTokenSource)
+
+	tok := ts.Next()
+	if tok.Symbol != 2 || tok.StartByte != 1 || tok.EndByte != 5 {
+		t.Fatalf("first selected token = %+v, want the preserved overlap", tok)
+	}
+	if base.i != 2 {
+		t.Fatalf("base token index = %d, want 2 after skipping one excluded token", base.i)
+	}
+}
+
+func TestInitialParseStackClampsIncludedRangeStartPastSource(t *testing.T) {
+	var scratch parserScratch
+	parser := &Parser{
+		language: &Language{InitialState: 1},
+		included: []Range{{StartByte: 100, EndByte: 200}},
+	}
+
+	stacks, _ := parser.newInitialParseStacks(&scratch, nil, nil, 12)
+	if got, want := stacks[0].byteOffset, uint32(12); got != want {
+		t.Fatalf("initial byte offset = %d, want clamped source end %d", got, want)
 	}
 }
 

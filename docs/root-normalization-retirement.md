@@ -2965,13 +2965,25 @@ The included-ranges source has 276 bytes and SHA-256
 The C digest is
 `9c8e5bb506bb345a577beb351f7b9230cca5e2e02cc4fd619e21f607657f290f`.
 The Go digest is
-`8231fb8782e5699708e183619b68e1d030ab09e60de99ac52e3c092ffc56d59c`.
+`00c4d0aa190209d83625248618330de3cc1173c0e5e1dbc705b265fe9b79d09d`.
 Both roots are `source_file` with an error flag.
-Go uses range `0..276` with 10 children.
-C uses range `26..276` with seven children.
-The first difference is the root range.
+Both roots use range `26..276`.
+Go has 10 children, while C has seven children.
+The first difference is the root child shape.
 The Go arm records zero root rewrites, 25 compatibility rewrites, and zero
 `new`/`make` rewrites on this route.
+
+A byte-seek token source now reproduces a token that overlaps the first range
+boundary. The parser starts its initial stack at that boundary. It also uses
+the configured range point for an initial recovery gap. A source without byte
+seeking preserves the complete overlapping token. Such a token can start
+before the selected boundary. This limitation does not provide strict trim
+parity for non-seek sources.
+
+The included-range production route now proves the root-start correction.
+Focused unit coverage also checks the supported incremental API path.
+Compact and forest included-range routes remain uncertified. Do not use this
+receipt as compact, forest, or complete tree-parity evidence.
 
 Every Go tree reports `NativeRecoveredStructureAuthoritative=false`.
 Forest returns nil when it declines and a non-nil tree when it accepts.
@@ -2979,24 +2991,33 @@ The guard releases an unexpected tree before it fails.
 Incremental routes require positive old-tree reuse and reject unsupported reuse.
 The exact reuse values remain receipt evidence, not a brittle counter contract.
 
-The route receipt is under
-`/tmp/gts-n31j-go-current-artifacts/20260823T124728Z-current-go-route`.
-Its `container.log` SHA-256 is
-`da58f728f6ad9d42059abb3314c1aad2ccb65372d2a2d4fadcce971b054b7bf4`.
-The document guard receipt is under
-`/tmp/gts-n31j-go-current-artifacts/20260823T125100Z-current-go-document-first`.
-Its `container.log` SHA-256 is
-`f01faa740a06015d0ff19a831219e368699eb537ceb02f59bb4b058657b16af1`.
-The run used one Go grammar, one CPU, 4 GiB, 512 process IDs,
-`GOMEMLIMIT=3GiB`, `GOMAXPROCS=1`, `GOFLAGS=-p=1`, `-parallel=1`, and a
-20-minute timeout. It exited zero without timeout or out-of-memory failure.
+- The focused Go receipt is under
+  `/tmp/gts-included-range-root-start-artifacts/20260824T232146Z-included-range-root-start-go`.
+  Its `container.log` SHA-256 is
+  `265dd56598ca4cda600b1ef627ef57dff1d0b57c3fcc8726bcadf7673e20c292`.
+- The locked-C geometry and arm-guard receipt is under
+  `/tmp/gts-included-range-root-start-artifacts/20260824T232228Z-included-range-root-start-locked-c`.
+  Its `container.log` SHA-256 is
+  `5606b899c0abc3bb16639beb317090d20d1b207e60623d70fd4aafe8ad02f262`.
+- The locked-C live-arm receipt is under
+  `/tmp/gts-included-range-root-start-artifacts/20260824T232309Z-included-range-root-start-go-next`.
+  Its `container.log` SHA-256 is
+  `72672bb50bf9e4564a01a35afaeaf59eb02dba00ade1c8d2c3a34943621d9e44`.
 
-No safe shared producer invariant was identified.
+Each run used one Go grammar, one CPU, 4 GiB, 512 process IDs,
+`GOMEMLIMIT=3GiB`, `GOMAXPROCS=1`, `GOFLAGS=-p=1`, `-parallel=1`, and a
+20-minute timeout. All three runs exited zero without timeout or
+out-of-memory failure.
+
+The first included byte is now a shared producer invariant for byte-seek
+sources. This invariant fixes the root start only.
 Keep `dispatch.go` live until a producer emits exact C output for every
 authenticated witness and route. Require zero rewrites in all three subpasses.
 Require an authenticated Go corpus and source lock.
 Require included-ranges root, semicolon, sibling-boundary, and `new`/`make`
-parity before retirement. Do not change production or registry state.
+parity before retirement. Reopen `dispatch.go.source-file-root` retirement
+only after exact child shape and production, compact, forest, and incremental
+proofs pass. Do not change production or registry state.
 
 ## 2026-08-23 Doxygen dispatcher blocker receipt
 
