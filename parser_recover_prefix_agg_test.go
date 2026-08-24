@@ -145,6 +145,41 @@ func TestMergeCostFillInvalidatesAndParserRefillsVisibility(t *testing.T) {
 	}
 }
 
+func TestMergeCostFillTracksPublishedRecoveryMutation(t *testing.T) {
+	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
+	p := &Parser{language: lang, cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheSize)}
+	first := &Node{symbol: 1, equivVersion: 1}
+	second := &Node{symbol: 1, equivVersion: 1}
+	base := &gssNode{entry: newStackEntryNode(1, first), depth: 1}
+	head := &gssNode{entry: newStackEntryNode(2, second), prev: base, depth: 2}
+
+	if cost, visible := p.cStackPrefixAgg(head); cost != 0 || visible != 2 {
+		t.Fatalf("initial aggregate = (%d, %d), want (0, 2)", cost, visible)
+	}
+
+	merge := glrMergeScratch{language: lang}
+	gssPrefixAggGen.Add(1)
+	if cost := cStackPrefixCostForMerge(&merge, lang, head); cost != 0 {
+		t.Fatalf("initial merge cost = %d, want 0", cost)
+	}
+	if base.aggValid&gssAggVisValid != 0 || head.aggValid&gssAggVisValid != 0 {
+		t.Fatal("initial merge fill left visibility valid")
+	}
+
+	first.setMissing(true)
+	nodeBumpEquivVersion(first)
+	wantCost := uint32(cErrCostPerMissingTree + cErrCostPerRecovery)
+	if cost := cStackPrefixCostForMerge(&merge, lang, head); cost != wantCost {
+		t.Fatalf("mutated merge cost = %d, want %d", cost, wantCost)
+	}
+	if base.aggValid&gssAggVisValid != 0 || head.aggValid&gssAggVisValid != 0 {
+		t.Fatal("mutated merge fill left visibility valid")
+	}
+	if cost, visible := p.cStackPrefixAgg(head); cost != wantCost || visible != 2 {
+		t.Fatalf("parser refill after mutation = (%d, %d), want (%d, 2)", cost, visible, wantCost)
+	}
+}
+
 func TestContiguousRecoveryAggregateCacheTracksStackAndNodeMutations(t *testing.T) {
 	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
 	p := &Parser{
