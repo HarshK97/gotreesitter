@@ -1076,7 +1076,7 @@ func (q *Query) CaptureCount() uint32 {
 
 // CaptureNames returns the list of unique capture names used in the query.
 func (q *Query) CaptureNames() []string {
-	return q.captures
+	return slices.Clone(q.captures)
 }
 
 // CaptureNameForID returns the capture name for the given capture id.
