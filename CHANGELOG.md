@@ -185,6 +185,20 @@ for tags and release notes while still in `0.x`.
   Keep SQL compact admission gated. No parser, scanner, or grammar change
   ships. See `docs/compact-route-real-corpus-matrix.md`.
 
+- Recorded the C26ai tagged SQL dollar-quote producer witness at base
+  `7a14a701eb2a5d623ce128e792ee67820a734c8b`.
+  The 22-byte witness `SELECT $tag$hey$tag$;\n` has source SHA-256
+  `1279d93f715690fee6c8af53fa774d0108c19846d9418d86d53edec0d743bc88`.
+  The generated tree has three source-file children and an error.
+  The checked-in and locked-C trees have two children and no error.
+  Their deep digest is
+  `824c8bdf7107be3632bd0a43d89e0324ebc0802dcd8c4dca014130224f930ef6`.
+  The generated digest is
+  `ba05964c2f2c62e56a3ee9470c76dc55098f7c2ea4f656607da30c5f8af212d4`.
+  The first divergence is the generated root child count.
+  Keep SQL compact admission gated. No parser, scanner, or grammar change
+  ships. See `docs/compact-route-real-corpus-matrix.md`.
+
 - Added authenticated generated-SQL scanner identity to the grammargen C
   parity route. The route now reloads the generated blob through `LoadLanguage`
   before scanner adaptation. The scanner binds checkpoints to exact generated

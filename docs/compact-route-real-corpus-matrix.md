@@ -2606,6 +2606,107 @@ equality, incremental equality, and locked-C equality.
 
 No performance gate ran for C26ah. This receipt makes no performance claim.
 
+## C26ai generated SQL tagged dollar-quote producer witness
+
+C26ai used publication base
+`7a14a701eb2a5d623ce128e792ee67820a734c8b`.
+It follows the C26ah untagged dollar-quote receipt.
+
+Status: **NO-GO / KEEP LIVE**. Keep SQL compact admission gated.
+This slice adds one tagged producer witness, one focused Docker probe, one
+changelog entry, and this section. It adds no parser or route change.
+
+### Producer and witness
+
+The pinned SQL producer is `m-novikov/tree-sitter-sql` at commit
+`587f30d184b058450be2a2330878210c5f33b3f9`.
+The grammar source SHA-256 is
+`42f011860137175a5a0cb820d1a694e5ccca1d17f226729ff6a4e886910cde1c`.
+The scanner source SHA-256 is
+`d437ad9f517d7a1f4248ccd05abe58370b5040c0037c877dab1f0aefeaa04af6`.
+
+The generated blob identity is
+`4ffb2a6d09e2000126f10101db9028d28e0752ac3e4f83e401f045c3b028ca7c`.
+The scanner identity is
+`7e493677411a501e6d8592c6b9cc158e21a1bfed44c72ca914e2d81e4e34861d`.
+The checked-in SQL blob identity is
+`e21421cbab52b54cf5ba15c8f78a2bb4729bf4e8c0da14368069e897de451268`.
+
+The witness is the 22-byte source `SELECT $tag$hey$tag$;\n`.
+Its source SHA-256 is
+`1279d93f715690fee6c8af53fa774d0108c19846d9418d86d53edec0d743bc88`.
+The generated tree digest is
+`ba05964c2f2c62e56a3ee9470c76dc55098f7c2ea4f656607da30c5f8af212d4`.
+The checked-in and locked-C tree digest is
+`824c8bdf7107be3632bd0a43d89e0324ebc0802dcd8c4dca014130224f930ef6`.
+
+The generated tree has three root children and an error.
+The checked-in and locked-C trees have two root children and no error.
+The first divergence is:
+
+```text
+root: ChildCount go=3 c=2 (goType="source_file" cType="source_file" goBytes=[0-22] cBytes=[0-22])
+```
+
+The difference starts in generated producer output, before compact replay.
+The tagged witness extends the same producer boundary shown by C26ah.
+
+### Focused Docker gate
+
+The probe is
+`cgo_harness/sql_c26ai_generated_tagged_dollar_quote_test.go`.
+It checks generated identity, checked-in parity, and locked-C parity.
+Run one SQL grammar with one CPU and one Go test worker:
+
+```sh
+GOMAXPROCS=1 bash cgo_harness/docker/run_parity_in_docker.sh \
+  --repo-root /tmp/gotreesitter-graduation-next.VP39zH \
+  --out-root /tmp/gotreesitter-c26ai-artifacts \
+  --label c26ai-sql-tagged-dollar-quote-final --no-build --memory 4g --cpus 1 \
+  --gomemlimit 3GiB --goflags -p=1 --test-parallel 1 --timeout 10m \
+  --mount /tmp/gotreesitter-sql-seed.ada3CT:/tmp/grammar_parity:ro -- \
+  'cd /workspace/cgo_harness && \
+   go test -tags "cgo treesitter_c_parity" . \
+   -run "^TestSQLC26aiGeneratedTaggedDollarQuote$" -count=1 \
+   -parallel=1 -timeout=10m -v'
+```
+
+The run passed with exit code zero.
+It used one SQL grammar, one CPU, `GOMAXPROCS=1`, and `GOFLAGS=-p=1`.
+It reported no out-of-memory kill and no wall timeout.
+
+The artifact is
+`/tmp/gotreesitter-c26ai-artifacts/20260824T024111Z-c26ai-sql-tagged-dollar-quote-final`.
+
+- `container.log`: `94ebf803c12c2381c67467de3d4041c61b2513e420335983a22bdab74ebd5fce`.
+- `metadata.txt`: `496d6ff1881e87f6c09f571f9995cdf6aee25d9260c7581fae1c1087dece92d3`.
+- `inspect.json`: `69210f60086dd2c2510c374d6bc928b7ce90206d523f0ce248895ba806583978`.
+
+The generated tree remains different from locked C.
+The probe records a producer blocker, not a compact parity claim.
+
+### Rebase applicability
+
+The C26ah receipt and the intervening Julia, highlighting, and recovery
+receipts are present on this base.
+The SQL grammar lock, SQL blob, SQL scanner, parser, and grammargen inputs
+did not change between `d72987b44b76cf39aa4ad0f5fff03860eed7cd0d` and this base.
+The C26ai artifact therefore remains applicable after this rebase.
+No Docker rerun was required.
+
+### C26ai decision and reopening condition
+
+Keep SQL compact admission gated. Do not add a parser-state remap.
+Do not add a SQL-specific symbol map.
+
+Reopen only after a producer or grammar revision makes both dollar-quote
+witnesses match the checked-in and locked-C trees.
+Then rerun the C26ah and C26ai Docker probes and the strict grammargen gate.
+Require equal table identity, scanner identity, fresh-tree equality, compact
+equality, incremental equality, and locked-C equality.
+
+No performance gate ran for C26ai. This receipt makes no performance claim.
+
 ## Corpus state
 
 The current manifest has these properties:
