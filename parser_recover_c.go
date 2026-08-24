@@ -1603,8 +1603,10 @@ const (
 	cNodeMemoCacheSize = 16384
 	// cNodeMemoRecoveryCacheSize is a temporary second tier for recovery
 	// parses that continue to collide after the standard cache grows. The
-	// packed 24-byte entry makes this tier 6 MiB on 64-bit systems.
-	cNodeMemoRecoveryCacheSize = 262144
+	// packed 24-byte entry makes this active tier 3 MiB on 64-bit systems.
+	// The retained 384 KiB standard tier makes total storage 3.375 MiB before
+	// slice overhead.
+	cNodeMemoRecoveryCacheSize = 131072
 	// cNodeMemoRecoveryThrashGrowThreshold requires one collision per standard
 	// cache entry before the parser allocates the temporary recovery tier.
 	cNodeMemoRecoveryThrashGrowThreshold = cNodeMemoCacheSize

@@ -9,6 +9,17 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Reduced the temporary recovery memo tier from 262,144 entries to 131,072
+  entries. The active table now uses 3 MiB on 64-bit systems. The retained
+  standard table uses 384 KiB. Total memo storage is 3.375 MiB before slice
+  overhead. The 20-seed C# issue #454 benchmark reduces bytes per operation
+  by `20.79%`, with `p<0.001`. Time is `155.9` ms for base and `158.0` ms for
+  the changed build, with `p=0.529`. Allocations are `998.5` and `998.0`, with
+  `p=0.074`. Both results are inconclusive. Two execution orders reduce
+  maximum resident set size by `11,520` KiB and `4,160` KiB. The primary trio
+  is order-sensitive and inconclusive. Focused C# correctness, locked-C
+  parity, and memory-budget contract tests pass.
+
 - Recorded P25aw at merged main commit
   `af9ded2b77b7828b12b1d2da7c9fff8dd5ca053b`. Four authenticated Swift corpus
   edits used old trees and one final-newline edit. Every profile reported
