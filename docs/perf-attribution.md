@@ -10,6 +10,81 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-24 P25bb recovery election-summary contract
+
+Status: **NO-GO / NO CANDIDATE**. Keep issue #454 and the performance arm live.
+Ship no parser or test code.
+
+The evidence base is main commit
+`83e0cfbc30ad82e2f327d58e35eea9f438a0ffda`.
+P25ba screened the recovery node-error-cost helper. P25bb screens the next
+source-owned recovery seam, `cRecoverStrategy1Election` and its summary scan.
+
+Canopy ranked `cRecoverStrategy1Election` as a top recovery hotspot. The
+method spans `parser_recover_c.go:3804-3961`. It performs a bounded summary
+scan over election scratch and compares recovery costs before it selects or
+forks an entry. The nearby
+`cRecordSummaryWithScratch` spans lines 2792-2890. The reduction helper spans
+lines 2954-3069 and feeds the same recovery search.
+
+The structural queries were:
+
+```text
+canopy search symbols parser_recover_c.go --name 'cRecoverStrategy1Election|cRecordSummaryWithScratch|cDoAllPotentialReductions' --no-cache --limit 20 --json
+canopy graph calls 'cRecoverStrategy1Election|cRecordSummaryWithScratch|cDoAllPotentialReductions' --regex --reverse --file parser_recover_c.go --no-cache --depth 3 --json
+```
+
+The query artifacts are `/tmp/p25bb-canopy-symbols.json` and
+`/tmp/p25bb-canopy-callers.json`. Their SHA-256 values are
+`66319dc107ab8ae5116c9a6f677136dba2f18b98d8648dbc5f4f7763b6f50000` and
+`e7d299551a96df774cdeed1fcdedb3e3173754f0db8ff90d27c31114ccff4dc1`.
+
+The existing P25d profile uses synthetic C# source. It reports coarse
+recovery attribution and no authenticated issue #454 witness. It does not
+provide election depth, summary reuse, cache-hit share, or cost per call.
+It cannot support a generic performance candidate.
+
+The focused Docker contract gate passed these tests:
+
+```text
+TestCRecordSummaryMatchesPositionTableReference
+TestCRecordSummaryAvoidsPositionAllocations
+TestCRecordSummaryPreservesMoreThanReserveAtEqualDepth
+TestCRecoverStrategy1ElectionDedupesDuplicateEntryAcrossMembers
+TestCRecoverStrategy1ElectionSkipsCostForWouldMergeNoActionEntry
+TestCRecoverStrategy1ElectionUsesMergedVersionCostBasis
+TestCRecoverElectionDepthIteratorPreservesMergedSummaryOrder
+TestCRecoverElectionScratchEpochWrapAndReleaseReset
+TestCRecoverElectionDepthIteratorPollsAcrossDuplicateRuns
+TestCRecoverElectionDepthIteratorReusesPreparedScratch
+TestCRecoverStrategy1ElectionReusesParserScratchWithoutAllocating
+```
+
+The run used one CPU, 8 GiB memory, `GOMAXPROCS=1`, `GOFLAGS=-p=1`, and one
+test worker. It passed with exit code zero in 8.09 seconds. It reported no
+timeout and no out-of-memory event.
+
+The command was:
+
+```text
+bash cgo_harness/docker/run_parity_in_docker.sh --repo-root /tmp/gts-p25bb-next-hotspot-20260824 --out-root /tmp/gts-p25bb-artifacts --label p25bb-recovery-election-contract-2 --no-build --memory 8g --cpus 1 --goflags '-p=1' --test-parallel 1 --timeout 30m -- "cd /workspace && GOMAXPROCS=1 go test . -run '^(TestCRecoverStrategy1ElectionDedupesDuplicateEntryAcrossMembers|TestCRecoverStrategy1ElectionSkipsCostForWouldMergeNoActionEntry|TestCRecoverStrategy1ElectionUsesMergedVersionCostBasis|TestCRecoverElectionDepthIteratorPreservesMergedSummaryOrder|TestCRecoverElectionScratchEpochWrapAndReleaseReset|TestCRecoverElectionDepthIteratorPollsAcrossDuplicateRuns|TestCRecoverElectionDepthIteratorReusesPreparedScratch|TestCRecoverStrategy1ElectionReusesParserScratchWithoutAllocating|TestCRecordSummaryMatchesPositionTableReference|TestCRecordSummaryAvoidsPositionAllocations|TestCRecordSummaryPreservesMoreThanReserveAtEqualDepth)$' -count=1 -parallel 1 -timeout 20m -v"
+```
+
+The artifact is `/tmp/gts-p25bb-artifacts/20260824T053316Z-p25bb-recovery-election-contract-2`.
+
+- `container.log`: `d2c819087b0eb6c98b760b38c3a119051baa54ecaa4923acfb14c4f634186ef7`.
+- `metadata.txt`: `699facfa52be2dcd73c9d83faec99ae0bffb6586853d551c4f2b1818803dad7b`.
+- `inspect.json`: `3ca6cc509d708ec63502d81c460c11eea9858d5f058f97e2e925aa91a47c197b`.
+
+Do not run a benchmark or RSS campaign. No authenticated witness passed the
+proof boundary. Reopen this seam only after an authenticated issue #454
+witness supplies election depth, summary-reuse counts, cache-hit share, and
+cost per call. Require fresh, incremental, and locked-C equality. Preserve
+the summary order, deduplication, scratch epoch, and memory-budget contracts.
+
+Decision: **NO-GO**. Checkpoint candidate: none. Keep the election code
+unchanged.
+
 ## 2026-08-24 P25ba recovery node-error-cost contract
 
 Status: **NO-GO / NO CANDIDATE**. Keep issue #454 and the performance arm live.
