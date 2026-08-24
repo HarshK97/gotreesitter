@@ -41,6 +41,13 @@ for tags and release notes while still in `0.x`.
   The result is **NO-GO / NO CANDIDATE**.
   No six-seed, twenty-seed, or maximum resident set size (RSS) run was justified.
   See `docs/perf-attribution.md` for exact commands, artifacts, and hashes.
+- Recorded P25az at main commit
+  `6eed698a13e7371fa978adb893e8b89ad1cd81ba`. The recovery-prefix merge
+  contract passed before and after the test-only contract addition. The helper
+  remains a coarse synthetic-profile signal. No production candidate met the
+  proof boundary. The result is **NO-GO / NO CANDIDATE**. No randomized
+  benchmark or maximum resident set size (RSS) run was justified. See
+  `docs/perf-attribution.md` for exact commands, artifacts, and hashes.
 
 ### Correctness
 

@@ -432,6 +432,71 @@ P25aq artifacts and SHA-256 values are:
 The temporary telemetry, test, and benchmark files were removed. No P25aq
 production or test change remains.
 
+## 2026-08-24 P25az recovery-prefix merge contract
+
+Status: **NO-GO / NO CANDIDATE**. Keep issue #454 and the performance arm live.
+
+P25ay rejected hidden-field flattening as a grammar-agnostic candidate. P25az
+advances the next smallest source-owned contract in the recovery cost path.
+The source base is main commit
+`6eed698a13e7371fa978adb893e8b89ad1cd81ba`.
+
+Canopy traced `cStackPrefixCostForMerge` in `parser_recover_c.go`. The helper
+starts at line 2258 and ends at line 2285. Its only production caller is
+`cStackErrorCostForMergeWithScratch`, at line 2442. The helper fills cost-only
+aggregates for the merge scratch. It must clear visibility validity before the
+parser rebuilds the complete aggregate.
+
+The structural commands were:
+
+```text
+canopy search symbols parser_recover_c.go --name 'cStackPrefixCostForMerge' --no-cache --limit 20 --json
+canopy graph calls --reverse cStackPrefixCostForMerge parser_recover_c.go --no-cache --depth 4 --json
+```
+
+The existing P25d profile names this helper as a coarse signal. It reports
+`3.57%` flat time and `10.71%` cumulative time. The profile uses a synthetic
+C# source. It does not prove a generic optimization. The profile worktree used
+commit `731f8a9d9440a006b2cc6b56ef5b31c0ff3b5ce7`. `parser_recover_c.go` is
+unchanged through the P25az base.
+
+The contract test first fills parser-side cost and visibility aggregates. It
+then fills cost-only merge aggregates and checks that visibility becomes
+invalid. It mutates a published missing node and repeats the merge fill. The
+merge cost must include the missing-tree and recovery costs. The parser must
+then rebuild the same cost and preserve the visible-node count.
+
+The focused Docker run passed before the test addition. The corrected run
+passed both merge contract tests. The container used one CPU, 8 GiB memory,
+`GOMAXPROCS=1`, `GOFLAGS=-p=1`, and test parallelism one.
+
+```text
+bash cgo_harness/docker/run_parity_in_docker.sh --repo-root /tmp/gts-p25az-next-hotspot-20260824 --out-root /tmp/gts-p25az-artifacts --label p25az-prefix-aggregate-contract-v2 --no-build --memory 8g --cpus 1 --goflags '-p=1' --test-parallel 1 --timeout 30m -- "cd /workspace && GOMAXPROCS=1 go test . -run '^(TestMergeCostFillInvalidatesAndParserRefillsVisibility|TestMergeCostFillTracksPublishedRecoveryMutation)$' -count=1 -parallel 1 -timeout 20m -v"
+```
+
+The focused result passed. No production code changed. No performance candidate
+was tested. No randomized benchmark or maximum resident set size (RSS) run was
+justified.
+
+The receipt artifacts are:
+
+- Baseline contract log: `/tmp/gts-p25az-artifacts/20260824T013521Z-p25az-prefix-aggregate-contract/container.log`, SHA-256 `3d33c2d56edb5f716a65a80777577b3479a1571025d8bac859d6e93e3bdd6633`.
+- Baseline metadata: `/tmp/gts-p25az-artifacts/20260824T013521Z-p25az-prefix-aggregate-contract/metadata.txt`, SHA-256 `192bdcfe21a9f38759c02854485e171d036ec02a38400573c82f69f6686ef721`.
+- Corrected contract log: `/tmp/gts-p25az-artifacts/20260824T013728Z-p25az-prefix-aggregate-contract-v2/container.log`, SHA-256 `7cc1f76d6e33ca2b2a1cc85f0869b358cd89c41206d60c82c11e1489f3dad996`.
+- Corrected metadata: `/tmp/gts-p25az-artifacts/20260824T013728Z-p25az-prefix-aggregate-contract-v2/metadata.txt`, SHA-256 `46e7b8530de172440ab45689db3116e453a282a103585f48dd6ebe9837d757a3`.
+- P25d stack-prefix Canopy artifact: `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/canopy/stack-prefix-cost-depth2.json`, SHA-256 `f10ee2434747998320e26f985faf309a6c557de41bd331ebf8f2485d15c918f6`.
+- P25d stack-error Canopy artifact: `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/canopy/stack-error-cost-depth2.json`, SHA-256 `f19172341586c0d638a2013da798ca776bcf4ea1b21cca00181d1499b6dd5947`.
+- P25d CPU profile: `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/profiles/p25d-csharp-production-32k.pprof`, SHA-256 `98b3e8d16a123273c14eefdb6035f7817b815a49e218e6d6ee64185b55cdabb2`.
+- P25d CPU profile text: `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/profiles/p25d-csharp-production-32k.pprof.txt`, SHA-256 `16da805a8e5a77e88104ce7d0ed3a35d339ee1ed5c7b4d1cc8a32445e2c9a523`.
+
+Reopen this hotspot only with an authenticated recovery witness. Measure
+merge-call count, prefix depth, cache-hit share, and cost per call. Preserve
+the cost-only visibility contract and locked-C equality before any candidate.
+
+Decision: **NO-GO**. Checkpoint candidate: none. Next action: retain the
+current recovery-prefix aggregate code and measure its call depth on an
+authenticated witness.
+
 ## 2026-08-23 P25ar lazy node-equivalence table allocation
 
 Status: **NO-GO / REVERTED**. Keep the eager full-table behavior at
