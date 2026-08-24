@@ -88,6 +88,11 @@ func (a *externalScannerOrderAdapter) PreservesStateOnScanFailure() bool {
 	return ok && preserving.PreservesStateOnScanFailure()
 }
 
+func (a *externalScannerOrderAdapter) RetainsStateOnScanFailure() bool {
+	retaining, ok := a.optionalInner().(FailureStateRetainingExternalScanner)
+	return ok && retaining.RetainsStateOnScanFailure()
+}
+
 func (a *externalScannerOrderAdapter) optionalInner() ExternalScanner {
 	if a == nil {
 		return nil

@@ -19,10 +19,12 @@ checkpointless scanner rejects recovery replay without changing the scanner.
 Generic relex still accepts stateless scanners with empty serialization. The
 Swift scanner now serializes its complete state. The parser records error-mode
 lexing only after the DFA produces the token. The recovery path excludes tokens
-from an external scanner. Each outer parse operation resets the recovery memo size.
-Nested retries keep the larger memo. The parser returns a rejected recovery
-probe before the legacy retry. Merge scratch drops its preflight state at a
-pool boundary.
+from an external scanner. Each outer parse operation resets the recovery memo
+size. Nested retries keep the larger memo. Temporary growth retains an existing
+16,384-entry standard slab. Cleanup restores that slab without an allocation.
+A shorter retained slab remains short. The parser returns a rejected recovery
+probe before the legacy retry. Merge scratch drops its preflight state at a pool
+boundary.
 
 Entry scratch also enforces the source-sized reservation after pool reuse. It
 moves an adequate retained slab to the front when possible. Otherwise, it adds
@@ -30,9 +32,15 @@ the required slab and keeps smaller slabs for later growth. This policy stops a
 small control parse from changing the next large parse.
 
 Swift no longer claims that failed scans preserve scanner state. The token
-source records the actual start and end checkpoints for an internal token.
-Recovery replay still requires equal checkpoints. Incremental fast-forward
-restores the recorded end checkpoint.
+source restores failed scans by default. Swift explicitly retains its required
+failed-scan state change. Retention takes precedence over failure preservation.
+The source records actual start and end checkpoints for an internal token.
+Each alternate retry starts from the original snapshot. After terminal
+failure, only the last failed attempt remains live. Recovery replay still
+requires equal checkpoints.
+Incremental fast-forward restores the recorded end checkpoint. Generic relex
+rejects a synthetic end-of-file lookahead that would replace a real token.
+Swift defers `>?` to the DFA only when an unmatched `<` exists.
 
 The 20-byte witness now matches locked C. The two corpus witnesses still
 differ:
@@ -73,6 +81,21 @@ after sample. The observed increase is 0.491384 percent, or about 0.49 percent.
 The raw benchmark files are
 `/tmp/swift576-scanner-checkpoint-before.txt` and
 `/tmp/swift576-scanner-checkpoint-after.txt`.
+
+PR #967 exposed Templ, Swift operator, recovery memo, and Markdown reuse
+regressions. The repair restores default failed-scan rollback. Swift keeps an
+explicit failure-retention capability. The final scanner, Swift, Templ, and
+Markdown artifacts are:
+
+- `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121348Z-swift967-repair-final-scanner`
+- `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121422Z-swift967-repair-final-swift`
+- `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121436Z-swift967-repair-final-templ`
+- `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121446Z-swift967-repair-final-markdown-race`
+
+The 20-seed primary trio changed by 1.242879 percent in the median geomean.
+No primary timing lane changed significantly. Bytes and allocations per
+operation stayed unchanged. One warmed large-witness sample changed from
+565920 KiB to 565280 KiB. The observed decrease is 0.113090 percent.
 
 The large witnesses still fail correctness. Keep issue #576 open until both
 corpus witnesses match locked C.

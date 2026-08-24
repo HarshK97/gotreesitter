@@ -32,15 +32,27 @@ Generic relex still accepts stateless scanners with empty serialization. The
 Swift scanner serializes the raw-string count and carried rune.
 
 The Swift scanner no longer claims that failed scans preserve its state. A
-failed scan can change its carried rune. The token source now retains that
-change and records both checkpoints for an internal token. Recovery replay
-still requires equal checkpoints. Incremental fast-forward restores the actual
-end checkpoint.
+failed scan can change its carried rune. Scanners restore their start state
+after failure by default. Swift explicitly retains its required state change.
+Retention takes precedence if a scanner reports both failure capabilities.
+The token source records both checkpoints for an internal token. Recovery
+replay still requires equal checkpoints. Incremental fast-forward restores the
+actual end checkpoint. A successful external token always records its actual
+end checkpoint. Each alternate retry starts from the original snapshot. If all
+retries fail, only the terminal failed attempt remains live.
+
+Generic relex rejects a synthetic end-of-file lookahead when a real token
+still starts before the source end. Swift defers `>?` to the DFA only when an
+unmatched `<` exists in the active scope. A trailing `>?` remains one custom
+operator.
 
 Each outer parse operation resets the recovery memo to its initial logical
 size. Nested retry attempts keep the larger memo. This reset makes pooled and
-fresh large-witness digests equal. The parser returns a rejected initial probe
-before the legacy retry. This return applies the normal snippet-parser reset.
+fresh large-witness digests equal. Temporary growth retains an existing
+16,384-entry standard slab. Cleanup restores that slab without an allocation.
+A shorter retained slab remains short. The parser returns a rejected initial
+probe before the legacy retry. This return applies the normal snippet-parser
+reset.
 
 Merge scratch clears and drops its preflight object at a pool boundary. Entry
 scratch enforces the required source-sized reservation after pool reuse. It
@@ -48,8 +60,9 @@ moves a large retained slab to the front when possible. Otherwise, it adds the
 required slab and keeps smaller slabs for later growth. A small control parse
 cannot reduce the next large parse reservation.
 
-This change uses no Swift grammar rule and no language-name exception. It does
-not change compact-route admission. The compact route remains outside this
+Recovery substitution uses no Swift grammar rule or source exception. The
+operator repair stays inside the existing Swift token-source guard. This change
+does not affect compact-route admission. The compact route remains outside this
 candidate.
 
 The 20-byte witness now matches locked C:
@@ -98,6 +111,32 @@ The raw files are:
 - `/tmp/swift576-scanner-checkpoint-after.txt`
 - `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T110004Z-swift576-scanner-checkpoint-rss-before-warm`
 - `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T110048Z-swift576-scanner-checkpoint-rss-after-warm`
+
+PR #967 exposed four CI regressions. The repair restores default failed-scan
+rollback and keeps Swift retention explicit. It also repairs Swift operator
+relex and the recovery memo lifecycle. These final focused gates passed:
+
+- Scanner and generic relex: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121348Z-swift967-repair-final-scanner`
+- Swift checkpoints and operator: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121422Z-swift967-repair-final-swift`
+- Templ census: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121436Z-swift967-repair-final-templ`
+- Markdown race reuse: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121446Z-swift967-repair-final-markdown-race`
+- Recovery memo race: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T114020Z-swift967-repair-memo-race`
+- AWK recovery control: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T114203Z-swift967-repair-awk`
+- Repeated clean-to-large sequence: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T114224Z-swift967-repair-clean-large`
+- Both large witnesses: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T114333Z-swift967-repair-large-telemetry`
+- Memory contract: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T114419Z-swift967-repair-memory-contract`
+
+The PR repair used 20 seeds and a 750 millisecond duration. No primary lane
+changed significantly. The primary trio median geomean increased 1.242879
+percent. Bytes and allocations per operation stayed unchanged. One warmed
+large-witness sample changed from 565920 KiB to 565280 KiB. The observed
+decrease is 0.113090 percent. The raw files are:
+
+- `/tmp/swift967-repair-before.txt`
+- `/tmp/swift967-repair-after.txt`
+- `/tmp/swift967-repair-benchstat.txt`
+- `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121155Z-swift967-repair-rss-before-warm`
+- `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121225Z-swift967-repair-rss-after-warm`
 
 The large witnesses still fail the correctness gate. Keep issue #576 open
 until both corpus witnesses match locked C.

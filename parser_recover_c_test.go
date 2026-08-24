@@ -335,8 +335,18 @@ func TestParseOperationBoundaryResetsRetainedRecoveryMemoSize(t *testing.T) {
 	if got := len(parser.cNodeMemoCache); got != cNodeMemoCacheSize {
 		t.Fatalf("nested retry memo entries = %d, want %d", got, cNodeMemoCacheSize)
 	}
+	parser.growCNodeMemoCacheTo(cNodeMemoRecoveryCacheSize)
+	if got := len(parser.cNodeMemoCache); got != cNodeMemoRecoveryCacheSize {
+		t.Fatalf("temporary memo entries = %d, want %d", got, cNodeMemoRecoveryCacheSize)
+	}
 	parser.endParseOperationBudget(inner)
+	if got := len(parser.cNodeMemoCache); got != cNodeMemoRecoveryCacheSize {
+		t.Fatalf("nested cleanup memo entries = %d, want %d", got, cNodeMemoRecoveryCacheSize)
+	}
 	parser.endParseOperationBudget(outer)
+	if got := len(parser.cNodeMemoCache); got != cNodeMemoCacheSize {
+		t.Fatalf("outer cleanup memo entries = %d, want %d", got, cNodeMemoCacheSize)
+	}
 
 	next := parser.beginParseOperationBudget()
 	defer parser.endParseOperationBudget(next)
@@ -2762,6 +2772,24 @@ func TestCNodeMemoTemporaryTierLivesForParseOperation(t *testing.T) {
 	}
 	if collisions != 0 {
 		t.Fatalf("operation collisions = %d, want 0", collisions)
+	}
+}
+
+func TestCNodeMemoTemporaryTierKeepsShortRetainedSlab(t *testing.T) {
+	p := &Parser{
+		cNodeMemoCache:    make([]cNodeMemoCacheEntry, cNodeMemoCacheInitialSize),
+		cNodeMemoPeakTier: RecoveryNodeMemoTierInitial,
+	}
+	retained := &p.cNodeMemoCache[0]
+	operation := p.beginParseOperationBudget()
+	p.growCNodeMemoCacheTo(cNodeMemoRecoveryCacheSize)
+	p.endParseOperationBudget(operation)
+
+	if got := len(p.cNodeMemoCache); got != cNodeMemoCacheInitialSize {
+		t.Fatalf("finished cache length = %d, want %d", got, cNodeMemoCacheInitialSize)
+	}
+	if got := &p.cNodeMemoCache[0]; got != retained {
+		t.Fatal("operation cleanup did not restore the short cache")
 	}
 }
 

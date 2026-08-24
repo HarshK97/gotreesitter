@@ -1676,7 +1676,13 @@ func (p *Parser) growCNodeMemoCacheTo(target int) {
 	if target > cNodeMemoCacheSize {
 		cold := p.ensureParserColdState()
 		if cold != nil && cold.cNodeMemoRetainedCache == nil {
-			cold.cNodeMemoRetainedCache = p.cNodeMemoCache
+			retained := p.cNodeMemoCache
+			// An operation starts with a deterministic 128-entry view. Keep
+			// the full standard slab when its backing array is already warm.
+			if cap(retained) >= cNodeMemoCacheSize {
+				retained = retained[:cNodeMemoCacheSize]
+			}
+			cold.cNodeMemoRetainedCache = retained
 		}
 	}
 	p.cNodeMemoCache = make([]cNodeMemoCacheEntry, target)

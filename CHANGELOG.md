@@ -90,17 +90,24 @@ for tags and release notes while still in `0.x`.
   Generic relex still accepts stateless scanners with empty serialization. The
   Swift scanner now serializes its complete state for the recovery proof. The
   scanner no longer claims that failed scans preserve this state. The token
-  source records distinct start and end checkpoints when a failed scan changes
-  the state. Incremental fast-forward restores the recorded end checkpoint.
+  source restores failed scans by default. A scanner can explicitly retain a
+  required failed-scan state change. Swift uses that capability and records
+  distinct start and end checkpoints. Incremental fast-forward restores the
+  recorded end checkpoint. Generic relex rejects a synthetic end-of-file
+  lookahead that would replace a real token. Swift defers `>?` to the DFA only
+  when an unmatched `<` exists in the active scope.
   The parser records error-mode lexing only after the DFA produces the token.
   An outer parse operation resets the recovery memo size. Nested retries stay
-  warm. Two pooled control-to-witness tests protect the recovery lifecycle. The
-  parser returns a rejected recovery probe before its legacy retry. Entry
+  warm. Temporary memo growth restores an existing 16,384-entry standard slab.
+  A shorter retained slab remains short. Two pooled tests protect the recovery
+  lifecycle. The parser returns a rejected recovery probe before its legacy retry. Entry
   scratch now restores the required large-parse reservation after a small
   pooled parse. The 20-byte witness matches the locked C tree. The
   `stdlib_FloatingPointToString.swift` and `stdlib_CollectionAlgorithms.swift`
-  witnesses still differ from locked C. Keep issue #576 open. See
-  `docs/swift-576-compact-correctness-blocker.md`.
+  witnesses still differ from locked C. The 20-seed repair comparison found no
+  significant primary timing change. Bytes and allocations stayed unchanged.
+  One warmed large-witness sample decreased 0.113090 percent. Keep issue #576
+  open. See `docs/swift-576-compact-correctness-blocker.md`.
 
 - Recorded the unreceipted `dispatch.julia` blocker at base
   `b35b86cb84d620305515abf970d5598c9573a48b`. The focused Docker receipt

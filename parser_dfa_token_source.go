@@ -677,7 +677,7 @@ func (d *dfaTokenSource) Next() Token {
 			if tokenFromExternal {
 				d.captureExternalScannerStateInto(&d.externalTokenEnd)
 				d.externalTokenEndSameAsStart = false
-			} else if !d.externalScannerPreservesStateOnScanFailure() {
+			} else if d.externalScannerRetainsStateOnScanFailure() {
 				d.captureExternalScannerStateInto(&d.externalTokenEnd)
 				d.externalTokenEndSameAsStart = bytes.Equal(d.externalTokenStart, d.externalTokenEnd)
 			} else {
@@ -2974,6 +2974,11 @@ func (d *dfaTokenSource) relexFromTokenStartInTransaction(tok Token) (Token, boo
 	if next.StartByte != tok.StartByte || next.StartPoint != tok.StartPoint {
 		return Token{}, false
 	}
+	// A no-lookahead state closes the active parser branch. It does not
+	// reinterpret a real token that still starts before the source end.
+	if next.NoLookahead || (next.Symbol == 0 && target < len(d.lexer.source)) {
+		return Token{}, false
+	}
 	if tok.ExternalScannerToken && next.ExternalScannerToken &&
 		next.StartByte == tok.StartByte && next.EndByte == tok.EndByte {
 		next.ExternalScannerStartByte = tok.ExternalScannerStartByte
@@ -3449,7 +3454,7 @@ func (d *dfaTokenSource) shouldDeferSwiftOptionalGenericCloseToDFA(valid []bool,
 			continue
 		}
 		if d.swiftCloseAngleActionReduces(actionIdx) {
-			return true
+			return d.hasSwiftUnclosedAngleBefore(pos)
 		}
 	}
 	return false
@@ -3904,11 +3909,21 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 		return false
 	}
 	var snapshot []byte
-	if d.externalScannerPreservesStateOnScanFailure() {
+	retainFailureState := d.externalScannerRetainsStateOnScanFailure()
+	// Retention takes precedence if a scanner reports both capabilities.
+	// A retained mutation is incompatible with the preservation claim.
+	preserveFailureState := !retainFailureState && d.externalScannerPreservesStateOnScanFailure()
+	restoreFailedScan := func() {
+		if !preserveFailureState && !retainFailureState {
+			d.restoreExternalScannerState(snapshot)
+		}
+	}
+	if preserveFailureState {
 		if RunExternalScanner(d.language, d.externalPayload, el, valid) {
 			return true
 		}
 		if !el.hasResult {
+			restoreFailedScan()
 			return false
 		}
 		snapshot = d.captureExternalScannerStateInto(&d.externalRetrySnap)
@@ -3918,6 +3933,7 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 			return true
 		}
 		if !el.hasResult {
+			restoreFailedScan()
 			return false
 		}
 	}
@@ -3932,6 +3948,7 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 	for {
 		idx := d.externalSymbolIndex(el.resultSymbol)
 		if idx < 0 || idx >= len(masked) || !masked[idx] {
+			restoreFailedScan()
 			return false
 		}
 		masked[idx] = false
@@ -3943,6 +3960,7 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 			}
 		}
 		if !anyValid {
+			restoreFailedScan()
 			return false
 		}
 
@@ -3954,6 +3972,7 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 			return true
 		}
 		if !retryLexer.hasResult {
+			restoreFailedScan()
 			return false
 		}
 		*el = *retryLexer
@@ -3966,6 +3985,14 @@ func (d *dfaTokenSource) externalScannerPreservesStateOnScanFailure() bool {
 	}
 	preserving, ok := d.language.ExternalScanner.(FailurePreservingExternalScanner)
 	return ok && preserving.PreservesStateOnScanFailure()
+}
+
+func (d *dfaTokenSource) externalScannerRetainsStateOnScanFailure() bool {
+	if d == nil || d.language == nil || d.language.ExternalScanner == nil {
+		return false
+	}
+	retaining, ok := d.language.ExternalScanner.(FailureStateRetainingExternalScanner)
+	return ok && retaining.RetainsStateOnScanFailure()
 }
 
 func (d *dfaTokenSource) captureExternalScannerStateInto(dst *[]byte) []byte {

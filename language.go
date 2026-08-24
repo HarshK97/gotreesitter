@@ -268,6 +268,18 @@ type FailurePreservingExternalScanner interface {
 	PreservesStateOnScanFailure() bool
 }
 
+// FailureStateRetainingExternalScanner is implemented by scanners that can
+// change serialized state before Scan returns false. The changed state is part
+// of the scanner contract and must remain live for the next scan.
+//
+// Scanners without this capability keep the default transactional contract.
+// The token source restores their start state after a failed scan.
+// Retention takes precedence if a scanner reports both failure capabilities.
+type FailureStateRetainingExternalScanner interface {
+	ExternalScanner
+	RetainsStateOnScanFailure() bool
+}
+
 // ReduceChainTerminalAction describes the action class expected after a
 // generated reduce-chain hint finishes applying deterministic reductions.
 type ReduceChainTerminalAction uint8

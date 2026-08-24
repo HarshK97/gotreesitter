@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestDFATokenSourceSkipToByteClampsBeforeNarrowing(t *testing.T) {
 	source := []byte("a\nβ")
@@ -142,6 +145,64 @@ func (s failedScanMutationExternalScanner) Scan(payload any, _ *ExternalLexer, _
 	return false
 }
 func (failedScanMutationExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
+func (failedScanMutationExternalScanner) RetainsStateOnScanFailure() bool      { return true }
+
+type rollbackFailedScanMutationExternalScanner struct {
+	failedScanMutationExternalScanner
+}
+
+func (rollbackFailedScanMutationExternalScanner) RetainsStateOnScanFailure() bool { return false }
+
+type retainingRetryExternalScanner struct {
+	observed        *[]byte
+	succeedOnSecond bool
+	staleResult     bool
+}
+
+func (retainingRetryExternalScanner) Create() any {
+	state := byte(3)
+	return &state
+}
+func (retainingRetryExternalScanner) Destroy(any) {}
+func (retainingRetryExternalScanner) Serialize(payload any, buf []byte) int {
+	if len(buf) == 0 {
+		return 0
+	}
+	buf[0] = *payload.(*byte)
+	return 1
+}
+func (retainingRetryExternalScanner) Deserialize(payload any, buf []byte) {
+	state := payload.(*byte)
+	*state = 0
+	if len(buf) != 0 {
+		*state = buf[0]
+	}
+}
+func (s retainingRetryExternalScanner) Scan(payload any, lexer *ExternalLexer, valid []bool) bool {
+	state := payload.(*byte)
+	*s.observed = append(*s.observed, *state)
+	*state++
+	if s.staleResult {
+		lexer.SetResultSymbol(30)
+		return false
+	}
+	if len(valid) > 0 && valid[0] {
+		lexer.SetResultSymbol(10)
+		return false
+	}
+	if len(valid) > 1 && valid[1] {
+		lexer.SetResultSymbol(20)
+		return s.succeedOnSecond
+	}
+	return false
+}
+func (retainingRetryExternalScanner) RetainsStateOnScanFailure() bool { return true }
+
+type contradictoryFailureCapabilityScanner struct {
+	retainingRetryExternalScanner
+}
+
+func (contradictoryFailureCapabilityScanner) PreservesStateOnScanFailure() bool { return true }
 
 func failedScanMutationLanguage(observed *[]byte) *Language {
 	return &Language{
@@ -187,6 +248,123 @@ func TestInternalTokenCapturesFailedExternalScannerMutation(t *testing.T) {
 	}
 	if ts.externalTokenEndSameAsStart {
 		t.Fatal("failed scanner mutation was classified as an unchanged state")
+	}
+}
+
+func TestInternalTokenRestoresUnmarkedFailedExternalScannerMutation(t *testing.T) {
+	lang := failedScanMutationLanguage(nil)
+	lang.ExternalScanner = rollbackFailedScanMutationExternalScanner{}
+	lookup := func(StateID, Symbol) uint16 { return 1 }
+	ts := acquireDFATokenSource(NewLexer(lang.LexStates, []byte("x")), lang, lookup, nil, nil, nil)
+	defer ts.Close()
+
+	tok := ts.Next()
+	if tok.Symbol != 1 || tok.ExternalScannerToken {
+		t.Fatalf("token = %+v, want internal symbol 1", tok)
+	}
+	cp, _, _, ok := ts.lastExternalScannerCheckpoint()
+	if !ok {
+		t.Fatal("internal token did not record a complete scanner checkpoint")
+	}
+	if len(cp.start) != 1 || cp.start[0] != 3 || len(cp.end) != 1 || cp.end[0] != 3 {
+		t.Fatalf("checkpoint = start %v end %v, want [3] to [3]", cp.start, cp.end)
+	}
+	if got := *ts.externalPayload.(*byte); got != 3 {
+		t.Fatalf("live scanner state = %d, want restored state 3", got)
+	}
+	if !ts.externalTokenEndSameAsStart {
+		t.Fatal("restored scanner mutation was classified as a changed state")
+	}
+}
+
+func TestRetainingExternalScannerRetryStartsFromOriginalSnapshot(t *testing.T) {
+	var observed []byte
+	lang := &Language{
+		Name:            "retaining-retry-test",
+		SymbolNames:     make([]string, 21),
+		ExternalSymbols: []Symbol{10, 20},
+		ExternalScanner: retainingRetryExternalScanner{observed: &observed, succeedOnSecond: true},
+	}
+	ts := acquireDFATokenSource(NewLexer(nil, nil), lang, nil, nil, nil, nil)
+	defer ts.Close()
+	el := &ExternalLexer{}
+	el.reset(nil, 0, 0, 0)
+
+	if !ts.runExternalScannerWithRetry(el, []bool{true, true}) {
+		t.Fatal("runExternalScannerWithRetry = false, want retry success")
+	}
+	if el.resultSymbol != 20 {
+		t.Fatalf("retry symbol = %d, want 20", el.resultSymbol)
+	}
+	if len(observed) != 2 || observed[0] != 3 || observed[1] != 3 {
+		t.Fatalf("scanner entry states = %v, want [3 3]", observed)
+	}
+	if got := *ts.externalPayload.(*byte); got != 4 {
+		t.Fatalf("live scanner state = %d, want successful retry end state 4", got)
+	}
+}
+
+func TestRetainingExternalScannerKeepsFinalFailedRetryState(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		staleResult  bool
+		wantObserved []byte
+	}{
+		{name: "exhausted alternatives", wantObserved: []byte{3, 3}},
+		{name: "stale result", staleResult: true, wantObserved: []byte{3}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var observed []byte
+			lang := &Language{
+				Name:            "retaining-final-failure-test",
+				SymbolNames:     make([]string, 31),
+				ExternalSymbols: []Symbol{10, 20},
+				ExternalScanner: retainingRetryExternalScanner{observed: &observed, staleResult: test.staleResult},
+			}
+			ts := acquireDFATokenSource(NewLexer(nil, nil), lang, nil, nil, nil, nil)
+			defer ts.Close()
+			el := &ExternalLexer{}
+			el.reset(nil, 0, 0, 0)
+
+			if ts.runExternalScannerWithRetry(el, []bool{true, true}) {
+				t.Fatal("runExternalScannerWithRetry = true, want final failure")
+			}
+			if !bytes.Equal(observed, test.wantObserved) {
+				t.Fatalf("scanner entry states = %v, want %v", observed, test.wantObserved)
+			}
+			if got := *ts.externalPayload.(*byte); got != 4 {
+				t.Fatalf("live scanner state = %d, want final failed attempt state 4", got)
+			}
+		})
+	}
+}
+
+func TestFailureRetentionTakesPrecedenceOverPreservationClaim(t *testing.T) {
+	var observed []byte
+	lang := &Language{
+		Name:            "contradictory-failure-capability-test",
+		SymbolNames:     make([]string, 31),
+		ExternalSymbols: []Symbol{10, 20},
+		ExternalScanner: contradictoryFailureCapabilityScanner{
+			retainingRetryExternalScanner: retainingRetryExternalScanner{
+				observed:    &observed,
+				staleResult: true,
+			},
+		},
+	}
+	ts := acquireDFATokenSource(NewLexer(nil, nil), lang, nil, nil, nil, nil)
+	defer ts.Close()
+	el := &ExternalLexer{}
+	el.reset(nil, 0, 0, 0)
+
+	if ts.runExternalScannerWithRetry(el, []bool{true, true}) {
+		t.Fatal("runExternalScannerWithRetry = true, want final failure")
+	}
+	if len(observed) != 1 || observed[0] != 3 {
+		t.Fatalf("scanner entry states = %v, want [3]", observed)
+	}
+	if got := *ts.externalPayload.(*byte); got != 4 {
+		t.Fatalf("live scanner state = %d, want retained state 4", got)
 	}
 }
 
@@ -428,6 +606,47 @@ func TestRelexExternalScannerTokenPreservesSkippedGapProvenance(t *testing.T) {
 	stack := newGLRStack(0)
 	if !realShiftGapIsParserPadding(source, &stack, relexed, 0) {
 		t.Fatalf("relexed scanner-owned gap rejected for %q; token=%+v", source[:relexed.StartByte], relexed)
+	}
+}
+
+func TestRelexExternalScannerTokenRejectsSyntheticEOFLookahead(t *testing.T) {
+	lang := &Language{
+		Name:            "external-no-lookahead-relex-test",
+		SymbolCount:     3,
+		TokenCount:      3,
+		SymbolNames:     []string{"end", "internal", "external"},
+		ExternalSymbols: []Symbol{2},
+		ExternalScanner: checkpointByteExternalScanner{},
+		LexModes:        []LexMode{{LexState: ^uint16(0)}},
+	}
+	ts := acquireDFATokenSource(NewLexer(nil, []byte("x")), lang, nil, nil, nil, nil)
+	defer ts.Close()
+	*ts.externalPayload.(*byte) = 3
+	ts.lexer.pos = 1
+	ts.lexer.col = 1
+	ts.externalTokenStart = append(ts.externalTokenStart[:0], 3)
+	ts.lastExternalTokenStartByte = 0
+	ts.lastExternalTokenEndByte = 1
+	ts.lastExternalTokenValid = true
+	tok := Token{
+		Symbol:               2,
+		StartByte:            0,
+		EndByte:              1,
+		EndPoint:             Point{Column: 1},
+		ExternalScannerToken: true,
+	}
+
+	if !ts.CanRelexFromTokenStart(tok) {
+		t.Fatal("checkpointed scanner did not permit the relex probe")
+	}
+	if got, ok := ts.RelexFromTokenStart(tok); ok {
+		t.Fatalf("relex = %+v, want rejection for a synthetic EOF lookahead", got)
+	}
+	if ts.lexer.pos != 1 || ts.lexer.col != 1 {
+		t.Fatalf("rejected relex kept lexer position (%d,%d), want (1,1)", ts.lexer.pos, ts.lexer.col)
+	}
+	if got := *ts.externalPayload.(*byte); got != 3 {
+		t.Fatalf("rejected relex kept scanner state %d, want 3", got)
 	}
 }
 

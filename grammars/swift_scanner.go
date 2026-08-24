@@ -434,6 +434,10 @@ func (SwiftExternalScanner) Deserialize(payload any, buf []byte) {
 
 func (SwiftExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
 
+// RetainsStateOnScanFailure reports that a failed scan can carry one trivia
+// boundary rune into the next scan. The runtime must record that end state.
+func (SwiftExternalScanner) RetainsStateOnScanFailure() bool { return true }
+
 func (s SwiftExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	state := payload.(*swtScannerState)
 	if len(s.externalToToken) > 0 {
