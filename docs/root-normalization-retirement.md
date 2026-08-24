@@ -998,6 +998,110 @@ Retire `dispatch.typescript` only after all of these conditions hold:
 Keep `dispatch.typescript` live until each condition passes.
 Keep the registry entry unchanged until each condition passes.
 
+## 2026-08-24 TypeScript current-main follow-up
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.typescript` live.
+
+Base commit: `ab84e809297e945a6debd52ec3e211956b497893`.
+This follow-up reruns the existing TypeScript receipt on the current main.
+It changes no parser or registry behavior.
+
+The focused Docker gate was:
+
+```text
+bash cgo_harness/docker/run_parity_in_docker.sh --no-build \
+  --repo-root /tmp/gotreesitter-normalization-after-csharp-20260824 \
+  --out-root /tmp/gotreesitter-normalization-after-csharp-20260824/harness_out/docker \
+  --label typescript-current-main-ab84 --memory 8g --cpus 1 --pids 4096 \
+  --gomemlimit 6GiB --goflags '-p=1' --test-parallel 1 --timeout 20m -- \
+  'cd /workspace/cgo_harness && GOMAXPROCS=1 go test . -tags treesitter_c_parity \
+  -run "^TestTypeScriptDispatchBlockerRoutes$|^TestTypeScriptMergeCapOneTypedArrowReceipt$|^TestTypeScriptDispatchBlockerReceiptDocument$" \
+  -count=1 -parallel 1 -timeout 20m -v'
+```
+
+The gate passed with exit code zero.
+Docker used image `gotreesitter/cgo-harness:go1.25-local`, 8 GiB memory, one
+central processing unit, 4,096 process IDs, and a 6 GiB Go memory limit.
+It used `GOMAXPROCS=1`, `GOFLAGS=-p=1`, one test worker, and a 20-minute timeout.
+It had no out-of-memory kill and no wall timeout.
+
+The route artifact directory is
+`/tmp/gotreesitter-normalization-after-csharp-20260824/harness_out/docker/20260824T102012Z-typescript-current-main-ab84`.
+Its container log SHA-256 is
+`5ed6103ec1d94a21570c02dd5e27067024383b61b59040c3a670a40109a40085`.
+Its metadata SHA-256 is
+`2f53f7d3d13f66545d55f7ac6f19d2398c0403bb663757704a15650b4fc84015`.
+Its inspection record SHA-256 is
+`75c98fc9f46ab991c18d9660dd9dfb08d5cfd52b25f1d379e948392f87c56a0e`.
+
+The grammar lock SHA-256 is
+`9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`.
+It pins TypeScript and TypeScript JSX (TSX) to commit
+`75b3874edb2dc714fb1fd77a32013d0f8699989f`.
+The embedded TypeScript blob SHA-256 is
+`46d8d4f7a0056db32e874500ae5b19170237e1628a63a9e3a401e0ee426d6126`.
+The embedded TSX blob SHA-256 is
+`bf8c490b0bbeb6d4150abce2edc193552e44b093893665dde69bd39e9e940e85`.
+The TypeScript scanner is present and reports
+`supports_incremental_reuse=true`.
+
+The tracked TypeScript source is 4,336 bytes.
+Its source SHA-256 is
+`40b4a7a06fde353d8c2b726acb16f59aab44d49d1b6257c37345c2a1f56b9fb7`.
+The issue-544 structural control is 2,777 bytes.
+Its source SHA-256 is
+`fe0ffa1df2c94d1f0ccde7d1aad3a50b90469fcfe1e98ad5812eba13c22809a4`.
+The remaining sources are inline controls in the focused test.
+
+Every shipping witness matches locked C on raw, production, compact,
+forest, and incremental routes.
+All shipping witnesses retain their locked-C deep digests.
+The table records the stable tree digest, dispatcher visit and rewrite counts,
+compact result, forest result, and incremental reuse identity.
+
+| Witness | Source SHA-256 | Locked-C and Go tree digest | Production dispatch | Compact | Forest | Incremental dispatch and reuse |
+| --- | --- | --- | --- | --- | --- | --- |
+| `tracked-1462-15` | `40b4a7a06fde353d8c2b726acb16f59aab44d49d1b6257c37345c2a1f56b9fb7` | `0c29d566e57e5bdee435a7c8f17578bc2b0e5ff53c8dfea720655fec2b9f7f39` | `1,462/15` | fallback: scheduler frontier | exact | `1,462/10`; 406 subtrees, 2,289 bytes |
+| `positive-simple` | `5967d633a6670814c4b5e0a8c889eb5c0e51155258d35d68a476eb1717e6e2ee` | `1e38064181b465fdf83382149c49a085ccad8cc2a7fcefad67b187c6d87ee619` | `12/0` | accepted | exact | `12/0`; 5 subtrees, 18 bytes |
+| `typed-arrow-return` | `8ede7d478c3201e1cbd1ba129ec7b844e71f174094be19ecaf27a2344a6d67f2` | `6c5d7858e8ca512ff1f3082e2f4be701ce95c4741ea01ddb41e1f2d681e83d00` | `21/0` | fallback: scheduler frontier | exact | `21/0`; 6 subtrees, 10 bytes |
+| `generic-arrow-comma` | `b0e90a18d9bdf1da875885b3ac4c0d80b0214b316f2d5ff2170023f91e62d849` | `61aa2071bbcdba4a421c3ebff9a2fdfa3bb282c799c85deab98c26b7a2a6adc0` | `27/0` | fallback: scheduler frontier | exact | `27/0`; 4 subtrees, 8 bytes |
+| `generic-call-simple` | `399364dd8ba692c16b2387a2954c653a75b2e52f0af88e5810bdc4d9555f1fb5` | `5fd25b615488dd97468bc371bfb05af01b4fa13d17559c52c35246d27174739b` | `14/0` | fallback: scheduler frontier | exact | `14/0`; 2 subtrees, 9 bytes |
+| `generic-call-selection-gap` | `7ffd2531b611cb09cd9d47e2be4b024d8b4c5f7b98a14e9a9fa73ed882f246bb` | `d0ba1c98d9058b3aff2795d1cf5b019a57306a6b247724f92dc961a62b802f02` | `51/0` | accepted | exact | `51/0`; 9 subtrees, 52 bytes |
+| `issue-544-structural-control` | `fe0ffa1df2c94d1f0ccde7d1aad3a50b90469fcfe1e98ad5812eba13c22809a4` | `6049f72952e720eb432bad16a60ca80f541f16785f17d2ea143b5e4ac3422103` | `832/2` | fallback: scheduler frontier | exact | `832/2`; 11 subtrees, 64 bytes |
+
+The tracked witness retains 15 production rewrites and 10 incremental rewrites.
+Its compact route falls back because the converged-path reduction lacks
+alternative-set coverage. The other compact fallbacks use the same scheduler
+frontier family. All accepted forest routes match locked C.
+All incremental routes preserve scanner-aware old-tree reuse.
+
+The controlled `GOT_GLR_MAX_MERGE_PER_KEY=1` typed-arrow diagnostic remains
+non-exact. Its Go digest is
+`43ea0e22e93ca342e3180c8675e86c043674bec8d056d775cffeb30f2e017a42`.
+Locked C remains
+`6c5d7858e8ca512ff1f3082e2f4be701ce95c4741ea01ddb41e1f2d681e83d00`.
+The first divergence is `/program`, where Go has an error and C does not.
+This diagnostic is outside the shipping profile.
+
+The follow-up remains `KEEP LIVE / NO-GO`.
+The tracked witness still requires 15 dispatcher rewrites.
+The authenticated TypeScript and TSX corpus, including `corpus_sources.lock`,
+remains unavailable.
+The generic-call selection test remains skipped.
+The held-out `webworker.generated.d.ts` witness remains unresolved under the
+default memory budget.
+Keep `dispatch.typescript` unchanged.
+
+Reopen retirement only after all of these conditions pass:
+
+1. Add authenticated TypeScript and TSX sources to the A0 census and restore `corpus_sources.lock`.
+2. Prove exact raw, production, compact, forest, incremental, and locked-C output for every registered witness.
+3. Reduce all production dispatcher rewrites to zero without a TypeScript-specific parser rule.
+4. Resolve the compact scheduler-frontier and typed-arrow selection gaps with grammar-agnostic proofs.
+5. Close the held-out webworker budget divergence and preserve scanner reuse.
+
+Keep the registry entry unchanged until every condition passes.
+
 ## 2026-08-24 Python dispatcher blocker receipt
 
 Status: `NO-GO`. Keep `dispatch.python` live.
