@@ -2493,6 +2493,119 @@ Reopen the SQL route only after a Docker gate proves all of these conditions:
 - fresh, compact, incremental, and locked-C trees match; and
 - the generated SQL dollar-quoted witness passes without a state remap.
 
+## C26ah generated SQL dollar-quote producer blocker
+
+C26ah used publication base
+`d72987b44b76cf39aa4ad0f5fff03860eed7cd0d`.
+The isolated worktree was `/tmp/gotreesitter-compact-next.oFLjU5`.
+
+Status: **NO-GO / KEEP LIVE**. Keep SQL compact admission gated.
+No parser, scanner, grammar, or compact admission change ships.
+The receipt adds one focused probe, one changelog entry, and this section.
+
+### Producer and witness
+
+The pinned SQL producer is `m-novikov/tree-sitter-sql` at commit
+`587f30d184b058450be2a2330878210c5f33b3f9`.
+The source hashes are:
+
+- `src/grammar.json`: `42f011860137175a5a0cb820d1a694e5ccca1d17f226729ff6a4e886910cde1c`.
+- `src/scanner.cc`: `d437ad9f517d7a1f4248ccd05abe58370b5040c0037c877dab1f0aefeaa04af6`.
+
+The generated language uses blob identity
+`4ffb2a6d09e2000126f10101db9028d28e0752ac3e4f83e401f045c3b028ca7c`.
+Its scanner identity is
+`7e493677411a501e6d8592c6b9cc158e21a1bfed44c72ca914e2d81e4e34861d`.
+The checked-in SQL blob identity is
+`e21421cbab52b54cf5ba15c8f78a2bb4729bf4e8c0da14368069e897de451268`.
+
+The witness is the 16-byte source `SELECT $$hey$$;\n`.
+Its source SHA-256 is
+`c65f30545110c37897fb7fe364af31ff572b35796963ec8fc59b37b76d319912`.
+The generated tree digest is
+`7ae91c65aebee3a10eeef68804af8b74bbf27620b200dfe842916898fc90dd46`.
+The checked-in tree digest is
+`f093882f4f27897036dd245c3e17f1dad2d7cd72e470e8594b5492150a2c451e`.
+The locked-C tree digest is the same checked-in digest.
+
+The first difference is `/source_file` child count.
+The generated tree has three children. The checked-in and locked-C trees have
+two children. The generated tree has an error. The other two trees are clean.
+This difference starts in the generated producer output, before compact replay.
+
+### Compact route evidence
+
+The focused probe checks the generated identity before it parses the witness.
+It checks the checked-in tree against the locked-C tree.
+It also checks the generated tree against both references.
+The probe is `cgo_harness/sql_c26ah_generated_dollar_quote_blocker_test.go`.
+
+The compact candidate recorded `routed=0` and `fallback=1`.
+Its exact fallback reason was:
+
+```text
+compact route declined at recovery [mechanism=recovery-entered]: did not accept EOF: generic scheduler has no table action for the elected token
+```
+
+The compact fallback tree equals the generated production tree.
+It does not claim compact parity. It preserves the current fail-closed route.
+
+### Focused Docker gate
+
+Run one SQL grammar with one CPU and one Go test worker:
+
+```sh
+GOMAXPROCS=1 bash cgo_harness/docker/run_parity_in_docker.sh \
+  --repo-root /tmp/gotreesitter-compact-next.oFLjU5 \
+  --out-root /tmp/gotreesitter-c26ah-artifacts \
+  --label c26ah-sql-blocker-gomax1 --no-build --memory 4g --cpus 1 \
+  --gomemlimit 3GiB --goflags -p=1 --test-parallel 1 --timeout 10m \
+  --mount /tmp/gotreesitter-sql-seed.ada3CT:/tmp/grammar_parity:ro -- \
+  'cd /workspace/cgo_harness && \
+   go test -tags "cgo treesitter_c_parity" . \
+   -run "^TestSQLC26ahGeneratedDollarQuoteBlocker$" -count=1 \
+   -parallel=1 -timeout=10m -v'
+```
+
+The run passed with exit code zero.
+It used one SQL grammar, one CPU, `GOMAXPROCS=1`, and `GOFLAGS=-p=1`.
+It reported no out-of-memory kill and no wall timeout.
+
+The artifact is
+`/tmp/gotreesitter-c26ah-artifacts/20260824T015950Z-c26ah-sql-blocker-final2`.
+
+- `container.log`: `40e12556fdbf0c806e1d54b71e59a0566f8e6eab09f62d9ceeb37742f7ce4d88`.
+- `metadata.txt`: `cd0c53681a3ae278e5ad6d2b26609952a868efa0550715803c9ed5dfe49eb01c`.
+- `inspect.json`: `f61f7fe393588d334610829acee2d3cfa34d892f7ed098c0be2f02c96e4f908b`.
+
+The existing strict grammargen regression still fails on this witness.
+The failure is the expected generated-versus-locked-C producer difference.
+The new receipt makes that blocker and the compact fallback explicit.
+
+### Rebase applicability
+
+Remote main added the Perl dispatcher receipt and related documentation after
+the original C26ah base.
+It did not change the SQL grammar lock, SQL blob, SQL scanner, grammargen
+inputs, parser core, or SQL parity test.
+The current hashes match the `6eed698a13e7371fa978adb893e8b89ad1cd81ba`
+hashes for every SQL executable input.
+The original focused artifact therefore remains applicable after this rebase.
+No Docker rerun was required.
+
+### C26ah decision and reopening condition
+
+Keep the SQL route live and gated. Do not add a parser-state remap.
+Do not add a SQL-specific symbol map.
+
+Reopen only after a producer or grammar revision makes the generated tree
+match the checked-in and locked-C trees for this witness.
+Then rerun the strict grammargen parity test and the compact route gate.
+Require equal table identity, scanner identity, fresh-tree equality, compact
+equality, incremental equality, and locked-C equality.
+
+No performance gate ran for C26ah. This receipt makes no performance claim.
+
 ## Corpus state
 
 The current manifest has these properties:
