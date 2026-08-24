@@ -204,3 +204,40 @@ is not safe without wider recovery validation.
 
 The 1 KiB known-divergence ratchet passes in
 `/tmp/gts-issue454-artifacts-rebase/20260822T230037Z-issue454-c-1k-ratchet-20260822`.
+
+## 2026-08-24 PHP compact fallback guard
+
+Publication base: `af056b2d90e50a8917b9389bf42dfdf75872035e`.
+
+Status: **KEEP LIVE / NO-GO**. Keep issue #454 open. Ship no parser change.
+
+The focused guard extends the existing PHP issue #454 parity test. It checks
+the compact candidate route against the production and locked-C trees.
+
+The edited PHP source has 140,287 bytes. Its SHA-256 is
+`cbf52f81ea212353a3bf04d7c9b37668b5cdfb6cd428c2d0cb3799a8e13ae82f`.
+The PHP grammar uses commit `3f2465c217d0a966d41e584b42d75522f2a3149e`.
+The embedded PHP grammar blob SHA-256 is
+`15724627db479c27304b43fa3b5ef7d8d81f85e3b9ce6d8575a847b2dbaa5cd5`.
+The locked-C artifact SHA-256 is
+`1daea60ac1ee31227b8e1ed3cbd76b841435fe693e95af65cc61dad447d27891`.
+
+The compact route recorded `routed=0` and `fallback=1`.
+Its fallback reason was:
+
+```text
+compact route declined at recovery [mechanism=recovery-entered]: did not accept EOF: generic scheduler has no table action for the elected token
+```
+
+The compact tree equals the production tree and the locked-C tree.
+The guard passed twice with one CPU, 4 GiB, `GOMAXPROCS=1`, and `GOFLAGS=-p=1`.
+Both runs had no out-of-memory kill and no wall timeout.
+
+The final artifacts are:
+
+- `/tmp/gotreesitter-compact-next2-artifacts/20260824T095540Z-issue454-php-compact-review-fix-1`
+- `/tmp/gotreesitter-compact-next2-artifacts/20260824T095557Z-issue454-php-compact-review-fix-2`
+
+This guard does not graduate PHP compact admission.
+Reopen the route only after a generic recovery proof removes the fallback and
+retains exact locked-C parity on the PHP witness.
