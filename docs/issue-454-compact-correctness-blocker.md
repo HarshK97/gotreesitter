@@ -253,8 +253,8 @@ kill and no wall timeout.
 
 The final artifacts are:
 
-- `/tmp/gotreesitter-php454-deep-guard-artifacts/20260824T110806Z-final-php454-2`
-- `/tmp/gotreesitter-php454-deep-guard-artifacts/20260824T110900Z-final-php454-3`
+- `/tmp/gotreesitter-php454-deep-guard-refresh-artifacts/20260824T124547Z-php454-refresh-1`
+- `/tmp/gotreesitter-php454-deep-guard-refresh-artifacts/20260824T124620Z-php454-refresh-2`
 
 This guard does not graduate PHP compact admission.
 Reopen the route only after a generic recovery proof removes the fallback,
