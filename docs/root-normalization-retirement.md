@@ -530,6 +530,98 @@ Trace any correction to scheduler action semantics. Keep the registry arm
 unchanged. Ship no parser, registry, grammar, scanner, or test behavior
 change.
 
+## 2026-08-24 SQL dispatcher blocker receipt
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.sql` live.
+
+Base commit: `ac90e46ace3c4ac6fb6bbc9f0897e449c949cfad`.
+This slice adds one focused test. It changes no parser, registry, or generated grammar.
+
+The registry arm is `dispatch.sql`. It calls
+`normalizeSQLRecoveredSelectRoot`, `normalizeSQLTrailingSelectListError`, and
+`normalizeSQLRecoveredTopLevelSelectStatements` in `parser_result_sql.go`.
+Its authoritative owner is `scheduler_action_semantics`.
+
+This receipt covers one trailing select-list recovery witness:
+`SELECT a, b,` followed by a newline. It exercises the second SQL normalizer.
+It does not certify the other two SQL normalizers.
+
+### Identity and witness
+
+The grammar lock SHA-256 is
+`9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`.
+The SQL grammar is `https://github.com/m-novikov/tree-sitter-sql` at commit
+`587f30d184b058450be2a2330878210c5f33b3f9`.
+The embedded SQL blob SHA-256 is
+`e21421cbab52b54cf5ba15c8f78a2bb4729bf4e8c0da14368069e897de451268`.
+The scanner identity is
+`7e493677411a501e6d8592c6b9cc158e21a1bfed44c72ca914e2d81e4e34861d`.
+The scanner binds the embedded grammar identity.
+
+The locked-C contract is `tree-sitter-c-v1`.
+The runtime is `0.25.1` at commit
+`f5afe475deb7c0bae6407fb776c76824f717bb61`.
+The locked SQL grammar artifact SHA-256 is
+`f13ad13cdc0f748a362e50f92e06f685736905db0bbbdbd2b3dffd0307232ec2`.
+
+The witness source has 13 bytes and SHA-256
+`c2826e3d8fc7ec0a99c4e2ecc37514a3d6bd0a4aa60b4ff65dc2382629d1b11e`.
+The locked-C deep digest is
+`9f256e76a2192f6e3f6d98bf57d773eb02d362ca525efe0caec163567a272bd1`.
+The locked-C root has an error and one child.
+
+### Route evidence
+
+The raw Go digest is
+`8c4095130f0da24ad8d3ce0dd9c56becfe3e70e4eaed118ef132933b2f492848`.
+Its first divergence is `/source_file`, category `shape`, with Go children 2
+and locked-C children 1.
+The raw route records no SQL dispatch.
+
+The production, compact, and incremental Go digests match locked C.
+The production and incremental routes record
+`dispatch.sql` as `1/1/10/7`.
+The compact route uses the same normalizer after its recovery fallback.
+The compact counters record zero routed candidates and one fallback.
+The fallback reason is:
+
+```text
+compact route declined at recovery [mechanism=recovery-entered]: did not accept EOF: generic scheduler has no table action for the elected token
+```
+
+The forest route declines the recovery witness.
+The incremental route matches locked C after an appended recovery edit.
+It reuses zero subtrees and zero bytes.
+
+The focused Docker run used one SQL grammar and one central processing unit.
+It set a 4 GiB memory limit, a 3 GiB Go memory limit, `GOMAXPROCS=1`, and `-p=1`.
+The container inspection record contains `GOMAXPROCS=1`.
+It passed without timeout or out-of-memory failure.
+
+The artifact directory is
+`/tmp/gotreesitter-normalization-next.t8Btcx/harness_out/sql-n31v-de197-final-check/20260824T075804Z-sql-n31v-de197-final-check`.
+Its container log, metadata, and inspection hashes are
+`02ad324011cf5a4a52cc83026b0902bf6276ba282ca319283216ab1e657e247e`,
+`6a4d7e0285c0a91d6967a03f4a043c32fac7416f9fafa061ec6223e8be33aab6`, and
+`e248667b64b7c39e5b1dac1d45447cbc50dbe7cebf08d43122c792b844042022`.
+
+### Decision
+
+Keep `dispatch.sql` live. The raw producer still diverges on the registered
+recovery shape. The compact route falls back. The forest route declines.
+This receipt does not cover the recovered-root or top-level-statement helpers.
+No parser or registry change ships.
+
+Reopen SQL retirement only after all conditions pass:
+
+1. Add witnesses for all three SQL compatibility helpers.
+2. Match locked C on raw, production, compact, forest, and incremental routes.
+3. Prove exact native recovery for the trailing-list witness.
+4. Add authenticated SQL corpus entries to the census denominator.
+5. Preserve the SQL scanner identity and a sound incremental reuse contract.
+
+Keep the registry arm unchanged until every condition passes.
+
 ## End state
 
 The root is clean when all of the following are true:
