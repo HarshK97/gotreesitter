@@ -1,6 +1,7 @@
 # Issue #454 compact-parser correctness blocker
 
-Status: **NO-GO**. Ship no parser change from this investigation. Keep issue
+Status: **KEEP LIVE**. The PHP recovery-leaf candidate restores locked-C
+correctness. Compact admission and performance work remain open. Keep issue
 [#454](https://github.com/odvcencio/gotreesitter/issues/454) open.
 
 ## Scope
@@ -205,14 +206,23 @@ is not safe without wider recovery validation.
 The 1 KiB known-divergence ratchet passes in
 `/tmp/gts-issue454-artifacts-rebase/20260822T230037Z-issue454-c-1k-ratchet-20260822`.
 
-## 2026-08-24 PHP compact fallback guard
+## 2026-08-24 PHP recovery-leaf correction
 
-Publication base: `c25686c882affd7408e5ef4a7d65e92cc8391fab`.
+Candidate base: `55681868d3a23971d042f9f79083fd6d39c7e33b`.
 
-Status: **KEEP LIVE / NO-GO**. Keep issue #454 open. Ship no parser change.
+Status: **CORRECTNESS FIX / KEEP LIVE**. Keep issue #454 open.
 
-The focused guard extends the existing PHP issue #454 parity test. It checks
-the compact candidate route against the production and locked-C trees.
+The correction adds positive internal deterministic finite automaton (DFA)
+provenance to tokens. Recovery requires a source-bearing parsed stack prefix.
+It then records a region proof only for a direct, visible, named DFA token.
+The prefix proof rejects pending, missing, error, dirty, and invalid payloads.
+It rejects state mismatches and payloads that end after the current token starts.
+It rejects the end-of-input symbol and zero-width tokens. It also rejects
+generated, external, missing, no-lookahead, and error-mode tokens.
+
+Each later absorbed token must carry its own positive DFA proof. A region
+proof cannot clear a later token by itself. A skipped-prefix token can qualify
+only when the internal DFA produced that token directly.
 
 The edited PHP source has 140,287 bytes. Its SHA-256 is
 `cbf52f81ea212353a3bf04d7c9b37668b5cdfb6cd428c2d0cb3799a8e13ae82f`.
@@ -222,13 +232,6 @@ The embedded PHP grammar blob SHA-256 is
 The locked-C artifact SHA-256 is
 `1daea60ac1ee31227b8e1ed3cbd76b841435fe693e95af65cc61dad447d27891`.
 
-The compact route recorded `routed=0` and `fallback=1`.
-Its fallback reason was:
-
-```text
-compact route declined at recovery [mechanism=recovery-entered]: did not accept EOF: generic scheduler has no table action for the elected token
-```
-
 The `gts-deep-tree-v1` stream covers type and named identity, incoming fields,
 byte and point spans, and child order. It also covers extra and missing flags,
 error flags, and the `HasError` flag.
@@ -237,25 +240,18 @@ The pinned deep digests are:
 
 | Route | Deep digest | Root `HasError` |
 | --- | --- | --- |
-| Production Go | `4456730ce6919a623dd6db2e6ae7f11933aeb454c7e337b7da5c08a8d9ba267c` | `true` |
-| Compact fallback Go | `4456730ce6919a623dd6db2e6ae7f11933aeb454c7e337b7da5c08a8d9ba267c` | `true` |
+| Raw Go | `1516308c38163089778464ad171875308c559af11af7c8c03ee17ae4eacd23c6` | `true` |
+| Production Go | `1516308c38163089778464ad171875308c559af11af7c8c03ee17ae4eacd23c6` | `true` |
+| Compact fallback Go | `1516308c38163089778464ad171875308c559af11af7c8c03ee17ae4eacd23c6` | `true` |
 | Locked C | `1516308c38163089778464ad171875308c559af11af7c8c03ee17ae4eacd23c6` | `true` |
 
-All three roots report `HasError=true`.
+The raw, production, compact fallback, and locked-C deep digests are equal.
+All four roots report `HasError=true`.
 
-The compact tree equals the production tree. The production and compact deep
-digests differ from the locked-C digest. This full comparison keeps the PHP
-route at **NO-GO**.
+The compact route recorded `routed=0` and `fallback=1`. Its fallback reason
+still reports `mechanism=recovery-entered`. The compact parser does not accept
+this recovery path yet.
 
-The guard passed twice with one CPU, 4 GiB, one test worker, a 20-minute
-timeout, `GOMAXPROCS=1`, and `GOFLAGS=-p=1`. Both runs had no out-of-memory
-kill and no wall timeout.
-
-The final artifacts are:
-
-- `/tmp/gotreesitter-php454-deep-guard-refresh-artifacts/20260824T124547Z-php454-refresh-1`
-- `/tmp/gotreesitter-php454-deep-guard-refresh-artifacts/20260824T124620Z-php454-refresh-2`
-
-This guard does not graduate PHP compact admission.
-Reopen the route only after a generic recovery proof removes the fallback,
-matches both Go route digests to locked C, and preserves all deep-digest fields.
+This correction does not graduate PHP compact admission. It does not close
+the remaining issue #454 performance work. The incremental memory-budget
+fallback and the large-file resident-set-size target also remain open.
