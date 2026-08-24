@@ -1004,6 +1004,13 @@ for tags and release notes while still in `0.x`.
   `docs/root-normalization-retirement.md` for current artifact hashes and
   reopening conditions.
 
+- Recorded the PHP issue #454 compact fallback guard at main commit
+  `af056b2d90e50a8917b9389bf42dfdf75872035`. The 140,287-byte edited witness
+  matched production and locked C. Compact recorded `routed=0` and
+  `fallback=1`. Two focused Docker runs passed with one CPU and 4 GiB.
+  Keep issue #454 open. Ship no parser change. See
+  `docs/issue-454-compact-correctness-blocker.md`.
+
 - Reject the issue #454 generic recovery candidate from PR #793. The candidate
   code and test hash is
   `71fdb2ab00f8f31e74b7e165f381c0856bd3720abdeb4d1556454d0cc75c50fa`.
