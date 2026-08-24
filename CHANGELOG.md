@@ -60,6 +60,17 @@ for tags and release notes while still in `0.x`.
   witness flips the root error flag. The checked-in Julia source keeps a type
   divergence. Compact falls back on two witnesses, and the authenticated corpus
   lock is absent. Keep the arm live. No parser or registry change is included.
+- Recorded the next single-grammar normalization blocker, `dispatch.kotlin`,
+  at base `d72987b44b76cf39aa4ad0f5fff03860eed7cd0d`.
+  The focused Docker gate used the parser-produced witness
+  `tasks.named<KotlinCompile>("compile") {}`.
+  The raw and production deep digests differ.
+  Production records `dispatch.kotlin` as checked 1, run 1, visited 22,
+  and rewritten 23. The recovered-root subpass records zero rewrites.
+  Keep the parent arm live. Stop before compact, strict forest, edited
+  incremental, fatal locked-C, survivor, registry, or dead-reference proofs.
+  Reopen only after native Kotlin derivation emits every listed shape without
+  parent rewrites or parser-state changes. No parser or registry change ships.
   See `docs/root-normalization-retirement.md`.
 
 - Recorded the next unreceipted `dispatch.templ` blocker at base
