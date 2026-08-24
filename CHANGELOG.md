@@ -102,6 +102,17 @@ for tags and release notes while still in `0.x`.
   parent rewrites or parser-state changes. No parser or registry change ships.
   See `docs/root-normalization-retirement.md`.
 
+- Recorded a TypeScript current-main follow-up at base
+  `ab84e809297e945a6debd52ec3e211956b497893`.
+  The one-CPU Docker gate reran raw, production, compact, forest, incremental,
+  locked-C, scanner, and cap-one typed-arrow routes.
+  The tracked witness keeps 15 production rewrites, 10 incremental rewrites,
+  406 reused subtrees, and 2,289 reused bytes.
+  Compact keeps its scheduler-frontier fallback, and the authenticated
+  TypeScript and TSX corpus lock remains absent.
+  Keep the arm live. No parser or registry change is included.
+  See `docs/root-normalization-retirement.md`.
+
 - Recorded the next unreceipted `dispatch.templ` blocker at base
   `3c2a2106102769bab891047174dbcfec15045e74`. The A0 manifest records three
   Templ files, three checks, three runs, 1138 visited nodes, 76 rewrites, and

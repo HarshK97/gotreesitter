@@ -342,6 +342,18 @@ func TestTypeScriptDispatchBlockerReceiptDocument(t *testing.T) {
 		"webworker.generated.d.ts",
 		"was not rerun locally",
 		"Keep `dispatch.typescript` live until",
+		`## 2026-08-24 TypeScript current-main follow-up`,
+		`ab84e809297e945a6debd52ec3e211956b497893`,
+		`20260824T102012Z-typescript-current-main-ab84`,
+		`5ed6103ec1d94a21570c02dd5e27067024383b61b59040c3a670a40109a40085`,
+		`2f53f7d3d13f66545d55f7ac6f19d2398c0403bb663757704a15650b4fc84015`,
+		`75c98fc9f46ab991c18d9660dd9dfb08d5cfd52b25f1d379e948392f87c56a0e`,
+		`46d8d4f7a0056db32e874500ae5b19170237e1628a63a9e3a401e0ee426d6126`,
+		`bf8c490b0bbeb6d4150abce2edc193552e44b093893665dde69bd39e9e940e85`,
+		`All shipping witnesses retain their locked-C deep digests.`,
+		`The tracked witness retains 15 production rewrites and 10 incremental rewrites.`,
+		`406 subtrees, 2,289 bytes`,
+		`GOT_GLR_MAX_MERGE_PER_KEY=1`,
 	} {
 		marker = strings.Join(strings.Fields(marker), " ")
 		if !strings.Contains(document, marker) {
