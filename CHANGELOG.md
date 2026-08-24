@@ -152,6 +152,21 @@ for tags and release notes while still in `0.x`.
   that parity gap and the complete replay contract are resolved. See
   `docs/compact-route-real-corpus-matrix.md`.
 
+- Recorded the C26ah generated SQL dollar-quote producer blocker at base
+  `d72987b44b76cf39aa4ad0f5fff03860eed7cd0d`.
+  The 16-byte witness `SELECT $$hey$$;\n` has source SHA-256
+  `c65f30545110c37897fb7fe364af31ff572b35796963ec8fc59b37b76d319912`.
+  The generated tree has three source-file children and an error.
+  The checked-in and locked-C trees have two children and no error.
+  Their deep digest is
+  `f093882f4f27897036dd245c3e17f1dad2d7cd72e470e8594b5492150a2c451e`.
+  The generated digest is
+  `7ae91c65aebee3a10eeef68804af8b74bbf27620b200dfe842916898fc90dd46`.
+  Compact admission recorded zero routes and one fallback.
+  The fallback used the generic recovery no-table-action reason.
+  Keep SQL compact admission gated. No parser, scanner, or grammar change
+  ships. See `docs/compact-route-real-corpus-matrix.md`.
+
 - Added authenticated generated-SQL scanner identity to the grammargen C
   parity route. The route now reloads the generated blob through `LoadLanguage`
   before scanner adaptation. The scanner binds checkpoints to exact generated
