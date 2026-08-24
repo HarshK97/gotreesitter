@@ -11,6 +11,109 @@ The mechanically checked compatibility inventory remains
 [`testdata/result_compat_ownership_v1.json`](../testdata/result_compat_ownership_v1.json).
 This document defines the retirement program around that inventory.
 
+## 2026-08-24 Julia dispatcher blocker receipt
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.julia` live. Make no parser or registry change.
+
+The evidence base is `b35b86cb84d620305515abf970d5598c9573a48b`.
+The first-parent history and the base documents contain no route-complete Julia receipt.
+The registry entry is `dispatch.julia`. It calls `normalizeJuliaCompatibility` in
+`parser_result_julia.go`. Canopy confirms five Julia sub-repair functions under this arm.
+The authoritative owner is `scheduler_action_semantics`.
+
+### Identity and coverage
+
+The grammar lock SHA-256 is
+`9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`.
+The Julia grammar is `https://github.com/tree-sitter/tree-sitter-julia` at
+`e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3`.
+The embedded Julia blob SHA-256 is
+`c716f2b9ee3852cc25a26107b7a1c78b9f76585fa77774d8f8a1b47ad590134f`.
+The C artifact SHA-256 is
+`ac44385e88e2f5dc8c78dafef4eaf28f89bd2f922cc6a68e282b1b7b21f7eb8c`.
+The A0 and tracked manifest hashes are
+`215df59aa56d28caa403f799733ef915db1c4ac07eb2bc96a9402f80cf67f80a` and
+`be584a0a4a26f0ca5268a7845cf3f04247e6b57259b9c7057e8eb2c9af26f839`.
+
+The A0 manifest excludes Julia. The tracked census also excludes Julia.
+The authenticated corpus lock is absent. Its sidecar records
+`41c744279c8b1d7c9fe7b1b8e26fba733423e77cd48efea46927309c22d163ea`.
+The Julia external scanner advertises incremental reuse, stateless operation,
+and scan-failure state preservation.
+
+The focused test is `cgo_harness/julia_dispatch_blocker_receipt_test.go`.
+It pins one recovery witness, one clean witness, and one checked-in Julia source.
+It checks raw, production, compact, forest, incremental, and locked-C routes.
+
+### Julia route evidence
+
+The digest format is `gts-deep-tree-v1`.
+
+| Witness | Locked C | Raw | Production | Compact | Forest | Incremental |
+| --- | --- | --- | --- | --- | --- | --- |
+| `recovered-return-range` | `e3e63066738c5bec861d489d05ae4dfb391a61b1d9d4ef7790f33a2af53fe4a6` | same as C | `67734bc3f92b669f6fbdff0ac12f61954d831afaa47efc85e0e75e6d9d321772` | same as production | same as production | same as production |
+| `clean-program` | `f71944da957be91e8f455b6bf50cbce30e87a2cee3fdf26c4eaccc5a32772d30` | same as C | same as C | same as C | same as C | same as C |
+| `real-julia-utils` | `d26ec18b262399c0ddef69b993cc2e6b063a22008b6882068fa172b1c4ec99b2` | `0557559a3ec5dc431793b04a92e7c83666a53da670cb33b0d1a19cb2d84cc6f3` | same as raw | same as raw | same as C | same as raw |
+
+The recovered witness flips the root error flag from false to true.
+Its first divergence is `/source_file`, category `error`, Go `true`, C `false`.
+The Julia arm records `1/1/23/12` on production, compact, forest, and incremental.
+The compact route falls back because the accepted root contains an error.
+Incremental reuse keeps four subtrees and 18 bytes.
+
+The clean witness records `1/1/21/0` on production, forest, and incremental.
+Compact admission accepts it with routed delta `1` and fallback delta `0`.
+Incremental reuse keeps three subtrees and 24 bytes.
+
+The checked-in source is 1,089 bytes with SHA-256
+`d81017a2d640f6c84f2ca2a7030687049b7334bdb75ad5c50302b29052ecf79c`.
+Its first divergence is a `juxtaposition_expression` versus `binary_expression` type.
+The divergence path ends at
+`/source_file/function_definition[4]/block[2]/for_statement[4]/block[2]/while_statement[2]/block[2]/assignment[0]/parenthesized_expression[2]/binary_expression[1]/parenthesized_expression[0]/binary_expression[1]/binary_expression[0]/parenthesized_expression[2]/juxtaposition_expression[1]`.
+Forest matches C. Compact falls back at the scheduler frontier.
+Incremental parsing reuses three subtrees and 18 bytes, then reports
+`incremental_parse_full_retry`.
+
+### Julia Docker evidence and decision
+
+Both focused runs used image `sha256:5060d2a11578710fdb0adc48e638efab98b3e7ff18bb5082596911fe86011b08`.
+Each run used one CPU, 4 GiB, 512 process IDs, `GOMAXPROCS=1`, and `GOFLAGS=-p=1`.
+Both runs passed without timeout or out-of-memory failure.
+
+The first rebased passing artifact directory is
+`/tmp/gotreesitter-julia-rebase-b35-run1/20260824T024837Z-julia-b35-run1`.
+Its container log, metadata, and inspect hashes are
+`fbcb18b9afc989db5eef56f485538012ace21b44ceb4d67053d090ed2eb363d7`,
+`2dbe6c598c0b7d3a68a299220a76efff3d312fba9d1ed30a8fab9b9082bacd11`, and
+`2b0a05aed3bf7b3ea45edb3962e00266002f148e66333af1a2a2f443273487fc`.
+
+The second rebased passing artifact directory is
+`/tmp/gotreesitter-julia-rebase-b35-run2/20260824T024856Z-julia-b35-run2`.
+Its container log, metadata, and inspect hashes are
+`96991a05c339ca3cbeac43396949feb173cbe89df9e7c177c6781e6bb9ad442b`,
+`2bd1c41b9e38eb45eebcb80c897a6f18c810c7ae850bd86ac7408ef456b8a32f`, and
+`c8dbfca58df64dbf6ecf147c11536496060408936b775231e2b0c42f072431f0`.
+
+The rebased main adds parser-core table-identity checks and replay guards after
+the original `ae6e4944` base. It also adds Perl, SQL, and performance receipts.
+The Julia parser, grammar, scanner, and parity inputs remain unchanged.
+The focused Julia test ran twice on the rebased main with identical route results.
+
+Keep `dispatch.julia` live. The recovery witness changes the root error flag.
+The checked-in source retains a type divergence. Compact falls back on two witnesses.
+The authenticated Julia corpus is absent from both census denominators.
+
+Reopen retirement only after all conditions pass:
+
+1. Add authenticated Julia witnesses to the A0 and tracked census manifests.
+2. Restore the authenticated corpus lock and record its Julia source entries.
+3. Match locked C on raw, production, compact, forest, and incremental routes.
+4. Resolve the recovered root error flag without a Julia-specific parser rule.
+5. Preserve scanner-aware incremental reuse without a full-retry divergence.
+6. Re-trigger or retire each of the five Julia sub-repairs under current grammar bytes.
+
+Keep the registry arm unchanged until every condition passes.
+
 ## 2026-08-24 C and C++ dispatcher blocker receipt
 
 Status: `KEEP LIVE / NO-GO`. Keep `dispatch.c_cpp` live.
