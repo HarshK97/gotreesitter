@@ -241,6 +241,19 @@ for tags and release notes while still in `0.x`.
   Keep SQL compact admission gated. No parser, scanner, or grammar change
   ships. See `docs/compact-route-real-corpus-matrix.md`.
 
+- Recorded the C26ak generated SQL `CREATE DOMAIN AS` producer witness at base
+  `83e0cfbc30ad82e2f327d58e35eea9f438a0ffda`.
+  The 27-byte witness `CREATE DOMAIN test AS text;` has source SHA-256
+  `0cad93f1b70ffa192008df866587c05b206ee404cedd5a0025f542c39c6a504b`.
+  Generated and checked-in trees are both clean with two root children.
+  The generated `CREATE_DOMAIN` node has one child; locked C has none.
+  The generated digest is
+  `67366d68529459613040eb60c5eef47b371fd3091dbe3283c82d7bcff287ea9c`.
+  The checked-in and locked-C digest is
+  `d0daa4279f00eb8c7278992cff6a870c98bf3deee2292b28f997adbe2f434916`.
+  Keep SQL compact admission gated. No parser, scanner, or grammar change
+  ships. See `docs/compact-route-real-corpus-matrix.md`.
+
 - Added authenticated generated-SQL scanner identity to the grammargen C
   parity route. The route now reloads the generated blob through `LoadLanguage`
   before scanner adaptation. The scanner binds checkpoints to exact generated
