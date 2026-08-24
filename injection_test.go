@@ -449,6 +449,27 @@ func TestInjectionParserEmptySource(t *testing.T) {
 	}
 }
 
+func TestProbeInjectionParserParseIncrementalNilOldResult(t *testing.T) {
+	parentLang := buildContainerLanguage()
+	ip := NewInjectionParser()
+	ip.RegisterLanguage("container", parentLang)
+
+	result, err := ip.ParseIncremental([]byte("[value]"), "container", nil)
+	if err != nil {
+		t.Fatalf("ParseIncremental with nil old result: %v", err)
+	}
+	if result == nil || result.Tree == nil {
+		t.Fatal("ParseIncremental with nil old result returned no tree")
+	}
+	if result.Tree.RootNode() == nil {
+		t.Fatal("ParseIncremental with nil old result returned no root node")
+	}
+	root := result.Tree.RootNode()
+	if got := string(root.Text([]byte("[value]"))); got != "[value]" {
+		t.Errorf("root text = %q, want %q", got, "[value]")
+	}
+}
+
 func TestInjectionResultRanges(t *testing.T) {
 	parentLang := buildContainerLanguage()
 	childLang := buildArithmeticLanguage()
