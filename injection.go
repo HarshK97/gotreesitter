@@ -198,6 +198,10 @@ func (ip *InjectionParser) ParseUTF16Bytes(source []byte, parentLang string, ord
 func (ip *InjectionParser) ParseIncremental(source []byte, parentLang string,
 	oldResult *InjectionResult) (*InjectionResult, error) {
 
+	if oldResult == nil {
+		return ip.Parse(source, parentLang)
+	}
+
 	// Detach prevResult now; release it after parsing so that oldResult.Tree
 	// (which may be the same object) remains valid throughout the parse.
 	prev := ip.prevResult
