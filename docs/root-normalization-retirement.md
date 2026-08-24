@@ -463,6 +463,73 @@ coverage, recovery incremental telemetry is recorded, and every registered
 witness matches locked C on all required routes. Then trace the correction to
 scheduler action semantics. Ship no parser or registry change.
 
+## 2026-08-24 AWK current-main follow-up
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.awk` live.
+
+This follow-up uses current main commit
+`83e0cfbc30ad82e2f327d58e35eea9f438a0ffda`. It changes no parser, registry,
+grammar, scanner, or fixture input. The AWK production inputs remain byte
+identical to the prior receipt base `5648911ecf509df8ec870a1214917d9e95cf54f1`.
+The focused guard remains in
+`cgo_harness/awk_dispatch_blocker_receipt_test.go`.
+
+Run one language in Docker with one CPU:
+
+```text
+bash cgo_harness/docker/run_parity_in_docker.sh --no-build \
+  --repo-root /tmp/gotreesitter-normalization-exec.HlrKEC \
+  --out-root /tmp/gotreesitter-normalization-exec.HlrKEC/harness_out/current-awk \
+  --label awk-current-main --memory 8g --cpus 1 --pids 4096 \
+  --gomemlimit 6GiB --goflags '-p=1' --test-parallel 1 --timeout 20m -- \
+  "cd /workspace/cgo_harness && GOMAXPROCS=1 go test . -tags treesitter_c_parity \
+  -run '^TestAWKDispatchBlockerRoutes$|^TestAWKDispatchBlockerReceiptDocument$' \
+  -count=1 -parallel 1 -timeout 20m -v"
+```
+
+The run passed at `2026-08-24T05:32:15Z`. Docker used image
+`gotreesitter/cgo-harness:go1.25-local`, 8 GiB memory, one CPU, 4,096 process
+IDs, `GOMAXPROCS=1`, `GOFLAGS=-p=1`, and `GOMEMLIMIT=6GiB`.
+The metadata SHA-256 is
+`6aac46fb1afa1fb9653273b2a874857374984b5e9a8b88ac949734b0935a6537`.
+The container log SHA-256 is
+`7d97747ba74a25ef94eb953f6ddcef1c6f71042cd57644aa06dc1633c4e956af`.
+The inspect record SHA-256 is
+`469c62ac54e8df1c3d46012b04694b0727368eb80cf9f5a2a7de6e22abf79176`.
+
+The clean witness remains exact on raw, production, compact, forest, and
+incremental routes. Its source SHA-256 is
+`99d1043aabedfc2a53a4d50d35fd0e5f257beb49612617c0855c37ab4baa6ec1`.
+Every clean route digest is
+`6cd4e8645947bff0604ea5131f9b2188322a021b84db5f3f7c729a76b330d5d2`.
+The recovery witness remains non-exact. Raw Go has 454 program children,
+production and compact have 408, and locked C has 338. The raw digest is
+`6d53efe8af8b1e47aaf1defa8d2a727a6bcd43c7a9fc37516c6bb2b45ad0db56`.
+Production and compact digest to
+`cead9d68f270583fa37ed19b470ca4482ce315b41a30528b7432e95a07fefee8`.
+Locked C digests to
+`bb33c51db03cf6f16c5b206ce6d47d8369e4904f86466fecd9440311e5995925`.
+The compact route falls back, and the forest route declines. Recovery
+incremental telemetry is still absent.
+
+The receipt does not support retirement.
+
+Reopen retirement only after all conditions pass:
+
+- Add the authenticated AWK corpus to the A0 manifest and tracked census.
+- Record recovery incremental telemetry for reuse or retry behavior.
+- Match locked C for every registered witness on these routes:
+  - raw
+  - production
+  - compact
+  - forest
+  - incremental
+  - locked-C
+
+Trace any correction to scheduler action semantics. Keep the registry arm
+unchanged. Ship no parser, registry, grammar, scanner, or test behavior
+change.
+
 ## End state
 
 The root is clean when all of the following are true:
