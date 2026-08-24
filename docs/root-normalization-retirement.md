@@ -784,6 +784,86 @@ and every registered recovery witness matches locked C on raw, production,
 compact, forest, incremental, and C-oracle routes. Require zero dispatcher
 rewrites on the matching witnesses. Keep the registry unchanged.
 
+## 2026-08-24 C# current-main follow-up
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.c_sharp` live.
+
+This follow-up uses current main commit
+`83e0cfbc30ad82e2f327d58e35eea9f438a0ffda`. The C# production inputs remain
+byte-identical to the prior receipt base
+`ef57c9d1b73bac046ef40f2a111bb76db643ebfd`. The grammar blob SHA-256 remains
+`7ad425e89733339dde94e3c03b762ae478fb453b530493f5d62e1ae7537e1784`.
+Canopy identifies `normalizeCSharpCompatibility` in
+`parser_result_csharp.go:62` and its dispatcher call through
+`runLanguageResultCompatibility` in `parser_result_compat.go:103`.
+The focused guard remains in
+`cgo_harness/csharp_dispatch_blocker_receipt_test.go`.
+
+Run one language in Docker with one CPU:
+
+```text
+bash cgo_harness/docker/run_parity_in_docker.sh --no-build \
+  --repo-root /tmp/gotreesitter-normalization-next.vpR9ZU \
+  --out-root /tmp/gotreesitter-normalization-next.vpR9ZU/harness_out/current-csharp \
+  --label csharp-current-main --memory 8g --cpus 1 --pids 4096 \
+  --gomemlimit 6GiB --goflags '-p=1' --test-parallel 1 --timeout 20m -- \
+  "cd /workspace/cgo_harness && GOMAXPROCS=1 go test . -tags treesitter_c_parity \
+  -run '^TestCSharpDispatchBlockerRoutes$|^TestCSharpDispatchBlockerReceiptDocument$' \
+  -count=1 -parallel 1 -timeout 20m -v"
+```
+
+The run passed at `2026-08-24T05:47:53Z`. Docker used image
+`gotreesitter/cgo-harness:go1.25-local`, 8 GiB memory, one CPU, 4,096 process
+IDs, `GOMAXPROCS=1`, `GOFLAGS=-p=1`, and `GOMEMLIMIT=6GiB`.
+The metadata SHA-256 is
+`b97171a6ac31b12a268b6879f5a6bb89e7d1f268177144f6463f3d24cff5279b`.
+The container log SHA-256 is
+`ef160ec41ae9381f6fc7c7c0090a0c5b8647666d95e34356d31e7be7b834c131`.
+The inspect record SHA-256 is
+`dbfefadfb8280de40184900525cef9883e0af3653f575ed6c72c409d8b828ca9`.
+
+The positive control remains exact on raw, production, compact, forest, and
+incremental routes. Its source SHA-256 is
+`a6946abc5b7086a1ba0d6cd585882b3b8a20d96b6e578351cf07ecf993964362`.
+Every route digest is
+`58cdc6772314e0e82478a1d5811db6c8c09d939b5ac690ced9fb9695e0946ae7`.
+The production, forest, and incremental passes visit 22 nodes and rewrite
+zero nodes. The external scanner does not support incremental reuse.
+
+The A0 witness remains non-exact. Its source SHA-256 is
+`d76fd62cfc90076c11d86cb7d7a0058df181231aa3b34f30e549f650b5294d4a`.
+The raw digest is
+`b68127ae4dc6e4f18ac52af73e4c12ca97d7e4ae23166a7fc9d449cb227508dc`.
+Production, compact, and incremental digest to
+`6e5eb91f5577569ca2adebf26056095af492a5921ed09c72b05cba045dca57dc`.
+Locked C digests to
+`17a882ecc47150a396236512827eb2dd077ff2d65d9923d79d4ba98cb0b66abf`.
+The first raw divergence is `/compilation_unit`, with five Go children and
+six C children. Production, compact, and incremental retain a root error
+divergence. Each dispatch pass visits 2,093 nodes and rewrites 2,085 nodes.
+Compact falls back. Forest declines. Incremental reuse is zero.
+
+The issue #454 witness remains non-exact. Its Go digest is
+`4e6e7e9f33ca204763aff7a4d3e8ab4aee089ad057a9515cbc37a7c9a35f49aa`.
+Locked C digests to
+`d9ca44d4b6d5d7d555e5066a2c45fa329afb0fa237791746abe855fd31494ae4`.
+The recovery divergence remains at the recorded integer literal. Production,
+compact, and incremental each visit 57,067 nodes and rewrite zero nodes.
+Compact falls back. Forest declines. Incremental reuse is zero.
+
+The malformed witness remains non-exact. Its Go digest is
+`5140aac5a98ce1a8fa774400df978fa57b87ffcbe1d66fb159a82fe0de6553e2`.
+Locked C digests to
+`b252b21dc16f944cda8457956f65879a0222792efd936673448083a3b678aabc`.
+Production, compact, and incremental each visit 19 nodes and rewrite zero
+nodes. Compact falls back. Forest declines. Incremental reuse is zero.
+
+The current receipt does not support retirement. Reopen only after the
+authenticated corpus becomes available, every registered recovery witness
+matches locked C on all routes, and matching witnesses record zero dispatch
+rewrites. Keep the registry unchanged. Ship no parser or registry behavior
+change.
+
 ## 2026-08-24 TypeScript dispatcher blocker receipt
 
 Status: `KEEP LIVE / NO-GO`. Keep `dispatch.typescript` live.

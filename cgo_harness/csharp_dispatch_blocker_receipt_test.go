@@ -300,6 +300,9 @@ func TestCSharpDispatchBlockerReceiptDocument(t *testing.T) {
 		"2,085 dispatcher rewrites.",
 		"full authenticated corpus is unavailable",
 		"20260823T030038Z-csharp-audit-route-final-v2",
+		"## 2026-08-24 C# current-main follow-up",
+		"83e0cfbc30ad82e2f327d58e35eea9f438a0ffda",
+		"b97171a6ac31b12a268b6879f5a6bb89e7d1f268177144f6463f3d24cff5279b",
 	}
 	for _, marker := range docMarkers {
 		if !strings.Contains(string(doc), marker) {
@@ -310,6 +313,7 @@ func TestCSharpDispatchBlockerReceiptDocument(t *testing.T) {
 		"Record the `dispatch.c_sharp` blocker at main commit",
 		"ef57c9d1b73bac046ef40f2a111bb76db643ebfd",
 		"Keep the arm live.",
+		"Rechecked the `dispatch.c_sharp` blocker at current main commit",
 	} {
 		if !strings.Contains(string(changelog), marker) {
 			t.Fatalf("changelog lacks marker %q", marker)
