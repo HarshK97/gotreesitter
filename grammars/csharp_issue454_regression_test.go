@@ -138,6 +138,28 @@ func BenchmarkIssue454CSharpRecoveredFullParse(b *testing.B) {
 	}
 }
 
+func BenchmarkCSharpRecoveryMemoTier32KiB(b *testing.B) {
+	lang := grammars.CSharpLanguage()
+	source := issue454CSharpSource(32 * 1024)
+	site := bytes.Index(source, []byte("x0"))
+	if site < 0 {
+		b.Fatal("C# edit marker is absent")
+	}
+	source = append(append([]byte(nil), source[:site]...), source[site+1:]...)
+	parser := gotreesitter.NewParser(lang)
+	parser.SetAdmissionCandidateRoute(false)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(source)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tree, err := parser.Parse(source)
+		if err != nil {
+			b.Fatal(err)
+		}
+		tree.Release()
+	}
+}
+
 func issue454CSharpSource(targetBytes int) []byte {
 	var source strings.Builder
 	source.Grow(targetBytes + 256)

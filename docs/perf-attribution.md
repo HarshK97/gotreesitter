@@ -7,8 +7,73 @@ every function that more than one component could otherwise claim. It
 records the noise floor of the local measurement host, and the first
 published receipt.
 
-This is measurement infrastructure only. It changes no parser code, no
-routing, and no shipped behavior.
+This document records measurement evidence for parser changes and unchanged
+controls.
+
+## 2026-08-24 Recovery memo tier reduction
+
+The benchmark base is commit
+`8e8f18b82a9e122499e90b364e7e779f03af8679`. This commit adds only
+`BenchmarkCSharpRecoveryMemoTier32KiB`. The benchmark function SHA-256 is
+`bfb21482aa8f2f268293357e02ab605f7a8b1b87b0c367dafc93872b62ab004b`.
+
+The parser change reduces the temporary recovery memo from 262,144 entries to
+131,072 entries. The packed entry uses 24 bytes on 64-bit systems. The change
+therefore lowers the active table from 6,291,456 bytes to 3,145,728 bytes.
+The retained standard table uses 393,216 bytes. Total memo storage is
+3,538,944 bytes before slice overhead. These values equal 3 MiB, 384 KiB, and
+3.375 MiB.
+
+The 32 KiB C# issue #454 benchmark used one CPU, 20 shuffle seeds, 750
+milliseconds, and benchmark memory reporting. The command was:
+
+```text
+GOMAXPROCS=1 scripts/run_randomized_benchmarks.sh --output <report> --runs 20 --seed-start 1 --benchtime 750ms --bench-regex '^BenchmarkCSharpRecoveryMemoTier32KiB$' --package ./grammars --tags gts_parsercorephase0
+```
+
+Benchstat reports these changes:
+
+- Time: base `155.9` ms and changed build `158.0` ms, with `p=0.529`.
+  The result is inconclusive.
+- Bytes: `-20.79%`, with `p<0.001`.
+- Allocations: base `998.5` and changed build `998.0`, with `p=0.074`.
+  The result is inconclusive.
+
+The resident-memory runs used this command inside a one-CPU Docker container:
+
+```text
+/usr/bin/time -v env GOMAXPROCS=1 go test ./grammars -run '^$' -bench '^BenchmarkCSharpRecoveryMemoTier32KiB$' -benchtime=750ms -count=10 -benchmem -timeout 20m -v
+```
+
+The base-first order reports a maximum resident set size (RSS) of `253,920`
+KiB for base and `242,400` KiB for the changed build. The changed-build-first
+order reports `254,400` KiB for the changed build and `258,560` KiB for base.
+The two orders reduce RSS by `11,520` KiB and `4,160` KiB.
+
+The full-tier attribution recorded 210,781 unique subtree pointers. Peak live
+entries ranged from 161,967 to 164,432. The cache recorded 103,634 to 104,405
+two-way collisions and 37,085 to 38,057 evictions. It crossed one standard
+resize and one temporary resize. The set lookup hit rate was about `71.5%`.
+
+The 131,072-entry attribution recorded the same 210,781 unique subtree
+pointers. Peak live entries ranged from 116,975 to 117,147. The cache recorded
+151,908 to 152,328 collisions and 88,643 to 88,849 evictions. It crossed one
+standard resize and one temporary resize. The set lookup hit rate was about
+`71.1%`.
+
+The memo remains an evictable cache. Every miss recomputes the exact subtree
+cost and visible-node count. Focused C# correctness, locked-C parity, and
+cache-size memory-budget contract tests passed.
+
+The primary trio used this command:
+
+```text
+GOMAXPROCS=1 scripts/run_randomized_benchmarks.sh --output <report> --runs 20 --seed-start 1 --benchtime 750ms --bench-regex '^(BenchmarkGoParseFullDFA|BenchmarkGoParseIncrementalSingleByteEditDFA|BenchmarkGoParseIncrementalNoEditDFA)$' --package .
+```
+
+The primary trio is order-sensitive and inconclusive. Base-first runs change
+the geometric mean by `+5.13%`. Changed-build-first runs change it by `-8.50%`.
+The allocation counts are identical.
 
 ## 2026-08-24 P25bb recovery election-summary contract
 

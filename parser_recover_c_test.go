@@ -2590,6 +2590,31 @@ func TestRecoveryNodeMemoTierMetrics(t *testing.T) {
 	}
 }
 
+func TestCNodeMemoRecoveryTierFitsMemoryBudget(t *testing.T) {
+	if cNodeMemoRecoveryCacheSize&(cNodeMemoRecoveryCacheSize-1) != 0 {
+		t.Fatalf("temporary memo entries = %d, want a power of two", cNodeMemoRecoveryCacheSize)
+	}
+	if cNodeMemoRecoveryCacheSize <= cNodeMemoCacheSize {
+		t.Fatalf("temporary memo entries = %d, want more than standard entries %d", cNodeMemoRecoveryCacheSize, cNodeMemoCacheSize)
+	}
+	const (
+		recoveryMemoActiveBudgetBytes   = 3 << 20
+		recoveryMemoRetainedBudgetBytes = 384 << 10
+		recoveryMemoCombinedBudgetBytes = recoveryMemoActiveBudgetBytes + recoveryMemoRetainedBudgetBytes
+	)
+	activeBytes := cNodeMemoCacheBytesForEntries(cNodeMemoRecoveryCacheSize)
+	if activeBytes > recoveryMemoActiveBudgetBytes {
+		t.Fatalf("active temporary memo bytes = %d, exceeds budget %d", activeBytes, recoveryMemoActiveBudgetBytes)
+	}
+	retainedBytes := cNodeMemoCacheBytesForEntries(cNodeMemoCacheSize)
+	if retainedBytes > recoveryMemoRetainedBudgetBytes {
+		t.Fatalf("retained standard memo bytes = %d, exceeds budget %d", retainedBytes, recoveryMemoRetainedBudgetBytes)
+	}
+	if combinedBytes := activeBytes + retainedBytes; combinedBytes > recoveryMemoCombinedBudgetBytes {
+		t.Fatalf("combined memo bytes = %d, exceeds budget %d", combinedBytes, recoveryMemoCombinedBudgetBytes)
+	}
+}
+
 // TestCNodeMemoSlotAdaptiveGrowFiresExactlyAtThrashThreshold is a mechanism-
 // level (no real parse, no wall clock) proof of the W2 adaptive growth
 // trigger (issue #380/#388): cNodeMemoSlot must grow the cache from
