@@ -391,6 +391,18 @@ for tags and release notes while still in `0.x`.
   `docs/root-normalization-retirement.md` for the artifact hashes and
   reopening conditions.
 
+- Recorded the SQL dispatcher blocker at base
+  `ac90e46ace3c4ac6fb6bbc9f0897e449c949cfad`.
+  The focused Docker receipt covers raw, production, compact, forest,
+  incremental, and locked-C routes for a trailing select-list recovery.
+  Raw Go output differs from locked C at the source-file child count.
+  Production, compact, and incremental routes match locked C after
+  `dispatch.sql` runs. Compact falls back, forest declines, and incremental
+  reuse records zero subtrees and zero bytes. Container inspection records
+  `GOMAXPROCS=1`, one CPU, and a 4 GiB memory limit. The receipt does not cover
+  the other two SQL helpers. Keep `dispatch.sql` live. No parser or registry
+  change ships. See `docs/root-normalization-retirement.md`.
+
 - Recorded the N31i Cooklang dispatcher blocker at evidence base
   `7498a678c52029a82f312e9637ecb66b15defa0b` and publication base
   `675697a1144fad306489c5142aedaae0825545d9`. Keep `dispatch.cooklang` live.
