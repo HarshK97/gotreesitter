@@ -1120,6 +1120,45 @@ func TestCaptureNames(t *testing.T) {
 	}
 }
 
+func TestProbeCaptureNamesCallerMutationDoesNotAffectQuery(t *testing.T) {
+	lang := queryTestLanguage()
+	q, err := NewQuery(`(identifier) @ident`, lang)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	names := q.CaptureNames()
+	if len(names) != 1 || names[0] != "ident" {
+		t.Fatalf("CaptureNames: got %v, want [ident]", names)
+	}
+
+	names[0] = "corrupted"
+
+	if got := q.CaptureNames(); len(got) != 1 || got[0] != "ident" {
+		t.Errorf("CaptureNames after caller mutation: got %q want %q", got[0], "ident")
+	}
+	if got, ok := q.CaptureNameForID(0); !ok || got != "ident" {
+		t.Errorf("CaptureNameForID(0) after caller mutation: got %q want %q", got, "ident")
+	}
+
+	tree := buildSimpleTree(lang)
+	matches := q.Execute(tree)
+	found := false
+	for _, m := range matches {
+		for _, c := range m.Captures {
+			if c.Name == "ident" {
+				found = true
+			}
+			if c.Name == "corrupted" {
+				t.Errorf("query execution returned corrupted capture name")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected match with capture name %q", "ident")
+	}
+}
+
 func TestCaptureDeduplicated(t *testing.T) {
 	lang := queryTestLanguage()
 	q, err := NewQuery(`
