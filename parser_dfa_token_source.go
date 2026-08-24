@@ -37,6 +37,9 @@ type dfaTokenSource struct {
 	lastExternalTokenValid      bool
 	lastExternalTokenWasExtra   bool
 	externalTokenEndSameAsStart bool
+	lastTokenStartByte          uint32
+	lastTokenEndByte            uint32
+	lastTokenValid              bool
 	singleState                 [1]StateID
 	glrStates                   []StateID // all active GLR stack states
 	hasExternalScanner          bool
@@ -409,6 +412,9 @@ func (d *dfaTokenSource) Reset(source []byte) {
 	d.lastExternalTokenValid = false
 	d.lastExternalTokenWasExtra = false
 	d.externalTokenEndSameAsStart = false
+	d.lastTokenStartByte = 0
+	d.lastTokenEndByte = 0
+	d.lastTokenValid = false
 	if d.language == nil || d.language.ExternalScanner == nil {
 		return
 	}
@@ -453,6 +459,9 @@ func (d *dfaTokenSource) Close() {
 	d.lastExternalTokenValid = false
 	d.lastExternalTokenWasExtra = false
 	d.externalTokenEndSameAsStart = false
+	d.lastTokenStartByte = 0
+	d.lastTokenEndByte = 0
+	d.lastTokenValid = false
 	if !d.noPool {
 		dfaTokenSourcePool.Put(d)
 	}
@@ -490,6 +499,7 @@ func (d *dfaTokenSource) Next() Token {
 		}
 		if d.shouldForceEOFLookahead() {
 			tok := d.syntheticEOFLookaheadToken()
+			d.lastTokenValid = false
 			d.lastExternalTokenValid = false
 			d.lastExternalTokenWasExtra = false
 			d.externalTokenEndSameAsStart = false
@@ -656,10 +666,20 @@ func (d *dfaTokenSource) Next() Token {
 			}
 			fmt.Printf("  %s tok %d %s %d %d %s state=%d\n", prefix, tok.Symbol, name, tok.StartByte, tok.EndByte, tok.Text, d.state)
 		}
+		if tok.Symbol != 0 && !tok.NoLookahead {
+			d.lastTokenStartByte = tok.StartByte
+			d.lastTokenEndByte = tok.EndByte
+			d.lastTokenValid = true
+		} else {
+			d.lastTokenValid = false
+		}
 		if d.usesExternalCheckpoints && tok.Symbol != 0 && !tok.NoLookahead {
 			if tokenFromExternal {
 				d.captureExternalScannerStateInto(&d.externalTokenEnd)
 				d.externalTokenEndSameAsStart = false
+			} else if d.externalScannerRetainsStateOnScanFailure() {
+				d.captureExternalScannerStateInto(&d.externalTokenEnd)
+				d.externalTokenEndSameAsStart = bytes.Equal(d.externalTokenStart, d.externalTokenEnd)
 			} else {
 				d.externalTokenEnd = d.externalTokenEnd[:0]
 				d.externalTokenEndSameAsStart = true
@@ -683,6 +703,10 @@ func (d *dfaTokenSource) Next() Token {
 			d.lastExternalTokenWasExtra = false
 			d.externalTokenEndSameAsStart = false
 		}
+		// Record provenance only when this source selected the error lex mode.
+		// A checkpointless external scanner cannot prove the complete lex path.
+		tok.lexerErrorModeLexed = d.cRecoveryEnabled && d.state == cErrorState && !tokenFromExternal &&
+			(!d.hasExternalScanner || d.usesExternalCheckpoints)
 		return tok
 	}
 }
@@ -713,6 +737,9 @@ func (d *dfaTokenSource) setExternalScannerCheckpointsEnabled(enabled bool) {
 	d.lastExternalTokenValid = false
 	d.lastExternalTokenWasExtra = false
 	d.externalTokenEndSameAsStart = false
+	d.lastTokenStartByte = 0
+	d.lastTokenEndByte = 0
+	d.lastTokenValid = false
 	d.externalTokenStart = d.externalTokenStart[:0]
 	d.externalTokenEnd = d.externalTokenEnd[:0]
 }
@@ -2842,6 +2869,9 @@ type dfaRelexSnapshot struct {
 	lastExternalTokenValid      bool
 	lastExternalTokenWasExtra   bool
 	externalTokenEndSameAsStart bool
+	lastTokenStartByte          uint32
+	lastTokenEndByte            uint32
+	lastTokenValid              bool
 	externalTokenStart          []byte
 	externalTokenEnd            []byte
 
@@ -2868,6 +2898,9 @@ func (d *dfaTokenSource) snapshotRelexStateWithExternalBuffer(buf []byte) (dfaRe
 		lastExternalTokenValid:      d.lastExternalTokenValid,
 		lastExternalTokenWasExtra:   d.lastExternalTokenWasExtra,
 		externalTokenEndSameAsStart: d.externalTokenEndSameAsStart,
+		lastTokenStartByte:          d.lastTokenStartByte,
+		lastTokenEndByte:            d.lastTokenEndByte,
+		lastTokenValid:              d.lastTokenValid,
 		externalTokenStart:          append([]byte(nil), d.externalTokenStart...),
 		externalTokenEnd:            append([]byte(nil), d.externalTokenEnd...),
 		extZeroPos:                  d.extZeroPos,
@@ -2905,6 +2938,9 @@ func (s dfaRelexSnapshot) restore(d *dfaTokenSource) {
 	d.lastExternalTokenValid = s.lastExternalTokenValid
 	d.lastExternalTokenWasExtra = s.lastExternalTokenWasExtra
 	d.externalTokenEndSameAsStart = s.externalTokenEndSameAsStart
+	d.lastTokenStartByte = s.lastTokenStartByte
+	d.lastTokenEndByte = s.lastTokenEndByte
+	d.lastTokenValid = s.lastTokenValid
 	d.externalTokenStart = append(d.externalTokenStart[:0], s.externalTokenStart...)
 	d.externalTokenEnd = append(d.externalTokenEnd[:0], s.externalTokenEnd...)
 	d.extZeroPos = s.extZeroPos
@@ -2930,9 +2966,91 @@ func (d *dfaTokenSource) RelexFromTokenStart(tok Token) (Token, bool) {
 // The caller must restore its transaction when it rejects the result.
 func (d *dfaTokenSource) relexFromTokenStartInTransaction(tok Token) (Token, bool) {
 	target := int(tok.StartByte)
+	d.beginRelexAt(target, tok.StartPoint)
+	if DebugDFA.Load() {
+		fmt.Printf("  RELEX from %d state=%d\n", tok.StartByte, d.state)
+	}
+	next := d.Next()
+	if next.StartByte != tok.StartByte || next.StartPoint != tok.StartPoint {
+		return Token{}, false
+	}
+	// A no-lookahead state closes the active parser branch. It does not
+	// reinterpret a real token that still starts before the source end.
+	if next.NoLookahead || (next.Symbol == 0 && target < len(d.lexer.source)) {
+		return Token{}, false
+	}
+	if tok.ExternalScannerToken && next.ExternalScannerToken &&
+		next.StartByte == tok.StartByte && next.EndByte == tok.EndByte {
+		next.ExternalScannerStartByte = tok.ExternalScannerStartByte
+	}
+	return next, true
+}
+
+// relexRecoveryTokenFromSkippedPrefixInTransaction re-reads tok from its exact
+// lexer-call start. It converts an aligned, invisible error-mode token only
+// when state zero cannot act on that token. The caller owns rollback.
+func (d *dfaTokenSource) relexRecoveryTokenFromSkippedPrefixInTransaction(tok Token, startByte uint32, startPoint Point) (Token, bool) {
+	if !d.canRelexFromSkippedPrefix(tok) || !tok.lexerSkippedPrefix ||
+		tok.lexerSkippedPrefixStart != startByte || startByte >= tok.StartByte ||
+		d.lexer.pos != int(tok.EndByte) || d.lexer.row != tok.EndPoint.Row || d.lexer.col != tok.EndPoint.Column {
+		return Token{}, false
+	}
+	d.beginRelexAt(int(startByte), startPoint)
+	if DebugDFA.Load() {
+		fmt.Printf("  RELEX skipped-prefix from %d state=%d\n", startByte, d.state)
+	}
+	next := d.Next()
+	if next.StartByte < startByte || d.lexer.pos != int(next.EndByte) ||
+		d.lexer.row != next.EndPoint.Row || d.lexer.col != next.EndPoint.Column {
+		return Token{}, false
+	}
+	next.lexerErrorModeLexed = true
+	if next.Symbol != errorSymbol {
+		meta, known := d.symbolMetadata(next.Symbol)
+		if !known || meta.Visible || next.Symbol != tok.Symbol || next.ExternalScannerToken ||
+			d.lookupActionIndex == nil || d.lookupActionIndex(cErrorState, next.Symbol) != 0 ||
+			next.StartByte != tok.StartByte || next.EndByte != tok.EndByte ||
+			next.StartPoint != tok.StartPoint || next.EndPoint != tok.EndPoint {
+			return Token{}, false
+		}
+		next.Symbol = errorSymbol
+	}
+	return next, true
+}
+
+// canRelexFromSkippedPrefix proves that the active source still owns the
+// scanner state for tok. Internal tokens must leave that state unchanged.
+// Checkpoint-capable scanners need representable start and live states.
+// External scanners must provide representable start and live checkpoints.
+func (d *dfaTokenSource) canRelexFromSkippedPrefix(tok Token) bool {
+	if d == nil || d.lexer == nil || tok.ExternalScannerToken {
+		return false
+	}
+	target := int(tok.StartByte)
+	if target < 0 || target > len(d.lexer.source) {
+		return false
+	}
+	if !d.hasExternalScanner {
+		return true
+	}
+	if !d.lastTokenValid || d.lastTokenStartByte != tok.StartByte || d.lastTokenEndByte != tok.EndByte {
+		return false
+	}
+	if !d.usesExternalCheckpoints {
+		return false
+	}
+	return d.lastExternalTokenValid &&
+		d.lastExternalTokenStartByte == tok.StartByte &&
+		d.lastExternalTokenEndByte == tok.EndByte &&
+		d.externalTokenEndSameAsStart &&
+		len(d.externalTokenStart) > 0 &&
+		len(d.captureExternalScannerStateInto(&d.externalCompare)) > 0
+}
+
+func (d *dfaTokenSource) beginRelexAt(target int, pt Point) {
 	d.lexer.pos = target
-	d.lexer.row = tok.StartPoint.Row
-	d.lexer.col = tok.StartPoint.Column
+	d.lexer.row = pt.Row
+	d.lexer.col = pt.Column
 	if d.hasExternalScanner && d.usesExternalCheckpoints {
 		d.restoreExternalScannerState(d.externalTokenStart)
 	}
@@ -2940,6 +3058,9 @@ func (d *dfaTokenSource) relexFromTokenStartInTransaction(tok Token) (Token, boo
 	d.lastExternalTokenWasExtra = false
 	d.lastExternalTokenStartByte = 0
 	d.lastExternalTokenEndByte = 0
+	d.lastTokenStartByte = 0
+	d.lastTokenEndByte = 0
+	d.lastTokenValid = false
 	if len(d.externalTokenEnd) > 0 {
 		d.externalTokenEnd = d.externalTokenEnd[:0]
 	}
@@ -2950,18 +3071,6 @@ func (d *dfaTokenSource) relexFromTokenStartInTransaction(tok Token) (Token, boo
 	}
 	d.zeroWidthPos = -1
 	d.zeroWidthCount = 0
-	if DebugDFA.Load() {
-		fmt.Printf("  RELEX from %d state=%d\n", tok.StartByte, d.state)
-	}
-	next := d.Next()
-	if next.StartByte != tok.StartByte || next.StartPoint != tok.StartPoint {
-		return Token{}, false
-	}
-	if tok.ExternalScannerToken && next.ExternalScannerToken &&
-		next.StartByte == tok.StartByte && next.EndByte == tok.EndByte {
-		next.ExternalScannerStartByte = tok.ExternalScannerStartByte
-	}
-	return next, true
 }
 
 func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
@@ -3345,7 +3454,7 @@ func (d *dfaTokenSource) shouldDeferSwiftOptionalGenericCloseToDFA(valid []bool,
 			continue
 		}
 		if d.swiftCloseAngleActionReduces(actionIdx) {
-			return true
+			return d.hasSwiftUnclosedAngleBefore(pos)
 		}
 	}
 	return false
@@ -3800,11 +3909,21 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 		return false
 	}
 	var snapshot []byte
-	if d.externalScannerPreservesStateOnScanFailure() {
+	retainFailureState := d.externalScannerRetainsStateOnScanFailure()
+	// Retention takes precedence if a scanner reports both capabilities.
+	// A retained mutation is incompatible with the preservation claim.
+	preserveFailureState := !retainFailureState && d.externalScannerPreservesStateOnScanFailure()
+	restoreFailedScan := func() {
+		if !preserveFailureState && !retainFailureState {
+			d.restoreExternalScannerState(snapshot)
+		}
+	}
+	if preserveFailureState {
 		if RunExternalScanner(d.language, d.externalPayload, el, valid) {
 			return true
 		}
 		if !el.hasResult {
+			restoreFailedScan()
 			return false
 		}
 		snapshot = d.captureExternalScannerStateInto(&d.externalRetrySnap)
@@ -3814,7 +3933,7 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 			return true
 		}
 		if !el.hasResult {
-			d.restoreExternalScannerState(snapshot)
+			restoreFailedScan()
 			return false
 		}
 	}
@@ -3829,7 +3948,7 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 	for {
 		idx := d.externalSymbolIndex(el.resultSymbol)
 		if idx < 0 || idx >= len(masked) || !masked[idx] {
-			d.restoreExternalScannerState(snapshot)
+			restoreFailedScan()
 			return false
 		}
 		masked[idx] = false
@@ -3841,7 +3960,7 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 			}
 		}
 		if !anyValid {
-			d.restoreExternalScannerState(snapshot)
+			restoreFailedScan()
 			return false
 		}
 
@@ -3853,7 +3972,7 @@ func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []
 			return true
 		}
 		if !retryLexer.hasResult {
-			d.restoreExternalScannerState(snapshot)
+			restoreFailedScan()
 			return false
 		}
 		*el = *retryLexer
@@ -3866,6 +3985,14 @@ func (d *dfaTokenSource) externalScannerPreservesStateOnScanFailure() bool {
 	}
 	preserving, ok := d.language.ExternalScanner.(FailurePreservingExternalScanner)
 	return ok && preserving.PreservesStateOnScanFailure()
+}
+
+func (d *dfaTokenSource) externalScannerRetainsStateOnScanFailure() bool {
+	if d == nil || d.language == nil || d.language.ExternalScanner == nil {
+		return false
+	}
+	retaining, ok := d.language.ExternalScanner.(FailureStateRetainingExternalScanner)
+	return ok && retaining.RetainsStateOnScanFailure()
 }
 
 func (d *dfaTokenSource) captureExternalScannerStateInto(dst *[]byte) []byte {

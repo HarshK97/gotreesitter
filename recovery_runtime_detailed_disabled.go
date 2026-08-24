@@ -23,15 +23,17 @@ func (p *Parser) clearRecoveryRuntimeRetryTreesDetailed() {}
 func (p *Parser) cCondenseAndResumeDetailed(
 	stacks []glrStack,
 	source []byte,
+	ts TokenSource,
 	tok Token,
 	nodeCount *int,
 	arena *nodeArena,
 	entryScratch *glrEntryScratch,
 	gssScratch *gssScratch,
 	tmpEntries *[]stackEntry,
+	parseScratch *parserScratch,
 	trackChildErrors *bool,
 ) ([]glrStack, bool, Token, ParseStopReason) {
-	return p.cCondenseAndResume(stacks, source, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors)
+	return p.cCondenseAndResume(stacks, source, ts, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, parseScratch, trackChildErrors)
 }
 
 // DebugRecoveryRuntimeAttempts returns no attempt receipt in production builds.

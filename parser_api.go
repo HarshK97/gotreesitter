@@ -559,6 +559,9 @@ func (p *Parser) parseForRecoveryInitialOnlyOrLegacy(source []byte, accept func(
 	if initial != nil {
 		initial.Release()
 	}
+	// Do not let the rejected initial-only attempt seed the legacy retry.
+	// Return the recovery parser so the snippet reset scrubs transient state.
+	p.clearRecoveryParser()
 
 	legacy, legacyErr := p.parseForRecovery(source)
 	p.recordRecoveryProbeLegacyFallback(p.recoveryParserRetryPasses())

@@ -1563,6 +1563,33 @@ func TestParserRecycleDemotedGSSInvalidatesPointerHolders(t *testing.T) {
 	}
 }
 
+func TestGLRMergeScratchResetClearsPreflightReachCache(t *testing.T) {
+	from := &gssNode{}
+	target := &gssNode{}
+	scratch := glrMergeScratch{
+		preflight: newGSSMainPreflight(nil),
+	}
+	preflight := scratch.preflight
+	preflight.reachCache = make([]gssReachCacheEntry, maxGSSPreflightReachCacheEntries)
+	preflight.reachCache[0] = gssReachCacheEntry{
+		from:       uintptr(unsafe.Pointer(from)),
+		target:     uintptr(unsafe.Pointer(target)),
+		generation: preflight.reachCacheGeneration,
+		reachable:  true,
+	}
+
+	scratch.reset()
+	if scratch.preflight != nil {
+		t.Fatal("preflight survived merge-scratch reset")
+	}
+	if len(preflight.reachCache) != 0 {
+		t.Fatalf("reset preflight reach-cache length = %d, want 0", len(preflight.reachCache))
+	}
+	if got := preflight.reachCache[:cap(preflight.reachCache)][0]; got != (gssReachCacheEntry{}) {
+		t.Fatalf("reset preflight retained reach-cache entry: %+v", got)
+	}
+}
+
 func TestGSSReuseRetainsOnlyFingerprintedSpineCache(t *testing.T) {
 	var nodes gssScratch
 	a := nodes.allocNode(stackEntry{state: 1}, nil, 1)

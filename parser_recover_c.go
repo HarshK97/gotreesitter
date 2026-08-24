@@ -819,24 +819,24 @@ func (p *Parser) cRecoverCustomSourceEligibleFor(ts TokenSource, source []byte) 
 	return ls != noLookaheadLexState && int(ls) < len(lang.LexStates)
 }
 
-// cRecoverResumeLookahead ports the error-mode half of ts_parser__lex for the
-// pause lookahead of a custom (non-DFA) token source. In C the lookahead that
-// triggers detect_error is already the product of the in-lex fallback chain:
-// the paused state's own lex mode first, then the ERROR-state mode, then the
-// skipped-character error subtree. A custom source that only lexes
-// normal-mode tokens hands handle_error/recover a lookahead C would never see
-// at this position (authzed: int_literal "1" where C's error-mode DFA lexes a
-// 13-byte hidden string-content run). When the paused state's own DFA mode
-// cannot lex here — C's fallback trigger — substitute the ERROR-mode token
-// and schedule the source resync.
-func (p *Parser) cRecoverResumeLookahead(source []byte, s *glrStack, tok Token) (Token, bool) {
-	if !p.cRecoverCustomSourceEligible || p.cRecoverSharedTokenErrorModeLexed {
+// cRecoverResumeLookahead ports the error-mode half of ts_parser__lex for a
+// paused lookahead. It accepts a direct DFA replacement only after that source
+// re-lexes from the exact skipped-prefix start and reaches the same token end.
+// Custom sources keep the existing internal-DFA path and deferred resync.
+func (p *Parser) cRecoverResumeLookahead(ts TokenSource, source []byte, s *glrStack, tok Token, scratch *parserScratch) (Token, bool) {
+	if p.cRecoverSharedTokenErrorModeLexed {
 		return tok, false
 	}
 	if tok.Symbol == 0 || tok.Symbol == errorSymbol || tok.Missing || tok.NoLookahead {
 		return tok, false
 	}
 	if s == nil || int(s.byteOffset) >= len(source) {
+		return tok, false
+	}
+	if relexed, ok := p.cRecoverResumeDFALookahead(ts, source, s, tok, scratch); ok {
+		return relexed, true
+	}
+	if !p.cRecoverCustomSourceEligible {
 		return tok, false
 	}
 	lang := p.language
@@ -912,6 +912,52 @@ func (p *Parser) cRecoverResumeLookahead(source []byte, s *glrStack, tok Token) 
 	p.cRecoverCustomResyncActive = true
 	p.cRecoverCustomResyncByte = relexed.EndByte
 	p.recordRecoveryErrorModeToken()
+	return relexed, true
+}
+
+// cRecoverResumeDFALookahead verifies C error-mode lexing on the active source.
+// It commits the replacement only when the re-lexed error token has the exact
+// original span and leaves the source at that token's end.
+func (p *Parser) cRecoverResumeDFALookahead(ts TokenSource, source []byte, s *glrStack, tok Token, scratch *parserScratch) (Token, bool) {
+	dts, ok := ts.(*dfaTokenSource)
+	if !ok || dts == nil || scratch == nil || dts.lexer == nil || dts.language != p.language || !dts.cRecoveryEnabled ||
+		tok.ExternalScannerToken || p.cSymbolVisible(tok.Symbol) ||
+		p.lookupActionIndex(cErrorState, tok.Symbol) != 0 ||
+		!dts.canRelexFromSkippedPrefix(tok) ||
+		!tok.lexerSkippedPrefix || tok.lexerSkippedPrefixStart != s.byteOffset ||
+		tok.StartByte <= s.byteOffset || tok.EndByte <= tok.StartByte ||
+		int(tok.EndByte) > len(source) || len(dts.lexer.source) != len(source) {
+		return Token{}, false
+	}
+	startPoint := cStackPosPoint(s)
+	if startPoint.Row != tok.StartPoint.Row || startPoint.Column >= tok.StartPoint.Column {
+		return Token{}, false
+	}
+
+	snapshot, retainedSnapshot := scratch.snapshotDFARelexState(dts)
+	savedState := dts.state
+	savedGLRStates := dts.glrStates
+	restore := func() {
+		snapshot.restore(dts)
+		scratch.releaseDFARelexSnapshot(retainedSnapshot)
+		dts.state = savedState
+		dts.glrStates = savedGLRStates
+	}
+	dts.SetParserState(cErrorState)
+	dts.SetGLRStates(nil)
+	relexed, relexedOK := dts.relexRecoveryTokenFromSkippedPrefixInTransaction(tok, s.byteOffset, startPoint)
+	if !relexedOK || !relexed.lexerErrorModeLexed || relexed.Symbol != errorSymbol || relexed.ExternalScannerToken ||
+		relexed.StartByte != tok.StartByte || relexed.EndByte != tok.EndByte ||
+		relexed.StartPoint != tok.StartPoint || relexed.EndPoint != tok.EndPoint ||
+		dts.lexer.pos != int(relexed.EndByte) || dts.lexer.row != relexed.EndPoint.Row ||
+		dts.lexer.col != relexed.EndPoint.Column {
+		restore()
+		return Token{}, false
+	}
+	scratch.releaseDFARelexSnapshot(retainedSnapshot)
+	p.cRecoverSharedTokenErrorModeLexed = true
+	p.recordRecoveryErrorModeToken()
+	p.recordRecoveryScannerResync()
 	return relexed, true
 }
 
@@ -1630,7 +1676,13 @@ func (p *Parser) growCNodeMemoCacheTo(target int) {
 	if target > cNodeMemoCacheSize {
 		cold := p.ensureParserColdState()
 		if cold != nil && cold.cNodeMemoRetainedCache == nil {
-			cold.cNodeMemoRetainedCache = p.cNodeMemoCache
+			retained := p.cNodeMemoCache
+			// An operation starts with a deterministic 128-entry view. Keep
+			// the full standard slab when its backing array is already warm.
+			if cap(retained) >= cNodeMemoCacheSize {
+				retained = retained[:cNodeMemoCacheSize]
+			}
+			cold.cNodeMemoRetainedCache = retained
 		}
 	}
 	p.cNodeMemoCache = make([]cNodeMemoCacheEntry, target)
@@ -4277,7 +4329,11 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	if leafVisible {
 		leaf = newLeafNodeInArena(arena, tok.Symbol, tok.Symbol == errorSymbol || p.isNamedSymbol(tok.Symbol),
 			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-		leaf.setHasError(true)
+		// C marks the enclosing ERROR node as erroneous. Only a proven
+		// lexer-produced ERROR leaf omits the second has-error flag.
+		if tok.Symbol != errorSymbol || !tok.lexerErrorModeLexed {
+			leaf.setHasError(true)
+		}
 		// C: if the token shifts as extra in state 1, mark it extra so it is
 		// not counted in error cost calculations.
 		if idx := p.lookupActionIndex(1, tok.Symbol); idx != 0 && int(idx) < len(p.language.ParseActions) {
@@ -4459,7 +4515,7 @@ func (p *Parser) isGraphQLRecoveryTripleQuote(sym Symbol) bool {
 // (see cRecoverResumeLookahead) which the caller must adopt so redispatched
 // versions act on the same lookahead the resumed group consumed, and any
 // active budget/timeout stop reason encountered while condensing.
-func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool) ([]glrStack, bool, Token, ParseStopReason) {
+func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, ts TokenSource, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, parseScratch *parserScratch, trackChildErrors *bool) ([]glrStack, bool, Token, ParseStopReason) {
 	checkStop := func() ParseStopReason {
 		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 			return reason
@@ -4656,7 +4712,7 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 			// C's pause lookahead already went through ts_parser__lex's
 			// error-mode fallback; a custom source's normal-mode token must
 			// be substituted the same way before handle_error consumes it.
-			if replacement, replaced := p.cRecoverResumeLookahead(source, &stacks[i], tok); replaced {
+			if replacement, replaced := p.cRecoverResumeLookahead(ts, source, &stacks[i], tok, parseScratch); replaced {
 				if p.glrTrace {
 					fmt.Printf("      -> C-RESUME-RELEX sym=%d [%d-%d] -> sym=%d [%d-%d]\n",
 						tok.Symbol, tok.StartByte, tok.EndByte,

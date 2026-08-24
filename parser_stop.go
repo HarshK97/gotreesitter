@@ -9,6 +9,11 @@ func (p *Parser) beginParseOperationBudget() parseOperationBudgetState {
 		return parseOperationBudgetState{}
 	}
 	if p.cNodeMemoOperationDepth == 0 {
+		// Keep retries in one operation warm. Start each independent operation
+		// with the same logical cache size so parser reuse cannot change shape.
+		if len(p.cNodeMemoCache) > cNodeMemoCacheInitialSize {
+			p.cNodeMemoCache = p.cNodeMemoCache[:cNodeMemoCacheInitialSize]
+		}
 		p.cNodeMemoOperationPeakTier = RecoveryNodeMemoTierNone
 		if cold := p.forestDeclineMemo; cold != nil {
 			cold.cNodeMemoCollisions = 0

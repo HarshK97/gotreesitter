@@ -47,6 +47,10 @@ func (*capabilityExternalScanner) PreservesStateOnScanFailure() bool {
 	return true
 }
 
+type retainingCapabilityExternalScanner struct{ recordingExternalScanner }
+
+func (*retainingCapabilityExternalScanner) RetainsStateOnScanFailure() bool { return true }
+
 func TestExternalScannerOrderAdapterPreservesOptionalCapabilities(t *testing.T) {
 	scanner := &capabilityExternalScanner{}
 	sourceLang := &Language{
@@ -76,6 +80,32 @@ func TestExternalScannerOrderAdapterPreservesOptionalCapabilities(t *testing.T) 
 	}
 	if preserving, ok := adapted.(FailurePreservingExternalScanner); !ok || !preserving.PreservesStateOnScanFailure() {
 		t.Fatal("failure-preserving capability was not preserved")
+	}
+	if retaining, ok := adapted.(FailureStateRetainingExternalScanner); !ok || retaining.RetainsStateOnScanFailure() {
+		t.Fatal("adapter reported failure retention for a preserving scanner")
+	}
+}
+
+func TestExternalScannerOrderAdapterPreservesFailureRetention(t *testing.T) {
+	scanner := &retainingCapabilityExternalScanner{}
+	sourceLang := &Language{
+		SymbolNames:     []string{"", "a"},
+		ExternalSymbols: []Symbol{1},
+		ExternalScanner: scanner,
+	}
+	targetLang := &Language{
+		SymbolNames:     []string{"", "", "a"},
+		ExternalSymbols: []Symbol{2},
+	}
+	adapted, ok := AdaptExternalScannerByExternalOrder(sourceLang, targetLang)
+	if !ok {
+		t.Fatal("adapter not created")
+	}
+	if retaining, ok := adapted.(FailureStateRetainingExternalScanner); !ok || !retaining.RetainsStateOnScanFailure() {
+		t.Fatal("failure-state-retaining capability was not preserved")
+	}
+	if preserving, ok := adapted.(FailurePreservingExternalScanner); !ok || preserving.PreservesStateOnScanFailure() {
+		t.Fatal("adapter reported failure preservation for a retaining scanner")
 	}
 }
 

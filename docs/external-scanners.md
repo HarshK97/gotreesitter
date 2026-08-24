@@ -122,8 +122,9 @@ Here is the lifecycle, as the runtime actually drives it
   empty snapshot as a reset to initial state.
 - `Scan` returns true if it recognized a token. On true, the runtime reads
   the result from the lexer (symbol + span). On false, the runtime
-  discards position effects (it does not discard state effects — see
-  `FailurePreservingExternalScanner` below).
+  discards position effects and restores the serialized start state by
+  default. Implement `FailureStateRetainingExternalScanner` only when the
+  failed-scan state change is required by the next scan.
 
 ### The dual numbering contract (differs from C!)
 
@@ -330,6 +331,13 @@ numbering, use the public remapper:
 - `FailurePreservingExternalScanner` (`PreservesStateOnScanFailure() bool`):
   declare true if `Scan` returning false never mutated the payload — this
   lets the runtime skip defensive state snapshots on the hot path.
+- `FailureStateRetainingExternalScanner` (`RetainsStateOnScanFailure() bool`):
+  declare true only when a failed scan changes serialized state that the next
+  scan must read. The runtime records that actual end state at an internal
+  token boundary. Swift uses this route for its carried trivia rune. Retention
+  takes precedence if a scanner reports both failure capabilities. Each
+  alternate retry starts from the original snapshot. If all retries fail, only
+  the terminal failed attempt remains live.
 
 ### Incremental-reuse certification matrix
 

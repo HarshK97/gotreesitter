@@ -192,6 +192,28 @@ func TestInitialParseStackTinyReservationGrowsAndResetsSafely(t *testing.T) {
 	}
 }
 
+func TestEntryScratchReplacesTooSmallRetainedInitialSlab(t *testing.T) {
+	var scratch glrEntryScratch
+	scratch.ensureInitialCap(defaultStackEntrySlabCap)
+	retained := scratch.slabs[0].data
+	scratch.reset()
+
+	want := 64 * 1024
+	scratch.ensureInitialCap(want)
+	if got := len(scratch.slabs); got != 2 {
+		t.Fatalf("entry scratch slab count = %d, want 2", got)
+	}
+	if got := len(scratch.slabs[0].data); got != want {
+		t.Fatalf("entry scratch initial capacity = %d, want %d", got, want)
+	}
+	if &scratch.slabs[0].data[0] == &retained[0] {
+		t.Fatal("entry scratch retained the undersized initial slab")
+	}
+	if got, wantBytes := scratch.allocatedBytes, stackEntryBytesForCap(want+defaultStackEntrySlabCap); got != wantBytes {
+		t.Fatalf("entry scratch allocated bytes = %d, want %d", got, wantBytes)
+	}
+}
+
 func TestFullEntryScratchReservationNeverExceedsPhysicalCapacity(t *testing.T) {
 	threshold := maxFullParseEntryScratchEntries / fullParseEntryScratchEntriesPerSourceByte
 	for _, tc := range []struct {

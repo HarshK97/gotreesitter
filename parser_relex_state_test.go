@@ -167,6 +167,12 @@ func TestTryRelexSingleParserStateAcceptsOnlyZeroWidthExternalShift(t *testing.T
 	ts.lexer.col = 1
 	ts.state = 2
 	ts.glrStates = []StateID{1, 2}
+	if ts.usesExternalCheckpoints {
+		t.Fatal("stateless scanner unexpectedly enabled checkpoints")
+	}
+	if !ts.CanRelexFromTokenStart(original) {
+		t.Fatal("generic relex rejected a stateless external scanner")
+	}
 
 	got, ok := p.tryRelexSingleParserState(original, 1, ts, stacks, &parserScratch{})
 	if !ok {

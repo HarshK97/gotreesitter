@@ -2,7 +2,146 @@
 
 Status: NO-GO. Keep [issue #576](https://github.com/odvcencio/gotreesitter/issues/576) open.
 
-Base commit: `97a7bde26bac9b1a110bbf9216cc681ca59cc5aa`.
+Original receipt base: `97a7bde26bac9b1a110bbf9216cc681ca59cc5aa`.
+
+## Candidate receipt at `da6f71471aaaa835503accaa1bc2083ced90b4e6`
+
+Candidate disposition: GO for review of the generic fix. Issue disposition:
+NO-GO for closure. The large Swift witnesses still differ from locked C.
+
+The active deterministic finite automaton (DFA) source now replays a paused
+lookahead from its exact skipped-prefix start. The path requires these proofs:
+
+- The stack offset equals the skipped-prefix offset.
+- The replay token keeps the original byte span and points.
+- The replay token is internal and invisible.
+- Parser state zero has no action for the replay token.
+- Recovery replay has a non-empty external-scanner start and live state.
+- The active source ends at the replay token end.
+
+The DFA source resynchronizes before it emits `errorSymbol`. The parser records
+error-mode lexing only after the DFA produces the replay. A rejected probe
+restores the lexer, scanner, parser state, and Graph-Structured Stack (GSS)
+state. The parser keeps the error flag on the enclosing `ERROR` node. It leaves
+the lexer-produced `ERROR` leaf without a second error flag.
+
+An absent scanner checkpoint rejects replay before the recovery transaction.
+The rejection does not call `Deserialize` and does not change live scanner
+state. This requirement applies only to recovery replay from a skipped prefix.
+Generic relex still accepts stateless scanners with empty serialization. The
+Swift scanner serializes the raw-string count and carried rune.
+
+The Swift scanner no longer claims that failed scans preserve its state. A
+failed scan can change its carried rune. Scanners restore their start state
+after failure by default. Swift explicitly retains its required state change.
+Retention takes precedence if a scanner reports both failure capabilities.
+The token source records both checkpoints for an internal token. Recovery
+replay still requires equal checkpoints. Incremental fast-forward restores the
+actual end checkpoint. A successful external token always records its actual
+end checkpoint. Each alternate retry starts from the original snapshot. If all
+retries fail, only the terminal failed attempt remains live.
+
+Generic relex rejects a synthetic end-of-file lookahead when a real token
+still starts before the source end. Swift defers `>?` to the DFA only when an
+unmatched `<` exists in the active scope. A trailing `>?` remains one custom
+operator.
+
+Each outer parse operation resets the recovery memo to its initial logical
+size. Nested retry attempts keep the larger memo. This reset makes pooled and
+fresh large-witness digests equal. Temporary growth retains an existing
+16,384-entry standard slab. Cleanup restores that slab without an allocation.
+A shorter retained slab remains short. The parser returns a rejected initial
+probe before the legacy retry. This return applies the normal snippet-parser
+reset.
+
+Merge scratch clears and drops its preflight object at a pool boundary. Entry
+scratch enforces the required source-sized reservation after pool reuse. It
+moves a large retained slab to the front when possible. Otherwise, it adds the
+required slab and keeps smaller slabs for later growth. A small control parse
+cannot reduce the next large parse reservation.
+
+Recovery substitution uses no Swift grammar rule or source exception. The
+operator repair stays inside the existing Swift token-source guard. This change
+does not affect compact-route admission. The compact route remains outside this
+candidate.
+
+The 20-byte witness now matches locked C:
+
+| Witness | Go deep SHA-256 | C deep SHA-256 | Result |
+|---|---|---|---|
+| `let x = unsafe bar()` | `c64b894edc4a20e15f2b4127bad4223f698c8996dba091c06c34aa89386d3c68` | `c64b894edc4a20e15f2b4127bad4223f698c8996dba091c06c34aa89386d3c68` | exact |
+| `stdlib_FloatingPointToString.swift` | `7cb588c1f7b44cf490d8fcddd11adb0cc56238e891156687c26660568a7f7447` | `ab96dddf088487acc700d72af9342c338901504dcf1d32b9644e9f6f6638190d` | mismatch |
+| `stdlib_CollectionAlgorithms.swift` | `a3e737087be92518dbe1f8481a2b5169529b4f557b7f00033ab9da21d7aa32c9` | `132d332f511f12735d80e846f52ec1fddf5f3d0dcd7a097779640a7710497487` | mismatch |
+
+The minimal source SHA-256 remains
+`b511d81ace2a89b05e8e5e0ca6730c10f2ac9295111dae013097c7c6be8861fe`.
+The CollectionAlgorithms source SHA-256 is
+`1aae0051b0bfb50e17c7ac94961ee7cab7332367dcc16e827d2482be7a2dc5a1`.
+
+The focused tests passed in Docker with one Swift grammar, one CPU, and one
+test worker. No run timed out or hit the memory limit.
+
+- Failed-scan mutation: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T104928Z-swift576-second-review-failed-scan`
+- Incremental fast-forward: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T105001Z-swift576-second-review-fast-forward`
+- Swift checkpoint grammar tests: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T105029Z-swift576-second-review-swift-checkpoints-v2`
+- Generic relex contract: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T105035Z-swift576-second-review-generic-relex`
+- Parser and scanner tests: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T105047Z-swift576-second-review-focused`
+- Repeated clean-to-large sequence: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T105132Z-swift576-second-review-clean-large`
+- Memory contract: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T105237Z-swift576-second-review-memory-contract`
+- AWK recovery control: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T105100Z-swift576-second-review-awk`
+- Both corpus witnesses: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T105216Z-swift576-second-review-large-telemetry`
+
+The TypeScript receipt changed only documentation and a focused test. The
+Swift production inputs stayed unchanged during the rebase. These identity
+gates passed on `da6f71471aaaa835503accaa1bc2083ced90b4e6`:
+
+- Transition and generic relex tests: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T110309Z-swift576-da6-identity-root`
+- Swift checkpoint grammar tests: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T110323Z-swift576-da6-swift-checkpoints`
+- AWK recovery control: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T110332Z-swift576-da6-awk`
+- Pooled minimal Swift parity: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T110349Z-swift576-da6-pooled-minimal`
+
+The scanner repair benchmark used 20 seeds and a 750 millisecond duration.
+No timing or allocation result regressed. The geometric mean time decreased
+3.57 percent. Bytes per operation stayed unchanged. The warmed large-witness
+maximum resident set size had one 594240 KiB before sample and one 597160 KiB
+after sample. The observed increase is 0.491384 percent, or about 0.49 percent.
+The raw files are:
+
+- `/tmp/swift576-scanner-checkpoint-before.txt`
+- `/tmp/swift576-scanner-checkpoint-after.txt`
+- `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T110004Z-swift576-scanner-checkpoint-rss-before-warm`
+- `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T110048Z-swift576-scanner-checkpoint-rss-after-warm`
+
+PR #967 exposed four CI regressions. The repair restores default failed-scan
+rollback and keeps Swift retention explicit. It also repairs Swift operator
+relex and the recovery memo lifecycle. These final focused gates passed:
+
+- Scanner and generic relex: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121348Z-swift967-repair-final-scanner`
+- Swift checkpoints and operator: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121422Z-swift967-repair-final-swift`
+- Templ census: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121436Z-swift967-repair-final-templ`
+- Markdown race reuse: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121446Z-swift967-repair-final-markdown-race`
+- Recovery memo race: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T114020Z-swift967-repair-memo-race`
+- AWK recovery control: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T114203Z-swift967-repair-awk`
+- Repeated clean-to-large sequence: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T114224Z-swift967-repair-clean-large`
+- Both large witnesses: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T114333Z-swift967-repair-large-telemetry`
+- Memory contract: `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T114419Z-swift967-repair-memory-contract`
+
+The PR repair used 20 seeds and a 750 millisecond duration. No primary lane
+changed significantly. The primary trio median geomean increased 1.242879
+percent. Bytes and allocations per operation stayed unchanged. One warmed
+large-witness sample changed from 565920 KiB to 565280 KiB. The observed
+decrease is 0.113090 percent. The raw files are:
+
+- `/tmp/swift967-repair-before.txt`
+- `/tmp/swift967-repair-after.txt`
+- `/tmp/swift967-repair-benchstat.txt`
+- `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121155Z-swift967-repair-rss-before-warm`
+- `/tmp/gotreesitter-swift576-push-20260824/harness_out/docker/20260824T121225Z-swift967-repair-rss-after-warm`
+
+The large witnesses still fail the correctness gate. Keep issue #576 open
+until both corpus witnesses match locked C.
+
+## Original blocker receipt
 
 This receipt records the Swift `unsafe` expression-prefix mismatch. It does not
 change parser behavior or admit a compact recovery path.
@@ -13,8 +152,9 @@ The Swift corpus ratchet records both #576 files in
 `grammars/swift_corpus_test.go`.
 
 The locked-C parity tests record the corpus witness and the 20-byte minimal
-witness in `cgo_harness/parity_swift_recovery_probe_test.go`. The minimal test
-also pins the first divergence path and both child counts.
+witness in `cgo_harness/parity_swift_recovery_probe_test.go`. A pooled test
+parses the clean for-range control before the minimal witness. Both parses must
+match locked C.
 
 ## Locked evidence
 
