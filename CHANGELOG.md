@@ -67,6 +67,17 @@ for tags and release notes while still in `0.x`.
   resident set size (RSS) run was justified. See `docs/perf-attribution.md`
   for the command, artifact hashes, and reopening condition.
 
+- P25bc records the main commit
+  `83e0cfbc30ad82e2f327d58e35eea9f438a0ffda`. Canopy selected the
+  `cDoAllPotentialReductions` reduction-search contract after the queued P25bb
+  election-summary arm. Focused reduction, version-order, summary-lifetime,
+  and pointer-release tests passed in Docker. No authenticated issue #454
+  witness supplied reduction-attempt or allocation proof. The receipt marks
+  the result **NO-GO / NO CANDIDATE**. The proof boundary did not justify a
+  randomized benchmark or maximum resident set size (RSS) measurement. See
+  `docs/perf-attribution.md` for the command, artifact hashes, and reopening
+  condition.
+
 ### Correctness
 
 - Recorded the unreceipted `dispatch.julia` blocker at base
