@@ -12,9 +12,13 @@ func newIncludedRangeTokenSource(base TokenSource, ranges []Range) TokenSource {
 	if base == nil || len(ranges) == 0 {
 		return base
 	}
+	ranges = normalizeIncludedRanges(ranges)
+	if len(ranges) == 0 {
+		return base
+	}
 	return &includedRangeTokenSource{
 		base:   base,
-		ranges: normalizeIncludedRanges(ranges),
+		ranges: ranges,
 	}
 }
 
@@ -190,6 +194,26 @@ func (s *includedRangeTokenSource) filterToken(tok Token, hasToken bool) Token {
 		}
 
 		r := s.ranges[s.idx]
+		if tok.StartByte < r.StartByte && tok.EndByte <= r.StartByte {
+			if skipper, ok := s.base.(ByteSkippableTokenSource); ok {
+				tok = skipper.SkipToByte(r.StartByte)
+				hasToken = true
+			}
+			continue
+		}
+		if tok.StartByte < r.StartByte {
+			// Re-seek a token that overlaps the selected boundary. A source
+			// with byte seeking can reproduce the token from that boundary.
+			if skipper, ok := s.base.(ByteSkippableTokenSource); ok {
+				tok = skipper.SkipToByte(r.StartByte)
+				hasToken = true
+				continue
+			}
+			// A source without byte seeking cannot reproduce a trimmed token.
+			// Preserve the complete overlap, which is the conservative existing
+			// behavior. Its start can remain before the selected boundary.
+			return tok
+		}
 		if tok.EndByte <= r.StartByte {
 			if skipper, ok := s.base.(ByteSkippableTokenSource); ok {
 				tok = skipper.SkipToByte(r.StartByte)

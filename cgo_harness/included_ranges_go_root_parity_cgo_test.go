@@ -18,16 +18,15 @@ package cgoharness
 // geometries pinned below now agree with the C oracle on the root symbol
 // (before the fix, one of the four produced an ERROR root here where C
 // produced source_file), and the Go arm's root member no longer fires on any
-// of them. The root span and child count still diverge from C on every
-// geometry.
+// of them. The producer anchors each tested root at its first included byte.
+// Child counts and some trailing spans still diverge from C.
 //
 // READ THIS BEFORE CITING THIS TEST AS EVIDENCE. gotreesitter and the C
 // oracle do NOT agree on this route in general. They agree on the root symbol
-// for all four geometries pinned here, and on the root span for exactly one:
-// the geometry whose first range starts at byte 0 and whose last range ends
-// at end of file. No geometry reaches child-count parity. This test pins
-// each observation per geometry. It is a change detector for the route, not
-// a parity certificate for it.
+// for the four geometries pinned here. Their root start spans also match.
+// The root end and child count still diverge on selected geometries.
+// This test pins each observation per geometry. It is a change detector for
+// the route, not a parity certificate for the complete tree.
 //
 // Run: GTS_PARITY_ALLOW_HOST=1 go test ./cgo_harness -tags treesitter_c_parity \
 //        -run TestIncludedRangesGo -v
@@ -86,24 +85,21 @@ type includedRangesGeometry struct {
 // excluded bytes between two ranges as if they had to be whitespace, so a
 // non-whitespace gap between ranges no longer kills every GLR stack and
 // forces recovery. That is what padding_kills_stacks used to pin. Every
-// geometry below now reaches a `source_file` root, and the Go arm's root
-// member no longer fires on any of them, because none of them hands it an
-// ERROR root to repair. The root span and child count still diverge from C
-// on every geometry — a separate, pre-existing set of divergences this fix
-// does not address.
+// tested geometry reaches a `source_file` root. The Go arm's root member does
+// not fire on these four cases because none supplies an ERROR root. Their root
+// starts match C. Child counts and some trailing spans still differ.
 var includedRangesGoGeometries = []includedRangesGeometry{
 	{
 		name:        "interior_anchors_arm_live",
 		spans:       [2][2]int{{26, 150}, {203, 276}},
 		armRewrites: 0,
 		c:           includedRangesRootObservation{"source_file", 26, 276, 7, true},
-		gts:         includedRangesRootObservation{"source_file", 0, 276, 10, true},
+		gts:         includedRangesRootObservation{"source_file", 26, 276, 10, true},
 		note: "The realistic injection shape: both ranges start at a positive " +
 			"offset. The root symbol matches C; the Go arm member does not " +
-			"fire, because the root already carries the right symbol before " +
-			"the member inspects it. The root span still diverges: " +
-			"gotreesitter starts at byte 0 while C starts at the first " +
-			"included range. The child count now diverges too (10 vs. 7): the " +
+			"fire, because the root already carries the right symbol and span " +
+			"before the member inspects it. The child count still diverges (10 " +
+			"vs. 7): the " +
 			"parser folds both ranges into one pass instead of the recovery " +
 			"reparse the old, unclipped scan used to force.",
 	},

@@ -1,6 +1,7 @@
 package gotreesitter_test
 
 import (
+	"bytes"
 	"os"
 	"testing"
 
@@ -104,6 +105,111 @@ func TestIncludedRangesGoRootStaysSourceFile(t *testing.T) {
 	}
 	if root.IsError() {
 		t.Fatal("included-ranges root is an ERROR node")
+	}
+	if got, want := root.StartByte(), ranges[0].StartByte; got != want {
+		t.Fatalf("included-ranges root start = %d, want first included byte %d", got, want)
+	}
+	if got, want := root.StartPoint(), ranges[0].StartPoint; got != want {
+		t.Fatalf("included-ranges root start point = %+v, want %+v", got, want)
+	}
+}
+
+func TestIncludedRangesGoRecoveryKeepsSelectedStart(t *testing.T) {
+	lang := grammars.GoLanguage()
+	if lang == nil {
+		t.Skip("go grammar unavailable")
+	}
+	src, ranges := loadIncludedRangesGoFixture(t)
+	parser := gotreesitter.NewParser(lang)
+	parser.SetIncludedRanges(ranges)
+
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("included-ranges recovery parse: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("included-ranges recovery parse returned no tree")
+	}
+	defer tree.Release()
+
+	root := tree.RootNode()
+	if !root.HasError() {
+		t.Fatal("included-ranges recovery root has no error")
+	}
+	if got, want := root.StartByte(), ranges[0].StartByte; got != want {
+		t.Fatalf("recovery root start = %d, want %d", got, want)
+	}
+	if got, want := root.StartPoint(), ranges[0].StartPoint; got != want {
+		t.Fatalf("recovery root start point = %+v, want %+v", got, want)
+	}
+}
+
+func TestIncludedRangesGoIncrementalKeepsSelectedStart(t *testing.T) {
+	lang := grammars.GoLanguage()
+	if lang == nil {
+		t.Skip("go grammar unavailable")
+	}
+	src := []byte("// host prefix\npackage p\n\nvar value = 1\n")
+	start := bytes.Index(src, []byte("package"))
+	if start < 0 {
+		t.Fatal("included-range start token is absent")
+	}
+	ranges := []gotreesitter.Range{{
+		StartByte:  uint32(start),
+		EndByte:    uint32(len(src)),
+		StartPoint: includedRangesGoPointAt(src, start),
+		EndPoint:   includedRangesGoPointAt(src, len(src)),
+	}}
+	editAt := bytes.Index(src, []byte("1\n"))
+	if editAt < 0 {
+		t.Fatal("incremental edit token is absent")
+	}
+	edited := append([]byte(nil), src...)
+	edited[editAt] = '2'
+
+	parser := gotreesitter.NewParser(lang)
+	parser.SetIncludedRanges(ranges)
+	oldTree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("included-ranges base parse: %v", err)
+	}
+	if oldTree == nil {
+		t.Fatal("included-ranges base parse returned no tree")
+	}
+	defer oldTree.Release()
+	if oldTree.RootNode().HasError() {
+		t.Fatal("included-ranges base parse has an error")
+	}
+
+	startPoint := includedRangesGoPointAt(src, editAt)
+	endPoint := includedRangesGoPointAt(src, editAt+1)
+	oldTree.Edit(gotreesitter.InputEdit{
+		StartByte:   uint32(editAt),
+		OldEndByte:  uint32(editAt + 1),
+		NewEndByte:  uint32(editAt + 1),
+		StartPoint:  startPoint,
+		OldEndPoint: endPoint,
+		NewEndPoint: endPoint,
+	})
+
+	tree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatalf("included-ranges incremental parse: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("included-ranges incremental parse returned no tree")
+	}
+	defer tree.Release()
+	if profile.ReuseUnsupported {
+		t.Fatalf("included-ranges incremental reuse unsupported: %s", profile.ReuseUnsupportedReason)
+	}
+
+	root := tree.RootNode()
+	if got, want := root.StartByte(), ranges[0].StartByte; got != want {
+		t.Fatalf("incremental root start = %d, want %d", got, want)
+	}
+	if got, want := root.StartPoint(), ranges[0].StartPoint; got != want {
+		t.Fatalf("incremental root start point = %+v, want %+v", got, want)
 	}
 }
 
