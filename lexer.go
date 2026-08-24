@@ -38,6 +38,9 @@ type Token struct {
 	// lexerErrorModeLexed proves that the active DFA source produced this
 	// recovery token while parser state zero selected the error lex mode.
 	lexerErrorModeLexed bool
+	// lexerInternalDFALexed proves that Lexer.scan accepted this token from
+	// the internal DFA. External, generated, missing, and EOF tokens omit it.
+	lexerInternalDFALexed bool
 }
 
 func bytesToStringNoCopy(b []byte) string {
@@ -418,6 +421,7 @@ func (l *Lexer) scan(startState uint32, startPos int, startRow, startCol uint32)
 		EndPoint:                Point{Row: acceptRow, Column: acceptCol},
 		lexerSkippedPrefix:      skippedPrefix,
 		lexerSkippedPrefixStart: uint32(startPos),
+		lexerInternalDFALexed:   true,
 	}, true
 }
 

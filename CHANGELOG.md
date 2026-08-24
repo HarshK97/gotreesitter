@@ -1044,17 +1044,19 @@ for tags and release notes while still in `0.x`.
   `docs/root-normalization-retirement.md` for current artifact hashes and
   reopening conditions.
 
-- Hardened the PHP issue #454 compact fallback guard at base commit
-  `c25686c882affd7408e5ef4a7d65e92cc8391fab`. The 140,287-byte edited
-  witness produced the pinned production and compact Go deep digest
-  `4456730ce6919a623dd6db2e6ae7f11933aeb454c7e337b7da5c08a8d9ba267c`.
-  The locked-C `gts-deep-tree-v1` digest is
+- Corrected the PHP issue #454 recovery-leaf flags at base commit
+  `55681868d3a23971d042f9f79083fd6d39c7e33b`. A recovery region now needs a
+  source-bearing parsed prefix. Each cleared leaf also needs positive internal
+  deterministic finite automaton (DFA) provenance.
+  The prefix proof rejects pending, missing, error, dirty, and invalid payloads.
+  It also rejects payloads that end after the current token starts.
+  Recovery rejects end-of-input, zero-width, generated, external, missing,
+  no-lookahead, and error-mode tokens. The raw, production, compact fallback,
+  and locked-C `gts-deep-tree-v1` digests now equal
   `1516308c38163089778464ad171875308c559af11af7c8c03ee17ae4eacd23c6`.
-  The digest covers byte and point spans, fields, extra and missing flags,
-  error flags, and root `HasError`. Both Go routes differ from locked C.
-  Compact recorded `routed=0` and `fallback=1`. Two one-CPU, 4 GiB Docker
-  runs passed with one test worker, a 20-minute timeout, `GOMAXPROCS=1`, and
-  `GOFLAGS=-p=1`. Keep issue #454 open. Ship no parser change. See
+  Compact still records `routed=0` and `fallback=1` on recovery. This change
+  does not graduate PHP compact admission. The incremental memory budget,
+  resident set size, and remaining issue #454 performance work stay open. See
   `docs/issue-454-compact-correctness-blocker.md`.
 
 - Reject the issue #454 generic recovery candidate from PR #793. The candidate

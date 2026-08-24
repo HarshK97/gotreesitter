@@ -905,6 +905,7 @@ func (p *Parser) cRecoverResumeLookahead(ts TokenSource, source []byte, s *glrSt
 		hasErrorRunLexState: true,
 	}
 	relexed := lx.NextWithErrorRuns(uint32(errLS))
+	relexed.lexerErrorModeLexed = true
 	if relexed.Symbol == tok.Symbol && relexed.StartByte == tok.StartByte && relexed.EndByte == tok.EndByte {
 		return tok, false
 	}
@@ -1026,6 +1027,7 @@ func (p *Parser) cRecoverInternalErrorModeToken(ts TokenSource, stacks []glrStac
 		hasErrorRunLexState: true,
 	}
 	tok := lx.NextWithErrorRuns(uint32(ls))
+	tok.lexerErrorModeLexed = true
 	// The shared token now carries the C error-mode identity; the election
 	// can trust it directly.
 	p.cRecoverSharedTokenErrorModeLexed = true
@@ -1287,6 +1289,9 @@ type cRecoverState struct {
 	// per-segment recoveries are tracked here; forks drop cRec and with it
 	// these charges, exactly like C.
 	extraRecoveries uint32
+	// clearOrdinaryLeafErrors records a source-bearing stack prefix and direct
+	// internal-lexer provenance for the first token in this recovery region.
+	clearOrdinaryLeafErrors bool
 }
 
 var cRecoverStateCloneObserver func()
@@ -1299,11 +1304,12 @@ func (r *cRecoverState) clone() *cRecoverState {
 		observer()
 	}
 	cp := &cRecoverState{
-		openErr:         r.openErr,
-		group:           r.group,
-		groupOrder:      r.groupOrder,
-		extraRecoveries: r.extraRecoveries,
-		summary:         r.summary,
+		openErr:                 r.openErr,
+		group:                   r.group,
+		groupOrder:              r.groupOrder,
+		extraRecoveries:         r.extraRecoveries,
+		clearOrdinaryLeafErrors: r.clearOrdinaryLeafErrors,
+		summary:                 r.summary,
 	}
 	return cp
 }
@@ -3542,6 +3548,7 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 		}
 		v := &versions[vi]
 		entries := cStackEntriesTopFirst(v, gssScratch)
+		hasParsedPrefix := cRecoveryEntriesHaveParsedPrefix(entries, tok.StartByte)
 		if debugRecoveryCycleChecks {
 			for ei := range entries {
 				if entries[ei].node != nil {
@@ -3553,7 +3560,10 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 		if reason != ParseStopNone {
 			return cRecHalted, false, reason
 		}
-		v.cRec = &cRecoverState{summary: summary, group: group, groupOrder: uint32(vi)}
+		v.cRec = &cRecoverState{
+			summary: summary, group: group, groupOrder: uint32(vi),
+			clearOrdinaryLeafErrors: cRecoveryRegionClearsOrdinaryLeafErrors(p, tok, hasParsedPrefix),
+		}
 		v.cRecoverMissingGroup = nil
 	}
 
@@ -3615,6 +3625,45 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	}
 	p.recordRecoveryLiveVersions(*stacks)
 	return outcome, needsRedispatch, ParseStopNone
+}
+
+// cRecoveryRegionClearsOrdinaryLeafErrors reports whether C would keep
+// ordinary visible leaves clean in this recovery region. The predicate uses
+// token provenance, symbol metadata, and a source-bearing stack prefix.
+func cRecoveryRegionClearsOrdinaryLeafErrors(p *Parser, tok Token, hasParsedPrefix bool) bool {
+	return p != nil && hasParsedPrefix && p.cSymbolVisible(tok.Symbol) &&
+		p.isNamedSymbol(tok.Symbol) && !tok.lexerSkippedPrefix &&
+		cRecoveryTokenCanClearOrdinaryLeafError(tok)
+}
+
+// cRecoveryEntriesHaveParsedPrefix proves that recovery follows a clean,
+// source-bearing stack node at or before the current token. The error
+// discontinuity and the base state do not provide this proof.
+func cRecoveryEntriesHaveParsedPrefix(entries []stackEntry, tokenStartByte uint32) bool {
+	for _, entry := range entries {
+		if entry.node == nil || entry.state == cErrorState || entry.kind == stackEntryKindPendingParent ||
+			(entry.kind != stackEntryKindNode && entry.kind != stackEntryKindNoTreeNode && entry.kind != stackEntryKindCompactFullLeaf) ||
+			stackEntryNodeSymbol(entry) == 0 || stackEntryNodeSymbol(entry) == errorSymbol ||
+			stackEntryNodeParseState(entry) != entry.state || stackEntryNodeIsMissing(entry) ||
+			stackEntryNodeHasError(entry) || stackEntryNodeDirty(entry) {
+			continue
+		}
+		startByte := stackEntryNodeStartByte(entry)
+		endByte := stackEntryNodeEndByte(entry)
+		if endByte > startByte && endByte <= tokenStartByte {
+			return true
+		}
+	}
+	return false
+}
+
+// cRecoveryTokenCanClearOrdinaryLeafError requires positive internal-DFA
+// provenance for each absorbed token. A region proof cannot authorize a
+// later external, generated, error-mode, zero-width, or EOF token.
+func cRecoveryTokenCanClearOrdinaryLeafError(tok Token) bool {
+	return tok.Symbol != 0 && tok.Symbol != errorSymbol && tok.EndByte > tok.StartByte &&
+		tok.lexerInternalDFALexed && !tok.ExternalScannerToken &&
+		!tok.lexerErrorModeLexed && !tok.Missing && !tok.NoLookahead
 }
 
 // ---------------------------------------------------------------------------
@@ -4329,9 +4378,14 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	if leafVisible {
 		leaf = newLeafNodeInArena(arena, tok.Symbol, tok.Symbol == errorSymbol || p.isNamedSymbol(tok.Symbol),
 			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-		// C marks the enclosing ERROR node as erroneous. Only a proven
-		// lexer-produced ERROR leaf omits the second has-error flag.
-		if tok.Symbol != errorSymbol || !tok.lexerErrorModeLexed {
+		// C marks the enclosing ERROR node as erroneous. Keep ordinary leaves
+		// clean when the region has direct internal-lexer provenance.
+		clearLeafError := v.cRec != nil && v.cRec.clearOrdinaryLeafErrors &&
+			cRecoveryTokenCanClearOrdinaryLeafError(tok)
+		if !clearLeafError && tok.Symbol != errorSymbol {
+			leaf.setHasError(true)
+		}
+		if tok.Symbol == errorSymbol && !tok.lexerErrorModeLexed {
 			leaf.setHasError(true)
 		}
 		// C: if the token shifts as extra in state 1, mark it extra so it is
