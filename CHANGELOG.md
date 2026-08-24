@@ -49,6 +49,15 @@ for tags and release notes while still in `0.x`.
   benchmark or maximum resident set size (RSS) run was justified. See
   `docs/perf-attribution.md` for exact commands, artifacts, and hashes.
 
+- Recorded P25ba at main commit
+  `d72987b44b76cf39aa4ad0f5fff03860eed7cd0d`. Canopy selected the
+  `cNodeErrorCostLangWithScratch` recovery-cost contract after the queued P25az
+  prefix aggregate arm. Focused recovery-cost and memo tests passed in Docker.
+  No authenticated issue #454 witness supplied call-depth or cache-hit proof.
+  The result is **NO-GO / NO CANDIDATE**. No benchmark or maximum resident set
+  size (RSS) run was justified. See `docs/perf-attribution.md` for the command,
+  artifact hashes, and reopening condition.
+
 ### Correctness
 
 - Recorded the unreceipted `dispatch.julia` blocker at base

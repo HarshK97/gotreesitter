@@ -10,6 +10,69 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-24 P25ba recovery node-error-cost contract
+
+Status: **NO-GO / NO CANDIDATE**. Keep issue #454 and the performance arm live.
+Ship no parser or test code.
+
+The evidence base is main commit
+`d72987b44b76cf39aa4ad0f5fff03860eed7cd0d`.
+The isolated worktree is `/tmp/gts-p25ba-next-hotspot-20260824`.
+The queued P25az arm screens the prefix aggregate. This arm screens its
+smallest source-owned cost dependency, `cNodeErrorCostLangWithScratch`.
+
+Canopy found the helper at `parser_recover_c.go:1425-1477`.
+It recurses at line 1452 and has calls from the prefix aggregate at line 2274.
+The merge stack path calls it at lines 2438 and 2449.
+The helper memoizes by node pointer and equivalence version.
+The memo contract is correctness-sensitive. A bypass could change recovery
+costs or condense ordering.
+
+The structural queries were:
+
+```text
+canopy search symbols parser_recover_c.go --name 'cNodeErrorCostLangWithScratch|cStackErrorCostForMergeWithScratch' --no-cache --limit 20 --json
+canopy graph calls --reverse cNodeErrorCostLangWithScratch parser_recover_c.go --no-cache --depth 3 --json
+```
+
+The existing P25d profile is synthetic C# evidence. It reports only coarse
+attribution for the prefix cost path. It does not provide an authenticated
+issue #454 witness, call depth, cache-hit share, or cost per call.
+Therefore, it cannot support a generic performance candidate.
+
+The focused contract gate passed these tests:
+
+```text
+TestCStackErrorCostFreshParseProofFallsBackAfterError
+TestCCondenseFreshTreeGatePreservesOpenRecoveryCosts
+TestCRecoveryCostWalkIsOneCycle
+TestCNodeMemoEpochAdvancesAcrossParserParses
+TestCNodeMemoSlotPreservesVictimPromotionAndEviction
+```
+
+The Docker run used one CPU, 8 GiB memory, `GOMAXPROCS=1`, `GOFLAGS=-p=1`,
+and test parallelism one. It passed with exit code zero, no timeout, and no
+out-of-memory event.
+
+The command was:
+
+```text
+bash cgo_harness/docker/run_parity_in_docker.sh --repo-root /tmp/gts-p25ba-next-hotspot-20260824 --out-root /tmp/gts-p25ba-artifacts --label p25ba-recovery-cost-contract --no-build --memory 8g --cpus 1 --goflags '-p=1' --test-parallel 1 --timeout 30m -- "cd /workspace && GOMAXPROCS=1 go test . -run '^(TestCStackErrorCostFreshParseProofFallsBackAfterError|TestCCondenseFreshTreeGatePreservesOpenRecoveryCosts|TestCRecoveryCostWalkIsOneCycle|TestCNodeMemoEpochAdvancesAcrossParserParses|TestCNodeMemoSlotPreservesVictimPromotionAndEviction)$' -count=1 -parallel 1 -timeout 20m -v"
+```
+
+The artifact is `/tmp/gts-p25ba-artifacts/20260824T023913Z-p25ba-recovery-cost-contract`.
+
+- `container.log`: `50e6b0171a03e3a8dc2c41881ed494b8c9ad23dbc2573b53069eb2f9e55e0bb3`.
+- `metadata.txt`: `a534fe2252ac8a5328c5f8f8895bdeba75b41ebaf534cf8cf9c2a856c103b126`.
+- `inspect.json`: `5f56f0ebccaa4990be17e1d13168f0ad8b601f7efef27f219220c3fd28c89d27`.
+
+Do not run a benchmark or RSS campaign. No candidate passed the proof boundary.
+Reopen this seam only after an authenticated recovery witness supplies call
+depth, cache-hit share, and cost per call. Require fresh, incremental, and
+locked-C equality before any candidate.
+
+Decision: **NO-GO**. Checkpoint candidate: none. Keep the helper unchanged.
+
 ## 2026-08-23 P25aw Swift incremental capacity witness
 
 Status: **NO-GO / NO WITNESS**. Keep the Swift external scanner reuse gate
