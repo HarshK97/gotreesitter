@@ -360,6 +360,15 @@ for tags and release notes while still in `0.x`.
   registry change. See `docs/root-normalization-retirement.md` for the
   route receipt, failed attempts, and reopening condition.
 
+- Rechecked the AWK dispatcher blocker at current main commit
+  `83e0cfbc30ad82e2f327d58e35eea9f438a0ffda`. The one-language Docker guard
+  passed with one CPU. Clean raw, production, compact, forest, and
+  incremental routes still match locked C. The recovery witness still differs
+  in shape, and recovery incremental telemetry remains absent. Keep
+  `dispatch.awk` live. Ship no parser or registry change. See
+  `docs/root-normalization-retirement.md` for the artifact hashes and
+  reopening conditions.
+
 - Recorded the N31i Cooklang dispatcher blocker at evidence base
   `7498a678c52029a82f312e9637ecb66b15defa0b` and publication base
   `675697a1144fad306489c5142aedaae0825545d9`. Keep `dispatch.cooklang` live.

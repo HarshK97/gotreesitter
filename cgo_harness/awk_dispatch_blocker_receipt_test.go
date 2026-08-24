@@ -194,6 +194,9 @@ func TestAWKDispatchBlockerReceiptDocument(t *testing.T) {
 		"Keep `dispatch.awk` live",
 		"Ship no parser or",
 		"registry change.",
+		"Rechecked the AWK dispatcher blocker at current main commit",
+		"83e0cfbc30ad82e2f327d58e35eea9f438a0ffda",
+		"The one-language Docker guard",
 	} {
 		if !strings.Contains(string(changelog), marker) {
 			t.Fatalf("changelog lacks marker %q", marker)
