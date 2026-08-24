@@ -77,6 +77,8 @@ var swiftCorpusExpectations = map[string]swiftCorpusExpectation{
 	"stdlib_CollectionAlgorithms.swift": {
 		status: swiftCorpusKnownFailing,
 		// Same root cause as stdlib_FloatingPointToString.swift: the
+		// focused minimal witness now matches locked C, but this full file
+		// still reports an error.
 		// `unsafe` expression-prefix keyword. Verified by bisection: the
 		// file parses clean through the `_halfStablePartition` function
 		// (byte 13232) and only starts failing once `partition(by:)`
@@ -87,6 +89,8 @@ var swiftCorpusExpectations = map[string]swiftCorpusExpectation{
 	"stdlib_FloatingPointToString.swift": {
 		status: swiftCorpusKnownFailing,
 		// Tracks #576. Minimal repro: `let x = unsafe bar()`.
+		// The focused 20-byte witness now matches locked C through generic
+		// recovery. This corpus file still reports an error.
 		// The `unsafe` keyword used as an expression prefix (Swift's
 		// strict-memory-safety opt-in, used throughout this file as
 		// `unsafe buffer.storeBytes(...)`, `let x = unsafe

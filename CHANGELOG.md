@@ -80,6 +80,28 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Recorded a generic Swift issue #576 recovery candidate at base
+  `da6f71471aaaa835503accaa1bc2083ced90b4e6`. The active deterministic finite
+  automaton (DFA) source now replays recovery from the exact skipped-prefix
+  offset. It requires the original span, points, token identity, and unchanged
+  scanner state. It resynchronizes the source before it emits `errorSymbol`.
+  Recovery replay requires a non-empty scanner checkpoint and live state. A
+  checkpointless scanner rejects recovery replay without changing the scanner.
+  Generic relex still accepts stateless scanners with empty serialization. The
+  Swift scanner now serializes its complete state for the recovery proof. The
+  scanner no longer claims that failed scans preserve this state. The token
+  source records distinct start and end checkpoints when a failed scan changes
+  the state. Incremental fast-forward restores the recorded end checkpoint.
+  The parser records error-mode lexing only after the DFA produces the token.
+  An outer parse operation resets the recovery memo size. Nested retries stay
+  warm. Two pooled control-to-witness tests protect the recovery lifecycle. The
+  parser returns a rejected recovery probe before its legacy retry. Entry
+  scratch now restores the required large-parse reservation after a small
+  pooled parse. The 20-byte witness matches the locked C tree. The
+  `stdlib_FloatingPointToString.swift` and `stdlib_CollectionAlgorithms.swift`
+  witnesses still differ from locked C. Keep issue #576 open. See
+  `docs/swift-576-compact-correctness-blocker.md`.
+
 - Recorded the unreceipted `dispatch.julia` blocker at base
   `b35b86cb84d620305515abf970d5598c9573a48b`. The focused Docker receipt
   covers raw, production, compact, forest, incremental, and locked-C routes.

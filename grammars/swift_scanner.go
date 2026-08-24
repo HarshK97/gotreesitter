@@ -393,44 +393,46 @@ func (SwiftExternalScanner) Destroy(payload any) {}
 func (SwiftExternalScanner) Serialize(payload any, buf []byte) int {
 	s := payload.(*swtScannerState)
 	hc := s.ongoingRawStrHashCount
-	if len(buf) < 4 {
+	if len(buf) < 9 {
 		return 0
 	}
 	buf[0] = byte(hc >> 24)
 	buf[1] = byte(hc >> 16)
 	buf[2] = byte(hc >> 8)
 	buf[3] = byte(hc)
-	return 4
+	if s.carriedPreviousValid {
+		buf[4] = 1
+	} else {
+		buf[4] = 0
+	}
+	previous := uint32(s.carriedPreviousRune)
+	buf[5] = byte(previous >> 24)
+	buf[6] = byte(previous >> 16)
+	buf[7] = byte(previous >> 8)
+	buf[8] = byte(previous)
+	return 9
 }
 
 func (SwiftExternalScanner) Deserialize(payload any, buf []byte) {
 	s := payload.(*swtScannerState)
 	s.ongoingRawStrHashCount = 0
-	// carriedPreviousRune/carriedPreviousValid are not serialized: they only
-	// bridge two back-to-back invocations within the same forward-scanning
-	// trivia run and are not meaningful across a restored checkpoint. Clear
-	// them so a restore falls back to a fresh lexer.Previous() read, never a
-	// stale carried rune from a discarded branch.
+	s.carriedPreviousRune = 0
 	s.carriedPreviousValid = false
-	if len(buf) < 4 {
+	if len(buf) < 9 {
 		return
 	}
 	s.ongoingRawStrHashCount = uint32(buf[0])<<24 |
 		uint32(buf[1])<<16 |
 		uint32(buf[2])<<8 |
 		uint32(buf[3])
+	s.carriedPreviousValid = buf[4] != 0
+	s.carriedPreviousRune = rune(uint32(buf[5])<<24 |
+		uint32(buf[6])<<16 |
+		uint32(buf[7])<<8 |
+		uint32(buf[8]))
 }
 
-// PreservesStateOnScanFailure holds because Scan only writes
-// swtScannerState.ongoingRawStrHashCount on a path that itself returns true
-// (see swtEatRawStrPart), so a false return never leaves that field
-// mutated. swtEatWhitespace does write carriedPreviousRune/carriedPreviousValid
-// on some false-returning paths, and that write is intentional: it must
-// survive the false return so the next Scan call sees it (see swtScannerState
-// doc comment). Declaring this true tells the token source to stop
-// snapshotting and restoring scanner state around every failed scan, which
-// would otherwise erase that carried value before the caller could use it.
-func (SwiftExternalScanner) PreservesStateOnScanFailure() bool { return true }
+func (SwiftExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
 
 func (s SwiftExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	state := payload.(*swtScannerState)

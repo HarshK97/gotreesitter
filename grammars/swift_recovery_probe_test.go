@@ -107,7 +107,7 @@ func TestSwiftUnsafeWitnessKeepsCurrentGoTreeAcrossRecoveryProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect Swift unsafe witness: %v", err)
 	}
-	const wantDigest = "ec51c633a3f99515cc0cd1c0cff435a44ddc7db8e83705977d28f78bdfb0fc0e"
+	const wantDigest = "7cb588c1f7b44cf490d8fcddd11adb0cc56238e891156687c26660568a7f7447"
 	if inspection.SHA256 != wantDigest {
 		t.Fatalf("Swift unsafe witness digest = %s, want %s", inspection.SHA256, wantDigest)
 	}

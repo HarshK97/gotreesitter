@@ -35,6 +35,9 @@ type Token struct {
 	// transitions before producing this token.
 	lexerSkippedPrefix      bool
 	lexerSkippedPrefixStart uint32
+	// lexerErrorModeLexed proves that the active DFA source produced this
+	// recovery token while parser state zero selected the error lex mode.
+	lexerErrorModeLexed bool
 }
 
 func bytesToStringNoCopy(b []byte) string {

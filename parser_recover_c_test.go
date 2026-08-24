@@ -288,12 +288,19 @@ func TestCRecoveryParseRetryPoolAndSnippetResetsClearState(t *testing.T) {
 
 	parser.crecoveryCostCompetitionRelevant = true
 	parser.crecoveryCostCompetitionWalkEnabled = true
+	parser.cRecoverSharedTokenErrorModeLexed = true
+	parser.cRecoverCustomResyncActive = true
+	parser.cRecoverCustomResyncByte = 42
+	parser.cRecoverCustomSourceEligible = true
 	scratch.cRecoveryCostWalk = true
 	scratch.cRecoveryConvergence = true
 	scratch.cRecoveryFallbackSuppression = true
 	pool := &ParserPool{language: parser.language}
 	pool.applyDefaults(parser)
-	if parser.crecoveryCostCompetitionRelevant || parser.crecoveryCostCompetitionWalkEnabled || scratch.cRecoveryCostWalk || scratch.cRecoveryConvergence || scratch.cRecoveryFallbackSuppression {
+	if parser.crecoveryCostCompetitionRelevant || parser.crecoveryCostCompetitionWalkEnabled ||
+		parser.cRecoverSharedTokenErrorModeLexed || parser.cRecoverCustomResyncActive ||
+		parser.cRecoverCustomResyncByte != 0 || parser.cRecoverCustomSourceEligible ||
+		scratch.cRecoveryCostWalk || scratch.cRecoveryConvergence || scratch.cRecoveryFallbackSuppression {
 		t.Fatal("parser pool reset retained recovery state")
 	}
 
@@ -316,49 +323,335 @@ func TestCRecoveryParseRetryPoolAndSnippetResetsClearState(t *testing.T) {
 	}
 }
 
-func TestCAbsorbErrorRunKeepsErrorLeafNamed(t *testing.T) {
-	parser := cRecoveryElectionTestParser()
-	arena := acquireNodeArena(arenaClassFull)
-	defer arena.Release()
+func TestParseOperationBoundaryResetsRetainedRecoveryMemoSize(t *testing.T) {
+	parser := &Parser{cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheSize)}
+	outer := parser.beginParseOperationBudget()
+	if got := len(parser.cNodeMemoCache); got != cNodeMemoCacheInitialSize {
+		t.Fatalf("outer operation memo entries = %d, want %d", got, cNodeMemoCacheInitialSize)
+	}
 
-	openErr := newParentNodeInArena(arena, errorSymbol, true, nil, nil, 0)
-	cSetNodeSpan(openErr, 10, 10, Point{Column: 10}, Point{Column: 10})
-	openErr.setHasError(true)
-	stack := newGLRStack(1)
-	stack.pushEntry(newStackEntryNode(cErrorState, openErr), nil, nil)
-	stack.byteOffset = 10
-	stack.cRec = &cRecoverState{group: &cRecGroup{}, openErr: openErr}
-	nodeCount := 0
+	parser.cNodeMemoCache = parser.cNodeMemoCache[:cNodeMemoCacheSize]
+	inner := parser.beginParseOperationBudget()
+	if got := len(parser.cNodeMemoCache); got != cNodeMemoCacheSize {
+		t.Fatalf("nested retry memo entries = %d, want %d", got, cNodeMemoCacheSize)
+	}
+	parser.endParseOperationBudget(inner)
+	parser.endParseOperationBudget(outer)
 
-	parser.cAbsorbTokenIntoError(
-		&stack,
-		Token{
-			Symbol:    errorSymbol,
-			StartByte: 10,
-			EndByte:   18,
-			StartPoint: Point{
-				Column: 10,
+	next := parser.beginParseOperationBudget()
+	defer parser.endParseOperationBudget(next)
+	if got := len(parser.cNodeMemoCache); got != cNodeMemoCacheInitialSize {
+		t.Fatalf("next operation memo entries = %d, want %d", got, cNodeMemoCacheInitialSize)
+	}
+}
+
+func TestCAbsorbErrorRunUsesLexerProvenanceForLeafErrorFlag(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		lexerProduced  bool
+		wantChildError bool
+	}{
+		{name: "lexer-produced", lexerProduced: true},
+		{name: "unproven", wantChildError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parser := cRecoveryElectionTestParser()
+			arena := acquireNodeArena(arenaClassFull)
+			defer arena.Release()
+
+			openErr := newParentNodeInArena(arena, errorSymbol, true, nil, nil, 0)
+			cSetNodeSpan(openErr, 10, 10, Point{Column: 10}, Point{Column: 10})
+			openErr.setHasError(true)
+			stack := newGLRStack(1)
+			stack.pushEntry(newStackEntryNode(cErrorState, openErr), nil, nil)
+			stack.byteOffset = 10
+			stack.cRec = &cRecoverState{group: &cRecGroup{}, openErr: openErr}
+			nodeCount := 0
+
+			parser.cAbsorbTokenIntoError(
+				&stack,
+				Token{
+					Symbol:              errorSymbol,
+					StartByte:           10,
+					EndByte:             18,
+					StartPoint:          Point{Column: 10},
+					EndPoint:            Point{Column: 18},
+					lexerErrorModeLexed: test.lexerProduced,
+				},
+				&nodeCount,
+				arena,
+				nil,
+				nil,
+				nil,
+			)
+
+			if got, want := openErr.ChildCount(), 1; got != want {
+				t.Fatalf("open error ChildCount = %d, want %d", got, want)
+			}
+			child := openErr.Child(0)
+			if !child.IsError() {
+				t.Fatalf("absorbed child type = %q, want ERROR", child.Type(parser.language))
+			}
+			if !child.IsNamed() {
+				t.Fatal("absorbed ERROR leaf is not named")
+			}
+			if got := child.HasError(); got != test.wantChildError {
+				t.Fatalf("absorbed ERROR leaf HasError = %t, want %t", got, test.wantChildError)
+			}
+		})
+	}
+}
+
+func TestCRecoverResumeDFALookaheadRequiresLexedAlignedErrorToken(t *testing.T) {
+	newFixture := func(errorModeAcceptsToken bool) (*Parser, *dfaTokenSource, Token, glrStack) {
+		lexStates := []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: ' ', Hi: ' ', NextState: 0, Skip: true},
+				},
 			},
-			EndPoint: Point{
-				Column: 18,
+			{},
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: ' ', Hi: ' ', NextState: 2, Skip: true},
+					{Lo: 'b', Hi: 'b', NextState: 3},
+				},
+			},
+			{AcceptToken: 1, Default: -1, EOF: -1},
+		}
+		if errorModeAcceptsToken {
+			lexStates[0].Transitions = append(lexStates[0].Transitions, LexTransition{Lo: 'b', Hi: 'b', NextState: 3})
+		}
+		lang := &Language{
+			Name:        "recovery-relex-fixture",
+			TokenCount:  2,
+			StateCount:  2,
+			SymbolCount: 2,
+			SymbolMetadata: []SymbolMetadata{
+				{Name: "end", Visible: true, Named: true},
+				{Name: "hidden"},
+			},
+			LexStates: lexStates,
+			LexModes:  []LexMode{{LexState: 0}, {LexState: 2}},
+		}
+		parser := &Parser{language: lang, errorCostCompetition: true}
+		source := []byte(" b")
+		ts := newDFATokenSourceDirectWithCRecovery(NewLexer(lang.LexStates, source), lang, parser.lookupActionIndex, nil, nil, nil, true)
+		ts.SetParserState(1)
+		tok := ts.Next()
+		stack := newGLRStack(1)
+		return parser, ts, tok, stack
+	}
+
+	t.Run("verified-error-run", func(t *testing.T) {
+		parser, ts, tok, stack := newFixture(false)
+		scratch := &parserScratch{}
+		got, ok := parser.cRecoverResumeDFALookahead(ts, ts.lexer.source, &stack, tok, scratch)
+		if !ok {
+			t.Fatal("aligned error-mode re-lex was rejected")
+		}
+		if got.Symbol != errorSymbol || got.StartByte != tok.StartByte || got.EndByte != tok.EndByte {
+			t.Fatalf("replacement = %+v, want ERROR at %d..%d", got, tok.StartByte, tok.EndByte)
+		}
+		if !got.lexerErrorModeLexed {
+			t.Fatal("replacement lacks the lexer error-mode proof")
+		}
+		if ts.lexer.pos != int(got.EndByte) || ts.lexer.row != got.EndPoint.Row || ts.lexer.col != got.EndPoint.Column {
+			t.Fatalf("source position = %d/%d/%d, want %d/%d/%d", ts.lexer.pos, ts.lexer.row, ts.lexer.col, got.EndByte, got.EndPoint.Row, got.EndPoint.Column)
+		}
+		if !parser.cRecoverSharedTokenErrorModeLexed {
+			t.Fatal("verified error-mode token was not recorded")
+		}
+		if scratch.relexSnapshotInUse {
+			t.Fatal("accepted re-lex retained its snapshot")
+		}
+	})
+
+	t.Run("stack-offset-mismatch", func(t *testing.T) {
+		parser, ts, tok, stack := newFixture(false)
+		stack.byteOffset = tok.StartByte
+		if got, ok := parser.cRecoverResumeDFALookahead(ts, ts.lexer.source, &stack, tok, &parserScratch{}); ok {
+			t.Fatalf("misaligned re-lex = %+v, want rejection", got)
+		}
+		if parser.cRecoverSharedTokenErrorModeLexed {
+			t.Fatal("misaligned token was marked as error-mode lexed")
+		}
+	})
+
+	t.Run("aligned-invisible-error-mode-token", func(t *testing.T) {
+		parser, ts, tok, stack := newFixture(true)
+		got, ok := parser.cRecoverResumeDFALookahead(ts, ts.lexer.source, &stack, tok, &parserScratch{})
+		if !ok {
+			t.Fatal("aligned invisible error-mode token was rejected")
+		}
+		if got.Symbol != errorSymbol || !got.lexerErrorModeLexed {
+			t.Fatalf("replacement = %+v, want lexer-proven ERROR", got)
+		}
+		if !parser.cRecoverSharedTokenErrorModeLexed {
+			t.Fatal("lexer-produced token was not marked as error-mode lexed")
+		}
+	})
+
+	t.Run("visible-error-mode-token", func(t *testing.T) {
+		parser, ts, tok, stack := newFixture(true)
+		parser.language.SymbolMetadata[tok.Symbol].Visible = true
+		savedState := ts.state
+		if got, ok := parser.cRecoverResumeDFALookahead(ts, ts.lexer.source, &stack, tok, &parserScratch{}); ok {
+			t.Fatalf("visible error-mode token = %+v, want rejection", got)
+		}
+		if parser.cRecoverSharedTokenErrorModeLexed {
+			t.Fatal("visible token was marked as error-mode lexed")
+		}
+		if ts.state != savedState || ts.lexer.pos != int(tok.EndByte) || ts.lexer.row != tok.EndPoint.Row || ts.lexer.col != tok.EndPoint.Column {
+			t.Fatalf("rejected probe did not preserve source: state=%d pos=%d/%d/%d", ts.state, ts.lexer.pos, ts.lexer.row, ts.lexer.col)
+		}
+	})
+}
+
+func TestCRecoverResumeDFARejectsAbsentExternalScannerCheckpoint(t *testing.T) {
+	lexStates := []LexState{
+		{
+			Default: -1,
+			EOF:     -1,
+			Transitions: []LexTransition{
+				{Lo: ' ', Hi: ' ', NextState: 0, Skip: true},
 			},
 		},
-		&nodeCount,
-		arena,
+		{},
+		{
+			Default: -1,
+			EOF:     -1,
+			Transitions: []LexTransition{
+				{Lo: ' ', Hi: ' ', NextState: 2, Skip: true},
+				{Lo: 'b', Hi: 'b', NextState: 3},
+			},
+		},
+		{AcceptToken: 1, Default: -1, EOF: -1},
+	}
+	scanner := checkpointByteExternalScanner{}
+	lang := &Language{
+		Name:            "recovery-empty-checkpoint-fixture",
+		TokenCount:      2,
+		StateCount:      2,
+		SymbolCount:     2,
+		ExternalScanner: scanner,
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: true, Named: true},
+			{Name: "hidden"},
+		},
+		LexStates: lexStates,
+		LexModes:  []LexMode{{LexState: 0}, {LexState: 2}},
+	}
+	parser := &Parser{language: lang, errorCostCompetition: true}
+	source := []byte(" b")
+	ts := newDFATokenSourceDirectWithCRecovery(
+		NewLexer(lang.LexStates, source),
+		lang,
+		parser.lookupActionIndex,
 		nil,
 		nil,
 		nil,
+		true,
 	)
+	defer ts.Close()
+	liveState := ts.externalPayload.(*byte)
+	*liveState = 0xff
+	ts.SetParserState(1)
+	tok := ts.Next()
+	if !tok.lexerSkippedPrefix || len(ts.externalTokenStart) != 0 {
+		t.Fatalf("fixture token lacks the absent checkpoint proof: token=%+v checkpoint=%v", tok, ts.externalTokenStart)
+	}
+	if ts.CanRelexFromTokenStart(tok) || ts.canRelexFromSkippedPrefix(tok) {
+		t.Fatal("absent checkpoint admitted direct token reuse")
+	}
+	stack := newGLRStack(1)
+	savedParserState := ts.state
+	if got, ok := parser.cRecoverResumeDFALookahead(ts, source, &stack, tok, &parserScratch{}); ok {
+		t.Fatalf("absent-checkpoint replay = %+v, want rejection", got)
+	}
+	if *liveState != 0xff {
+		t.Fatalf("rejected replay changed live scanner state to %#x, want 0xff", *liveState)
+	}
+	if ts.state != savedParserState || ts.lexer.pos != int(tok.EndByte) ||
+		ts.lexer.row != tok.EndPoint.Row || ts.lexer.col != tok.EndPoint.Column {
+		t.Fatalf("rejected replay changed source state: parser=%d pos=%d/%d/%d", ts.state, ts.lexer.pos, ts.lexer.row, ts.lexer.col)
+	}
+	if parser.cRecoverSharedTokenErrorModeLexed {
+		t.Fatal("absent-checkpoint token was marked as error-mode lexed")
+	}
+}
 
-	if got, want := openErr.ChildCount(), 1; got != want {
-		t.Fatalf("open error ChildCount = %d, want %d", got, want)
+func TestCRecoverResumeDFARejectsCheckpointlessExternalScanner(t *testing.T) {
+	lexStates := []LexState{
+		{
+			Default: -1,
+			EOF:     -1,
+			Transitions: []LexTransition{
+				{Lo: ' ', Hi: ' ', NextState: 0, Skip: true},
+			},
+		},
+		{},
+		{
+			Default: -1,
+			EOF:     -1,
+			Transitions: []LexTransition{
+				{Lo: ' ', Hi: ' ', NextState: 2, Skip: true},
+				{Lo: 'b', Hi: 'b', NextState: 3},
+			},
+		},
+		{AcceptToken: 1, Default: -1, EOF: -1},
 	}
-	child := openErr.Child(0)
-	if !child.IsError() {
-		t.Fatalf("absorbed child type = %q, want ERROR", child.Type(parser.language))
+	lang := &Language{
+		Name:            "recovery-checkpointless-scanner-fixture",
+		TokenCount:      2,
+		StateCount:      2,
+		SymbolCount:     2,
+		ExternalScanner: skipPrefixExternalScanner{},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: true, Named: true},
+			{Name: "hidden"},
+		},
+		LexStates: lexStates,
+		LexModes:  []LexMode{{LexState: 0}, {LexState: 2}},
 	}
-	if !child.IsNamed() {
-		t.Fatal("absorbed ERROR leaf is not named")
+	parser := &Parser{language: lang, errorCostCompetition: true}
+	source := []byte(" b")
+	ts := newDFATokenSourceDirectWithCRecovery(
+		NewLexer(lang.LexStates, source),
+		lang,
+		parser.lookupActionIndex,
+		nil,
+		nil,
+		nil,
+		true,
+	)
+	defer ts.Close()
+	ts.SetParserState(1)
+	tok := ts.Next()
+	if !tok.lexerSkippedPrefix {
+		t.Fatalf("fixture token lacks the skipped-prefix proof: token=%+v", tok)
+	}
+	if !ts.CanRelexFromTokenStart(tok) {
+		t.Fatal("generic relex rejected a stateless external scanner")
+	}
+	if ts.canRelexFromSkippedPrefix(tok) {
+		t.Fatal("checkpointless external scanner admitted recovery replay")
+	}
+	stack := newGLRStack(1)
+	savedParserState := ts.state
+	if got, ok := parser.cRecoverResumeDFALookahead(ts, source, &stack, tok, &parserScratch{}); ok {
+		t.Fatalf("checkpointless scanner replay = %+v, want rejection", got)
+	}
+	if ts.state != savedParserState || ts.lexer.pos != int(tok.EndByte) ||
+		ts.lexer.row != tok.EndPoint.Row || ts.lexer.col != tok.EndPoint.Column {
+		t.Fatalf("rejected replay changed source state: parser=%d pos=%d/%d/%d", ts.state, ts.lexer.pos, ts.lexer.row, ts.lexer.col)
+	}
+	if parser.cRecoverSharedTokenErrorModeLexed {
+		t.Fatal("checkpointless scanner token was marked as error-mode lexed")
 	}
 }
 
@@ -1571,12 +1864,14 @@ func TestCRecoveryCondenseAndResumeThreadsTmpEntries(t *testing.T) {
 	_, _, _, reason := parser.cCondenseAndResumeDetailed(
 		stacks,
 		nil,
+		nil,
 		Token{Symbol: 1, StartByte: 2, EndByte: 3, EndPoint: Point{Column: 3}},
 		&nodeCount,
 		arena,
 		&entryScratch,
 		&gss,
 		&tmpEntries,
+		nil,
 		&trackChildErrors,
 	)
 	if reason != ParseStopNone {
@@ -1998,7 +2293,7 @@ func TestCCondenseAndResumeComparesMissingGroupStacks(t *testing.T) {
 	}
 
 	var nodeCount int
-	condensed, resumed, _, reason := parser.cCondenseAndResume([]glrStack{missing, clean}, nil, Token{Symbol: 1}, &nodeCount, nil, nil, nil, nil, nil)
+	condensed, resumed, _, reason := parser.cCondenseAndResume([]glrStack{missing, clean}, nil, nil, Token{Symbol: 1}, &nodeCount, nil, nil, nil, nil, nil, nil)
 	if reason != ParseStopNone {
 		t.Fatalf("cCondenseAndResume stop reason = %v, want none", reason)
 	}

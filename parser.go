@@ -1127,6 +1127,10 @@ func (p *Parser) resetCRecoveryCostCompetitionState() {
 	}
 	p.crecoveryCostCompetitionRelevant = false
 	p.crecoveryCostCompetitionWalkEnabled = false
+	p.cRecoverSharedTokenErrorModeLexed = false
+	p.cRecoverCustomResyncActive = false
+	p.cRecoverCustomResyncByte = 0
+	p.cRecoverCustomSourceEligible = false
 	p.syncCRecoveryMergeScratch(p.mergeScratch)
 }
 
@@ -6709,9 +6713,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			condenseRan = true
 			var reason ParseStopReason
 			if recoveryRuntimeDetailedBuildEnabled {
-				stacks, resumed, tok, reason = p.cCondenseAndResumeDetailed(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, trackChildErrors)
+				stacks, resumed, tok, reason = p.cCondenseAndResumeDetailed(stacks, source, ts, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, scratch, trackChildErrors)
 			} else {
-				stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, trackChildErrors)
+				stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, ts, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, scratch, trackChildErrors)
 			}
 			workCountRefreshConvergenceLookahead(tok)
 			if resultMaterializationShouldStop(reason) {
@@ -6875,9 +6879,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			condenseRan = true
 			var reason ParseStopReason
 			if recoveryRuntimeDetailedBuildEnabled {
-				stacks, resumed, tok, reason = p.cCondenseAndResumeDetailed(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, trackChildErrors)
+				stacks, resumed, tok, reason = p.cCondenseAndResumeDetailed(stacks, source, ts, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, scratch, trackChildErrors)
 			} else {
-				stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, trackChildErrors)
+				stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, ts, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, scratch, trackChildErrors)
 			}
 			if resultMaterializationShouldStop(reason) {
 				return finalize(stacks, reason)

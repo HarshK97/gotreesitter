@@ -110,6 +110,130 @@ func (checkpointByteExternalScanner) Scan(payload any, lexer *ExternalLexer, val
 }
 func (checkpointByteExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
 
+type failedScanMutationExternalScanner struct {
+	observed *[]byte
+}
+
+func (failedScanMutationExternalScanner) Create() any {
+	state := byte(3)
+	return &state
+}
+func (failedScanMutationExternalScanner) Destroy(any) {}
+func (failedScanMutationExternalScanner) Serialize(payload any, buf []byte) int {
+	if len(buf) == 0 {
+		return 0
+	}
+	buf[0] = *payload.(*byte)
+	return 1
+}
+func (failedScanMutationExternalScanner) Deserialize(payload any, buf []byte) {
+	state := payload.(*byte)
+	*state = 0
+	if len(buf) != 0 {
+		*state = buf[0]
+	}
+}
+func (s failedScanMutationExternalScanner) Scan(payload any, _ *ExternalLexer, _ []bool) bool {
+	state := payload.(*byte)
+	if s.observed != nil {
+		*s.observed = append(*s.observed, *state)
+	}
+	*state++
+	return false
+}
+func (failedScanMutationExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
+
+func failedScanMutationLanguage(observed *[]byte) *Language {
+	return &Language{
+		Name:            "failed-scan-mutation-test",
+		SymbolCount:     3,
+		TokenCount:      2,
+		SymbolNames:     []string{"end", "internal", "external"},
+		ExternalSymbols: []Symbol{2},
+		ExternalScanner: failedScanMutationExternalScanner{observed: observed},
+		ExternalLexStates: [][]bool{
+			{true},
+		},
+		LexModes: []LexMode{{LexState: 0, ExternalLexState: 0}},
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: 'x', Hi: 'x', NextState: 1},
+				},
+			},
+			{AcceptToken: 1, Default: -1, EOF: -1},
+		},
+	}
+}
+
+func TestInternalTokenCapturesFailedExternalScannerMutation(t *testing.T) {
+	lang := failedScanMutationLanguage(nil)
+	lookup := func(StateID, Symbol) uint16 { return 1 }
+	ts := acquireDFATokenSource(NewLexer(lang.LexStates, []byte("x")), lang, lookup, nil, nil, nil)
+	defer ts.Close()
+
+	tok := ts.Next()
+	if tok.Symbol != 1 || tok.ExternalScannerToken {
+		t.Fatalf("token = %+v, want internal symbol 1", tok)
+	}
+	cp, _, _, ok := ts.lastExternalScannerCheckpoint()
+	if !ok {
+		t.Fatal("internal token did not record a complete scanner checkpoint")
+	}
+	if len(cp.start) != 1 || cp.start[0] != 3 || len(cp.end) != 1 || cp.end[0] != 4 {
+		t.Fatalf("checkpoint = start %v end %v, want [3] to [4]", cp.start, cp.end)
+	}
+	if ts.externalTokenEndSameAsStart {
+		t.Fatal("failed scanner mutation was classified as an unchanged state")
+	}
+}
+
+func TestIncrementalCheckpointFastForwardRestoresFailedScanEndState(t *testing.T) {
+	var observed []byte
+	lang := failedScanMutationLanguage(&observed)
+	lookup := func(StateID, Symbol) uint16 { return 1 }
+	producer := acquireDFATokenSource(NewLexer(lang.LexStates, []byte("x")), lang, lookup, nil, nil, nil)
+	defer producer.Close()
+
+	tok := producer.Next()
+	cp, _, _, ok := producer.lastExternalScannerCheckpoint()
+	if !ok {
+		t.Fatal("producer did not record a complete scanner checkpoint")
+	}
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	node := arena.allocNode()
+	node.ownerArena = arena
+	node.startByte = tok.StartByte
+	node.endByte = tok.EndByte
+	node.startPoint = tok.StartPoint
+	node.endPoint = tok.EndPoint
+	if !arena.recordExternalScannerLeafCheckpoint(node, cp.start, cp.end) {
+		t.Fatal("failed to record the internal-token checkpoint")
+	}
+	checkpointRef, ok := externalScannerCheckpointRefForNode(node)
+	if !ok {
+		t.Fatal("recorded checkpoint is unavailable")
+	}
+
+	consumer := acquireDFATokenSource(NewLexer(lang.LexStates, []byte("x")), lang, lookup, nil, nil, nil)
+	defer consumer.Close()
+	*consumer.externalPayload.(*byte) = 9
+	observed = observed[:0]
+	if _, ok := fastForwardWithExternalScannerCheckpoint(consumer, node, checkpointRef); !ok {
+		t.Fatal("incremental checkpoint fast-forward failed")
+	}
+	if len(observed) == 0 || observed[0] != cp.end[0] {
+		t.Fatalf("scanner state at fast-forward read = %v, want end checkpoint %v", observed, cp.end)
+	}
+	if observed[0] == cp.start[0] {
+		t.Fatalf("fast-forward restored start checkpoint %v instead of end %v", cp.start, cp.end)
+	}
+}
+
 func TestCanRelexCheckpointScannerRequiresRepresentableStartAndLiveState(t *testing.T) {
 	scanner := checkpointByteExternalScanner{}
 	lang := &Language{ExternalScanner: scanner}
@@ -279,6 +403,12 @@ func TestRelexExternalScannerTokenPreservesSkippedGapProvenance(t *testing.T) {
 	}
 	if got, want := tok.ExternalScannerStartByte, uint32(0); got != want {
 		t.Fatalf("token scanner start = %d, want %d; token=%+v", got, want, tok)
+	}
+	if ts.usesExternalCheckpoints {
+		t.Fatal("stateless scanner unexpectedly enabled checkpoints")
+	}
+	if !ts.CanRelexFromTokenStart(tok) {
+		t.Fatal("generic relex rejected a stateless external scanner")
 	}
 
 	relexed, ok := ts.RelexFromTokenStart(tok)

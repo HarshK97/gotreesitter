@@ -520,12 +520,34 @@ type stackEntrySlab struct {
 }
 
 func (s *glrEntryScratch) ensureInitialCap(minEntries int) {
-	if minEntries <= 0 || len(s.slabs) != 0 {
+	if minEntries <= 0 {
 		return
 	}
 	capacity := defaultStackEntrySlabCap
 	if minEntries > capacity {
 		capacity = minEntries
+	}
+	if len(s.slabs) != 0 {
+		if len(s.slabs[0].data) >= capacity {
+			return
+		}
+		// A smaller retained slab must not define the next full parse. Move
+		// an adequate retained slab to the front when one is available.
+		for i := 1; i < len(s.slabs); i++ {
+			if len(s.slabs[i].data) >= capacity {
+				s.slabs[0], s.slabs[i] = s.slabs[i], s.slabs[0]
+				s.slabCursor = 0
+				return
+			}
+		}
+		// Keep smaller slabs for later stack growth. Add the required fresh
+		// reservation at the front so the first stack has stable capacity.
+		s.slabs = append(s.slabs, stackEntrySlab{data: make([]stackEntry, capacity)})
+		last := len(s.slabs) - 1
+		s.slabs[0], s.slabs[last] = s.slabs[last], s.slabs[0]
+		s.allocatedBytes += stackEntryBytesForCap(capacity)
+		s.slabCursor = 0
+		return
 	}
 	s.slabs = append(s.slabs, stackEntrySlab{data: make([]stackEntry, capacity)})
 	s.allocatedBytes += stackEntryBytesForCap(capacity)
@@ -3891,6 +3913,10 @@ func (p *gssMainPreflight) clearGSSPointersForReuse() {
 	clear(p.cleanCache)
 	clear(p.cleanSeen)
 	clear(p.offsetSeen)
+	if cap(p.reachCache) > 0 {
+		clear(p.reachCache[:cap(p.reachCache)])
+		p.reachCache = p.reachCache[:0]
+	}
 	if cap(p.reachStack) > 0 {
 		clear(p.reachStack[:cap(p.reachStack)])
 		p.reachStack = p.reachStack[:0]
@@ -5764,7 +5790,9 @@ func (s *glrMergeScratch) reset() {
 	s.spineEquivBytes = glrSpineEquivCacheBytesForCap(cap(s.spineEquivCache))
 	s.frontierHashBytes = glrStackFrontierHashCacheBytesForCap(cap(s.frontierHashCache))
 	if s.preflight != nil {
-		s.preflightReachCacheBytes = int64(cap(s.preflight.reachCache)) * int64(unsafe.Sizeof(gssReachCacheEntry{}))
+		s.preflight.clearGSSPointersForReuse()
+		s.preflight = nil
+		s.preflightReachCacheBytes = 0
 	}
 	s.frontierMergeHash = false
 	s.cErrorCostParser = nil

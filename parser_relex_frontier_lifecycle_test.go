@@ -74,6 +74,12 @@ func TestSingleStateRelexRefreshesFrontierBeforeNextToken(t *testing.T) {
 	valid := make([][]uint16, lang.StateCount)
 	valid[3], valid[4] = []uint16{0}, []uint16{1}
 	ts := newDFATokenSourceDirect(NewLexer(lang.LexStates, []byte("ax")), lang, p.lookupActionIndex, nil, valid, nil)
+	if ts.usesExternalCheckpoints {
+		t.Fatal("stateless scanner unexpectedly enabled checkpoints")
+	}
+	if !ts.CanRelexFromTokenStart(Token{StartByte: 0, EndByte: 1}) {
+		t.Fatal("generic relex rejected a stateless external scanner")
+	}
 	tree := p.parseInternal([]byte("ax"), ts, nil, nil, arenaClassFull, nil, 0, 0, 0, false)
 	if tree == nil {
 		t.Fatal("parse returned nil tree")
