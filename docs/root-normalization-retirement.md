@@ -113,6 +113,92 @@ Reopen retirement only after all conditions pass:
 6. Re-trigger or retire each of the five Julia sub-repairs under current grammar bytes.
 
 Keep the registry arm unchanged until every condition passes.
+## 2026-08-24 Kotlin dispatcher blocker receipt
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.kotlin` live.
+
+Base commit: `d72987b44b76cf39aa4ad0f5fff03860eed7cd0d`.
+This slice adds one focused test. It changes no parser or registry behavior.
+
+The Julia queue names `dispatch.kotlin` as the next single-grammar parent arm.
+The ownership registry assigns it index 47, language `kotlin`, and owner
+`derivation_election_selection`. The retired interpolation member remains a
+separate entry at index 48.
+
+Canopy finds the dispatcher call at `parser_result_compat.go:162`.
+It finds the parent definition at `parser_result_kotlin.go:9-23`.
+The parent calls the live generic-call, prefix-comparison, raw-string,
+callable-reference, and receiver-name members directly.
+The recovered-root member has its own census boundary.
+
+The Kotlin grammar lock has SHA-256
+`9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`.
+It pins `https://github.com/fwcd/tree-sitter-kotlin` at commit
+`cbed96ab13dbc082eeeb2e8333c342a62829c29d`.
+The embedded Kotlin grammar blob has SHA-256
+`643a3e6b60d07846dd972849b612159ff9bf09734b09fb00013229c8593a8c78`.
+The Kotlin normalizer has SHA-256
+`c0577c69e20d8e725692547eba72a764a08df1fe86c10c368e4c31f65c0a9926`.
+The Kotlin implementation, generated grammar, scanner, blob, and witness
+files are byte-identical between the N58 evidence base `bb09ff6978cb2e46d98b805c0e2f6bb7d4429e24`
+and this base. The ownership registry changed for unrelated retirements.
+Its Kotlin parent and retired-member entries remain unchanged.
+
+### Current-first gate
+
+The parser-produced witness is
+`tasks.named<KotlinCompile>("compile") {}`.
+Its source SHA-256 is
+`efc3157ca94245c59ff5d093ca456c319f2518882f4b9a28303baa25182ec4fc`.
+
+The focused Docker command used the single-grammar test below:
+
+```text
+bash cgo_harness/docker/run_parity_in_docker.sh --repo-root /tmp/gotreesitter-normalization-next-d729 --out-root /tmp/gotreesitter-normalization-next-d729/harness_out/docker --label n59-kotlin-current-first --memory 4g --cpus 1 --pids 512 --gomemlimit 3GiB --goflags '-p=1' --test-parallel 1 --timeout 20m --no-build -- 'cd /workspace && go test ./parser_result_test -run "^TestKotlinDispatcherCurrentFirstGate$" -count=1 -parallel 1 -timeout 20m -v'
+```
+
+The test passed with exit code zero.
+The container used image `gotreesitter/cgo-harness:go1.25-local`.
+It used 4 GiB memory, one central processing unit, 512 process IDs, and a
+3 GiB Go memory limit.
+The artifact log has SHA-256
+`74832c55994946b59838a2cbcddbd64ed580b951ce77bb0901339f2b405b58ac`.
+The metadata has SHA-256
+`c6f531add69b75e3ebe41fdfe384657d129ad49dfa340c0e0d36329c00325816`.
+The inspection record has SHA-256
+`440049970143662f5d1b47f711050e7e6f6ba0650b0e92c3eeb4bd5c37fdfd1d`.
+
+The raw route used deep digest
+`3d14ddefaa0623a36781cde5455f20fe798c63b6b62b4178500b3d4ab48653bc`.
+It recorded no compatibility pass.
+The production route used deep digest
+`3f89c1a3d1cc592c1c607a8bceeac417c4849e87e39de005efeb46e14ba629db`.
+It recorded `dispatch.kotlin` as checked 1, run 1, visited 22, and rewritten 23.
+The recovered-root subpass recorded checked 1, run 1, visited 22, and rewritten 0.
+The raw and production digests differ, so the parent arm remains live.
+
+Stop after this first live parent rewrite.
+Do not run compact, strict forest, edited incremental, fatal locked-C, survivor,
+registry, or dead-reference retirement proofs in this receipt.
+The focused gate does not claim route-complete retirement.
+
+### Reopening conditions
+
+Reopen `dispatch.kotlin` only after `derivation_election_selection` emits all
+listed Kotlin shapes without compatibility rewrites or parser-state changes:
+
+- generic calls with type arguments;
+- prefix comparisons;
+- callable references;
+- raw strings;
+- receiver function names;
+- recovered source-file roots.
+
+Then certify exact raw, production, compact, strict forest, edited incremental,
+fatal locked-C, survivor, registry, and dead-reference routes.
+Preserve the retired interpolation member and its exact receipt.
+
+Keep `dispatch.kotlin` unchanged until every condition passes.
 
 ## 2026-08-24 C and C++ dispatcher blocker receipt
 
