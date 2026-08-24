@@ -995,6 +995,15 @@ for tags and release notes while still in `0.x`.
   `docs/root-normalization-retirement.md` for the digests, artifacts, and
   reopening condition.
 
+- Rechecked the `dispatch.c_sharp` blocker at current main commit
+  `83e0cfbc30ad82e2f327d58e35eea9f438a0ffda`. The one-language Docker guard
+  passed with one CPU. The positive control matches locked C on every route.
+  The A0, issue #454, and malformed witnesses still differ from locked C.
+  Forest declines those witnesses, and incremental reuse remains unsupported.
+  Keep the arm live. Ship no parser or registry code changes. See
+  `docs/root-normalization-retirement.md` for current artifact hashes and
+  reopening conditions.
+
 - Reject the issue #454 generic recovery candidate from PR #793. The candidate
   code and test hash is
   `71fdb2ab00f8f31e74b7e165f381c0856bd3720abdeb4d1556454d0cc75c50fa`.
