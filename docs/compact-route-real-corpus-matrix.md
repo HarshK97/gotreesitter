@@ -2707,6 +2707,98 @@ equality, incremental equality, and locked-C equality.
 
 No performance gate ran for C26ai. This receipt makes no performance claim.
 
+## C26aj generated SQL `CREATE DOMAIN` producer witness
+
+C26aj used publication base
+`83e0cfbc30ad82e2f327d58e35eea9f438a0ffda`.
+It follows the C26ai tagged dollar-quote receipt.
+
+Status: **NO-GO / KEEP LIVE**. Keep SQL compact admission gated.
+This slice adds one producer witness, one focused Docker probe, one changelog
+entry, and this section. It adds no parser or route change.
+
+### Producer and witness
+
+The pinned SQL producer is `m-novikov/tree-sitter-sql` at commit
+`587f30d184b058450be2a2330878210c5f33b3f9`.
+The grammar source SHA-256 is
+`42f011860137175a5a0cb820d1a694e5ccca1d17f226729ff6a4e886910cde1c`.
+The scanner source SHA-256 is
+`d437ad9f517d7a1f4248ccd05abe58370b5040c0037c877dab1f0aefeaa04af6`.
+
+The generated blob identity is
+`4ffb2a6d09e2000126f10101db9028d28e0752ac3e4f83e401f045c3b028ca7c`.
+The scanner identity is
+`7e493677411a501e6d8592c6b9cc158e21a1bfed44c72ca914e2d81e4e34861d`.
+The checked-in SQL blob identity is
+`e21421cbab52b54cf5ba15c8f78a2bb4729bf4e8c0da14368069e897de451268`.
+
+The witness is the 19-byte source `CREATE DOMAIN test;`.
+Its source SHA-256 is
+`94c5d360b7205e2bd6e84fa28efc2cb3ee2cbc89aa6b759dd3349e578dd133c8`.
+The generated tree digest is
+`f08d628fa30d83cf92352dbfcab4885b7422ac0fadde9c756e747e6c116dc044`.
+The checked-in and locked-C tree digest is
+`e72fb9fb57180d5db5be9b649969c7e722d20e1ea4040075260258ee293ce630`.
+
+Both generated and checked-in trees are clean with two root children.
+The generated `CREATE_DOMAIN` node has one child. Locked C has no child.
+The first divergence is:
+
+```text
+root[0][1]: ChildCount go=1 c=0 (goType="CREATE_DOMAIN" cType="CREATE_DOMAIN" goBytes=[7-13] cBytes=[7-13])
+```
+
+The difference starts in generated producer output, before compact replay.
+The witness is the next smallest remaining SQL producer gap after C26ai.
+
+### Focused Docker gate
+
+The probe is
+`cgo_harness/sql_c26aj_generated_create_domain_test.go`.
+It checks generated identity, checked-in parity, and locked-C parity.
+Run one SQL grammar with one CPU and one Go test worker:
+
+```sh
+GOMAXPROCS=1 bash cgo_harness/docker/run_parity_in_docker.sh \
+  --repo-root /tmp/gotreesitter-graduation-next.EaYNNn \
+  --out-root /tmp/gotreesitter-c26aj-artifacts \
+  --label c26aj-sql-create-domain-final --no-build --memory 4g --cpus 1 \
+  --gomemlimit 3GiB --goflags -p=1 --test-parallel 1 --timeout 10m \
+  --mount /tmp/gotreesitter-sql-seed.ada3CT:/tmp/grammar_parity:ro -- \
+  'cd /workspace/cgo_harness && \
+   go test -tags "cgo treesitter_c_parity" . \
+   -run "^TestSQLC26ajGeneratedCreateDomain$" -count=1 \
+   -parallel=1 -timeout=10m -v'
+```
+
+The run passed with exit code zero.
+It used one SQL grammar, one CPU, `GOMAXPROCS=1`, and `GOFLAGS=-p=1`.
+It reported no out-of-memory kill and no wall timeout.
+
+The artifact is
+`/tmp/gotreesitter-c26aj-artifacts/20260824T053231Z-c26aj-sql-create-domain-final`.
+
+- `container.log`: `d2aa7a24577775a055d838fd619f17fd7f559395ad76f89b078bd6dcd94b62cf`.
+- `metadata.txt`: `7b1bdbc8fc7d1ac21e1692419a4eda2b066ec1003895b70f04e54824d8197ab0`.
+- `inspect.json`: `3db73a6ff767692081b99beed02ccd9d93b37a78427c8f001a7ebbaa28a743a0`.
+
+The generated tree remains different from locked C.
+The probe records a producer blocker, not a compact parity claim.
+
+### C26aj decision and reopening condition
+
+Keep SQL compact admission gated. Do not add a parser-state remap.
+Do not add a SQL-specific symbol map.
+
+Reopen only after the SQL producer or grammar revision makes both
+`CREATE DOMAIN` witnesses match the checked-in and locked-C trees.
+Then rerun the C26aj gate with C26ah and C26ai coverage.
+Require equal table identity, scanner identity, fresh-tree equality, compact
+equality, incremental equality, and locked-C equality.
+
+No performance gate ran for C26aj. This receipt makes no performance claim.
+
 ## Corpus state
 
 The current manifest has these properties:
