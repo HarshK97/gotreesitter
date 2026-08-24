@@ -1272,9 +1272,8 @@ type cRecoverState struct {
 	// state — the C "ERROR_STATE head with NULL subtree" shape, which costs an
 	// extra ERROR_COST_PER_RECOVERY in ts_stack_error_cost.
 	openErr *Node
-	// groupOrder preserves the path order inside the C merged error-state
-	// version. Later Go stack ordering can move members around, but C's
-	// strategy-1 summary scan still walks the merged paths in record order.
+	// groupOrder preserves the path order in its low bits. The reserved high
+	// bit stores the recovery-leaf policy. Read the order through groupOrderValue.
 	groupOrder uint32
 	// extraRecoveries counts the additional error segments C opens while this
 	// version keeps absorbing: an unlexable-run (ERROR-token) lookahead has no
@@ -1289,9 +1288,36 @@ type cRecoverState struct {
 	// per-segment recoveries are tracked here; forks drop cRec and with it
 	// these charges, exactly like C.
 	extraRecoveries uint32
-	// clearOrdinaryLeafErrors records a source-bearing stack prefix and direct
-	// internal-lexer provenance for the first token in this recovery region.
-	clearOrdinaryLeafErrors bool
+}
+
+const (
+	cRecoverGroupOrderLeafClearBit uint32 = 1 << 31
+	cRecoverGroupOrderValueMask           = cRecoverGroupOrderLeafClearBit - 1
+)
+
+// cPackRecoverGroupOrder packs the path order and recovery-leaf policy. Current
+// recovery ceilings keep vi below the reserved bit. The uint64 input checks a
+// future larger value before narrowing. Invalid input saturates and clears policy.
+func cPackRecoverGroupOrder(order uint64, clearOrdinaryLeafErrors bool) uint32 {
+	if order > uint64(cRecoverGroupOrderValueMask) {
+		return cRecoverGroupOrderValueMask
+	}
+	packed := uint32(order)
+	if clearOrdinaryLeafErrors {
+		return packed | cRecoverGroupOrderLeafClearBit
+	}
+	return packed
+}
+
+func (r *cRecoverState) groupOrderValue() uint32 {
+	if r == nil {
+		return 0
+	}
+	return r.groupOrder & cRecoverGroupOrderValueMask
+}
+
+func (r *cRecoverState) clearsOrdinaryLeafErrors() bool {
+	return r != nil && r.groupOrder&cRecoverGroupOrderLeafClearBit != 0
 }
 
 var cRecoverStateCloneObserver func()
@@ -1304,12 +1330,11 @@ func (r *cRecoverState) clone() *cRecoverState {
 		observer()
 	}
 	cp := &cRecoverState{
-		openErr:                 r.openErr,
-		group:                   r.group,
-		groupOrder:              r.groupOrder,
-		extraRecoveries:         r.extraRecoveries,
-		clearOrdinaryLeafErrors: r.clearOrdinaryLeafErrors,
-		summary:                 r.summary,
+		openErr:         r.openErr,
+		group:           r.group,
+		groupOrder:      r.groupOrder,
+		extraRecoveries: r.extraRecoveries,
+		summary:         r.summary,
 	}
 	return cp
 }
@@ -3560,9 +3585,14 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 		if reason != ParseStopNone {
 			return cRecHalted, false, reason
 		}
+		// Ordinary recovery caps versions near cRecoverMaxVersionCount. Pass vi
+		// before narrowing so the packer fails closed if a future path exceeds it.
 		v.cRec = &cRecoverState{
-			summary: summary, group: group, groupOrder: uint32(vi),
-			clearOrdinaryLeafErrors: cRecoveryRegionClearsOrdinaryLeafErrors(p, tok, hasParsedPrefix),
+			summary: summary, group: group,
+			groupOrder: cPackRecoverGroupOrder(
+				uint64(vi),
+				cRecoveryRegionClearsOrdinaryLeafErrors(p, tok, hasParsedPrefix),
+			),
 		}
 		v.cRecoverMissingGroup = nil
 	}
@@ -4064,11 +4094,11 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 func cSortRecoverMembersByGroupOrder(stacks []glrStack, members []int) {
 	for i := 1; i < len(members); i++ {
 		cur := members[i]
-		curOrder := stacks[cur].cRec.groupOrder
+		curOrder := stacks[cur].cRec.groupOrderValue()
 		j := i - 1
 		for ; j >= 0; j-- {
 			prev := members[j]
-			if stacks[prev].cRec.groupOrder <= curOrder {
+			if stacks[prev].cRec.groupOrderValue() <= curOrder {
 				break
 			}
 			members[j+1] = prev
@@ -4380,7 +4410,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 		// C marks the enclosing ERROR node as erroneous. Keep ordinary leaves
 		// clean when the region has direct internal-lexer provenance.
-		clearLeafError := v.cRec != nil && v.cRec.clearOrdinaryLeafErrors &&
+		clearLeafError := v.cRec.clearsOrdinaryLeafErrors() &&
 			cRecoveryTokenCanClearOrdinaryLeafError(tok)
 		if !clearLeafError && tok.Symbol != errorSymbol {
 			leaf.setHasError(true)

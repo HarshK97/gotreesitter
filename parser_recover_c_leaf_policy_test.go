@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
 
 func recoveryLeafPolicyFixture(t *testing.T) (*Parser, Token) {
 	t.Helper()
@@ -213,9 +216,9 @@ func TestCAbsorbOrdinaryLeafChecksEveryTokenProvenance(t *testing.T) {
 			stack := newGLRStack(1)
 			stack.pushEntry(newStackEntryNode(cErrorState, openErr), nil, nil)
 			stack.cRec = &cRecoverState{
-				group:                   &cRecGroup{},
-				openErr:                 openErr,
-				clearOrdinaryLeafErrors: test.regionProof,
+				group:      &cRecGroup{},
+				openErr:    openErr,
+				groupOrder: cPackRecoverGroupOrder(0, test.regionProof),
 			}
 			parser.cAbsorbTokenIntoError(&stack, test.tok, nil, arena, nil, nil, nil)
 			if got, want := openErr.ChildCount(), 1; got != want {
@@ -235,8 +238,44 @@ func TestCRecoveryRegionClearsOrdinaryLeafErrorsNilParser(t *testing.T) {
 }
 
 func TestCRecoverStateClonePreservesLeafPolicy(t *testing.T) {
-	clone := (&cRecoverState{clearOrdinaryLeafErrors: true}).clone()
-	if clone == nil || !clone.clearOrdinaryLeafErrors {
+	original := &cRecoverState{groupOrder: cPackRecoverGroupOrder(2, true)}
+	clone := original.clone()
+	if clone == nil || !clone.clearsOrdinaryLeafErrors() {
 		t.Fatal("recovery-state clone lost the leaf policy")
+	}
+	if got, want := clone.groupOrderValue(), uint32(2); got != want {
+		t.Fatalf("clone group order = %d, want %d", got, want)
+	}
+}
+
+func TestCRecoverGroupOrderPolicyDoesNotChangeSorting(t *testing.T) {
+	group := &cRecGroup{}
+	stacks := []glrStack{
+		{cRec: &cRecoverState{group: group, groupOrder: cPackRecoverGroupOrder(2, false)}},
+		{cRec: &cRecoverState{group: group, groupOrder: cPackRecoverGroupOrder(0, true)}},
+		{cRec: &cRecoverState{group: group, groupOrder: cPackRecoverGroupOrder(1, false)}},
+	}
+	members := []int{0, 1, 2}
+	cSortRecoverMembersByGroupOrder(stacks, members)
+	for i, want := range []int{1, 2, 0} {
+		if members[i] != want {
+			t.Fatalf("members[%d] = %d, want %d", i, members[i], want)
+		}
+	}
+}
+
+func TestCRecoverGroupOrderPolicyFailsClosedOnCollision(t *testing.T) {
+	state := &cRecoverState{groupOrder: cPackRecoverGroupOrder(uint64(cRecoverGroupOrderLeafClearBit), true)}
+	if state.clearsOrdinaryLeafErrors() {
+		t.Fatal("colliding group order retained the leaf-clear policy")
+	}
+	if got := state.groupOrderValue(); got != cRecoverGroupOrderValueMask {
+		t.Fatalf("colliding group order = %d, want saturated %d", got, cRecoverGroupOrderValueMask)
+	}
+}
+
+func TestCRecoverStateLeafPolicyKeepsSizeBudget(t *testing.T) {
+	if got := unsafe.Sizeof(cRecoverState{}); got != 48 {
+		t.Fatalf("cRecoverState size = %d, want 48", got)
 	}
 }
