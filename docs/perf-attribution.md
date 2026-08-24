@@ -85,6 +85,88 @@ the summary order, deduplication, scratch epoch, and memory-budget contracts.
 Decision: **NO-GO**. Checkpoint candidate: none. Keep the election code
 unchanged.
 
+## 2026-08-24 P25bc C-recovery reduction-search contract
+
+Status: **NO-GO / NO CANDIDATE**. Keep issue #454 and the performance arm live.
+Ship no parser or test code.
+
+Use the main commit
+`83e0cfbc30ad82e2f327d58e35eea9f438a0ffda` as the evidence base.
+The queued P25bb arm screens the election-summary path. P25bc screens the
+next distinct source-owned recovery seam, `cDoAllPotentialReductions`.
+
+Canopy ranked `cDoAllPotentialReductions` in the top recovery hotspots. The
+method spans `parser_recover_c.go:2954-3069`. It calls
+`cCollectPotentialReductions` and runs from `cHandleError` during the
+missing-token search. The parser calls `cHandleError` from its main parse loop.
+The method preserves C version order, same-pop parent selection, caller-seed
+ownership, shiftable originals, and the memory-budget stop path.
+
+Run these structural queries:
+
+```text
+canopy analyze hotspot --no-cache --top 30 --json
+canopy search symbols parser_recover_c.go --name 'cDoAllPotentialReductions|cRecordSummaryWithScratch|cCollectPotentialReductions|cHandleError' --no-cache --limit 30 --json
+canopy graph calls cDoAllPotentialReductions --reverse --no-cache --depth 3 --json
+```
+
+Record these query artifacts: `/tmp/p25bc-hotspots.json`,
+`/tmp/p25bc-symbols.json`, and `/tmp/p25bc-callers.json`. Use these SHA-256
+values in that order: `5e179139b8627db86d1d5ac11ffd95761a939668d7746646142a534d71f9fbc0`,
+`e9ddc14fbb2beef86f10a5ddaa20854302ad2b7a1b4c353a229054f28a9abb55`, and
+`42b00ff4995607fe3d15310049ae2e1a7c055ad5bc6f3b920b5e67ebbc66475e`.
+Hash the `parser_recover_c.go` file as
+`23d5fb071944982b1f6cfb981aa5f02c70704324940cd3f6d74cddf7130bb042`.
+
+The existing recovery memory-bound fix records the active candidate-attempt
+ceiling. It records no authenticated issue #454 witness for reduction
+attempts per call, fork count, or graph-structured stack (GSS) allocation cost.
+Synthetic and historical recovery experiments do not prove a generic reduction
+change.
+Therefore, no production candidate passed the proof boundary.
+
+The focused Docker contract gate passed these tests:
+
+```text
+TestCDoAllPotentialReductionsCollapsesSamePopTargetSlicesByCParentSelection
+TestCDoAllPotentialReductionsCollapsesSamePopWithTrailingExtra
+TestCDoAllPotentialReductionsKeepsShiftableOriginalWithReductionFork
+TestCDoAllPotentialReductionsCallerSeedFirstFork
+TestCDoAllPotentialReductionsCallerSeedFallback
+TestCDoAllPotentialReductionsDistinguishesEOFFromAnyLookahead
+TestCRecoverSummaryArenaSurvivesHandleErrorReturn
+TestCRecoverSummaryArenaDoesNotReuseLiveGroupStorage
+TestCRecoverStateCloneSharesImmutableSummary
+TestCRecoveryReleaseClearsPointers
+```
+
+The run used one CPU, 8 GiB memory, `GOMAXPROCS=1`, `GOFLAGS=-p=1`, and one
+test worker. It passed with exit code zero in 8.42 seconds. It reported no
+timeout and no out-of-memory event.
+
+Run this command:
+
+```text
+bash cgo_harness/docker/run_parity_in_docker.sh --repo-root /tmp/gts-p25bc-next-hotspot-20260824 --out-root /tmp/gts-p25bc-artifacts --label p25bc-reduction-search-contract --no-build --memory 8g --cpus 1 --goflags '-p=1' --test-parallel 1 --timeout 30m -- "cd /workspace && GOMAXPROCS=1 go test . -run '^(TestCDoAllPotentialReductionsCollapsesSamePopTargetSlicesByCParentSelection|TestCDoAllPotentialReductionsCollapsesSamePopWithTrailingExtra|TestCDoAllPotentialReductionsKeepsShiftableOriginalWithReductionFork|TestCDoAllPotentialReductionsCallerSeedFirstFork|TestCDoAllPotentialReductionsCallerSeedFallback|TestCDoAllPotentialReductionsDistinguishesEOFFromAnyLookahead|TestCRecoverSummaryArenaSurvivesHandleErrorReturn|TestCRecoverSummaryArenaDoesNotReuseLiveGroupStorage|TestCRecoverStateCloneSharesImmutableSummary|TestCRecoveryReleaseClearsPointers)$' -count=1 -parallel 1 -timeout 20m -v"
+```
+
+The run produced the artifact `/tmp/gts-p25bc-artifacts/20260824T054843Z-p25bc-reduction-search-contract`.
+
+- `container.log`: `14b54d9f265ca6403bb3ca2ba65197b16ec63367f08fc3fd146f87635f164f8f`.
+- `metadata.txt`: `cd7f12f9935c8307d5b5a9425940313eb6b30252bc2d28dc710c9a6a2946aac5`.
+- `inspect.json`: `51f6f6131e49dfaa441d22ae6ae675d4df323deb3f551f96b7942ad0ec55dcd9`.
+
+Do not run a benchmark or maximum resident set size (RSS) campaign. No
+authenticated witness passed the proof boundary. Reopen this seam only after
+an authenticated issue #454 witness supplies reduction attempts per call.
+Require version counts, fork counts, GSS allocation bytes, and fresh,
+incremental, and locked-C equality. Preserve same-pop selection, shiftable
+originals, caller-seed ownership, summary lifetime, and the memory-budget stop
+contract.
+
+Decision: **NO-GO**. Checkpoint candidate: none. Keep the reduction search
+unchanged.
+
 ## 2026-08-24 P25ba recovery node-error-cost contract
 
 Status: **NO-GO / NO CANDIDATE**. Keep issue #454 and the performance arm live.
