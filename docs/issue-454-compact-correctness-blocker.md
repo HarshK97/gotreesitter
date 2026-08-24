@@ -207,7 +207,7 @@ The 1 KiB known-divergence ratchet passes in
 
 ## 2026-08-24 PHP compact fallback guard
 
-Publication base: `af056b2d90e50a8917b9389bf42dfdf75872035e`.
+Publication base: `c25686c882affd7408e5ef4a7d65e92cc8391fab`.
 
 Status: **KEEP LIVE / NO-GO**. Keep issue #454 open. Ship no parser change.
 
@@ -229,15 +229,33 @@ Its fallback reason was:
 compact route declined at recovery [mechanism=recovery-entered]: did not accept EOF: generic scheduler has no table action for the elected token
 ```
 
-The compact tree equals the production tree and the locked-C tree.
-The guard passed twice with one CPU, 4 GiB, `GOMAXPROCS=1`, and `GOFLAGS=-p=1`.
-Both runs had no out-of-memory kill and no wall timeout.
+The `gts-deep-tree-v1` stream covers type and named identity, incoming fields,
+byte and point spans, and child order. It also covers extra and missing flags,
+error flags, and the `HasError` flag.
+
+The pinned deep digests are:
+
+| Route | Deep digest | Root `HasError` |
+| --- | --- | --- |
+| Production Go | `4456730ce6919a623dd6db2e6ae7f11933aeb454c7e337b7da5c08a8d9ba267c` | `true` |
+| Compact fallback Go | `4456730ce6919a623dd6db2e6ae7f11933aeb454c7e337b7da5c08a8d9ba267c` | `true` |
+| Locked C | `1516308c38163089778464ad171875308c559af11af7c8c03ee17ae4eacd23c6` | `true` |
+
+All three roots report `HasError=true`.
+
+The compact tree equals the production tree. The production and compact deep
+digests differ from the locked-C digest. This full comparison keeps the PHP
+route at **NO-GO**.
+
+The guard passed twice with one CPU, 4 GiB, one test worker, a 20-minute
+timeout, `GOMAXPROCS=1`, and `GOFLAGS=-p=1`. Both runs had no out-of-memory
+kill and no wall timeout.
 
 The final artifacts are:
 
-- `/tmp/gotreesitter-compact-next2-artifacts/20260824T095540Z-issue454-php-compact-review-fix-1`
-- `/tmp/gotreesitter-compact-next2-artifacts/20260824T095557Z-issue454-php-compact-review-fix-2`
+- `/tmp/gotreesitter-php454-deep-guard-refresh-artifacts/20260824T124547Z-php454-refresh-1`
+- `/tmp/gotreesitter-php454-deep-guard-refresh-artifacts/20260824T124620Z-php454-refresh-2`
 
 This guard does not graduate PHP compact admission.
-Reopen the route only after a generic recovery proof removes the fallback and
-retains exact locked-C parity on the PHP witness.
+Reopen the route only after a generic recovery proof removes the fallback,
+matches both Go route digests to locked C, and preserves all deep-digest fields.

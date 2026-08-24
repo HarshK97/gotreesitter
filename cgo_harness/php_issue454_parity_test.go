@@ -22,6 +22,13 @@ const issue454PHPGrammarCommit = "3f2465c217d0a966d41e584b42d75522f2a3149e"
 const issue454PHPGrammarBlobSHA256 = "15724627db479c27304b43fa3b5ef7d8d81f85e3b9ce6d8575a847b2dbaa5cd5"
 const issue454PHPCArtifactSHA256 = "1daea60ac1ee31227b8e1ed3cbd76b841435fe693e95af65cc61dad447d27891"
 
+const (
+	issue454PHPProductionDeepDigest = "4456730ce6919a623dd6db2e6ae7f11933aeb454c7e337b7da5c08a8d9ba267c"
+	issue454PHPCompactDeepDigest    = "4456730ce6919a623dd6db2e6ae7f11933aeb454c7e337b7da5c08a8d9ba267c"
+	issue454PHPLockedCDeepDigest    = "1516308c38163089778464ad171875308c559af11af7c8c03ee17ae4eacd23c6"
+	issue454PHPRootHasError         = true
+)
+
 func TestParityIssue454PHPWholeTreeFallback(t *testing.T) {
 	source := benchfixtures.Issue454PHPSource()
 	site := bytes.Index(source, []byte("$x0"))
@@ -80,6 +87,29 @@ func TestParityIssue454PHPWholeTreeFallback(t *testing.T) {
 		t.Fatal("C reference parser returned nil tree")
 	}
 	defer cTree.Close()
+	productionInspection, err := benchfixtures.InspectGoTree(goTree.RootNode(), goLang)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cDeepDigest, err := COracleDeepDigest(cTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if productionInspection.SHA256 != issue454PHPProductionDeepDigest {
+		t.Fatalf("PHP issue #454 production gts-deep-tree-v1 digest=%s, want %s", productionInspection.SHA256, issue454PHPProductionDeepDigest)
+	}
+	if cDeepDigest != issue454PHPLockedCDeepDigest {
+		t.Fatalf("PHP issue #454 locked-C gts-deep-tree-v1 digest=%s, want %s", cDeepDigest, issue454PHPLockedCDeepDigest)
+	}
+	if got := goTree.RootNode().HasError(); got != issue454PHPRootHasError {
+		t.Fatalf("PHP issue #454 production root HasError=%t, want %t", got, issue454PHPRootHasError)
+	}
+	if got := cTree.RootNode().HasError(); got != issue454PHPRootHasError {
+		t.Fatalf("PHP issue #454 locked-C root HasError=%t, want %t", got, issue454PHPRootHasError)
+	}
+	if productionInspection.SHA256 == cDeepDigest {
+		t.Fatal("PHP issue #454 production deep digest unexpectedly matches locked C; review the NO-GO receipt before changing route policy")
+	}
 
 	var errs []string
 	compareNodes(goTree.RootNode(), goLang, cTree.RootNode(), "root", &errs)
@@ -110,6 +140,23 @@ func TestParityIssue454PHPWholeTreeFallback(t *testing.T) {
 	if len(compactErrs) > 0 {
 		t.Fatalf("PHP issue #454 compact fallback differs from the pinned C oracle: %s", compactErrs[0])
 	}
+	compactInspection, err := benchfixtures.InspectGoTree(compactTree.RootNode(), goLang)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compactInspection.SHA256 != issue454PHPCompactDeepDigest {
+		t.Fatalf("PHP issue #454 compact gts-deep-tree-v1 digest=%s, want %s", compactInspection.SHA256, issue454PHPCompactDeepDigest)
+	}
+	if compactInspection.SHA256 != productionInspection.SHA256 {
+		t.Fatalf("PHP issue #454 compact and production deep digests differ: compact=%s production=%s", compactInspection.SHA256, productionInspection.SHA256)
+	}
+	if got := compactTree.RootNode().HasError(); got != issue454PHPRootHasError {
+		t.Fatalf("PHP issue #454 compact root HasError=%t, want %t", got, issue454PHPRootHasError)
+	}
+	if compactInspection.SHA256 == cDeepDigest {
+		t.Fatal("PHP issue #454 compact deep digest unexpectedly matches locked C; review the NO-GO receipt before changing route policy")
+	}
+	t.Logf("deep_digest format=%s production=%s compact=%s locked_c=%s production_root_has_error=%t compact_root_has_error=%t locked_c_root_has_error=%t exact_locked_c=false fields=type+named,field,byte+point,extra+missing+error+has_error,child_order", benchfixtures.DeepTreeDigestVersion, productionInspection.SHA256, compactInspection.SHA256, cDeepDigest, goTree.RootNode().HasError(), compactTree.RootNode().HasError(), cTree.RootNode().HasError())
 	t.Logf("PHP issue #454 compact route source_sha256=%x bytes=%d routed=%d fallback=%d reason=%q", sha256.Sum256(edited), len(edited), routedAfter-routedBefore, fallbackAfter-fallbackBefore, gotreesitter.AdmissionCandidateLastFallbackReason())
 	document, err := os.ReadFile("../docs/issue-454-compact-correctness-blocker.md")
 	if err != nil {
@@ -118,8 +165,14 @@ func TestParityIssue454PHPWholeTreeFallback(t *testing.T) {
 	documentText := strings.Join(strings.Fields(string(document)), " ")
 	for _, marker := range []string{
 		"## 2026-08-24 PHP compact fallback guard",
-		"Publication base: `af056b2d90e50a8917b9389bf42dfdf75872035e`.",
+		"Publication base: `c25686c882affd7408e5ef4a7d65e92cc8391fab`.",
 		"The locked-C artifact SHA-256 is `1daea60ac1ee31227b8e1ed3cbd76b841435fe693e95af65cc61dad447d27891`.",
+		issue454PHPProductionDeepDigest,
+		issue454PHPCompactDeepDigest,
+		issue454PHPLockedCDeepDigest,
+		"The `gts-deep-tree-v1` stream covers type and named identity, incoming fields, byte and point spans, and child order. It also covers extra and missing flags, error flags, and the `HasError` flag.",
+		"The production and compact deep digests differ from the locked-C digest.",
+		"All three roots report `HasError=true`.",
 		"The compact route recorded `routed=0` and `fallback=1`.",
 		"This guard does not graduate PHP compact admission.",
 	} {
