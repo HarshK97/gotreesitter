@@ -58,6 +58,15 @@ for tags and release notes while still in `0.x`.
   size (RSS) run was justified. See `docs/perf-attribution.md` for the command,
   artifact hashes, and reopening condition.
 
+- Recorded P25bb at main commit
+  `83e0cfbc30ad82e2f327d58e35eea9f438a0ffda`. Canopy selected the
+  `cRecoverStrategy1Election` summary contract after P25ba. Focused summary,
+  election, scratch-reuse, and allocation tests passed in Docker. No
+  authenticated issue #454 witness supplied election depth or reuse proof.
+  The result is **NO-GO / NO CANDIDATE**. No randomized benchmark or maximum
+  resident set size (RSS) run was justified. See `docs/perf-attribution.md`
+  for the command, artifact hashes, and reopening condition.
+
 ### Correctness
 
 - Recorded the unreceipted `dispatch.julia` blocker at base
