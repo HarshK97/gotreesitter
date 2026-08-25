@@ -95,6 +95,12 @@ for tags and release notes while still in `0.x`.
   drop-cohort reference indexes by LinkID. Compact routing and admission stay
   unchanged.
 
+- Added a default-off reduction output provenance handoff. It carries an
+  authenticated graph-chain reference from published node metadata. The
+  reference follows `next` links and does not require adjacent LinkID values.
+  It performs no adjacency walk and changes no derivation format, routing,
+  admission, or compact counters.
+
 - Included-range parsing now starts byte-seek sources at the first selected
   byte. The parser seeds its initial stack there and preserves the configured
   start point for recovery gaps. A non-seek source preserves a complete

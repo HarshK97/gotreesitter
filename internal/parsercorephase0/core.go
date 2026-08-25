@@ -2401,14 +2401,16 @@ const (
 )
 
 // ReductionOutput is one final canonical boundary and its aggregate freshness
-// relative to the boundary map at entry to ReduceOutputs. Field order groups
-// Head with HistoricalAlternativeSet up front (both 4-byte aligned, so the
-// set immediately follows Head with no gap) and the byte/uint16-sized fields
-// after; every construction site uses keyed fields
-// (reduceOutputsClassifiedIntoActive, scheduler_owned.go), so this reorder
-// is layout-only (b4b-width-repair audit, 2026-08).
+// relative to the boundary map at entry to ReduceOutputs. The Links field
+// carries the authenticated graph-chain reference published for Head. The
+// reference is metadata only; no current route consumes it. Every construction
+// site uses keyed fields (reduceOutputsClassifiedIntoActive, scheduler_owned.go).
 type ReductionOutput struct {
-	Head           Head
+	Head Head
+	// Links is the bounded graph-chain reference produced for Head. Its Count
+	// follows link.next and does not imply physically adjacent LinkID values.
+	// This value does not enable the default-off sidecar or allocate storage.
+	Links          LinkChainRef
 	DropCohortRefs DropCohortRefSet
 	// HistoricalAlternativeSet is the union of every dead predecessor's
 	// recorded alternative set discovered while producing this boundary
@@ -2433,13 +2435,12 @@ type ReductionOutput struct {
 
 const inlineReductionBoundaryOutputs = 2
 
-// Field order groups key (8-byte aligned), head and historicalSet (4-byte
-// aligned) up front, then the byte/uint16-sized fields; the sole
-// construction site (scratch.store, scheduler_owned.go) uses keyed fields,
-// so this reorder is layout-only (b4b-width-repair audit, 2026-08).
+// Field order groups key, head, links, and the value-owned provenance sets up
+// front. The sole construction site uses keyed fields.
 type reductionBoundaryOutput struct {
 	key                           boundaryKey
 	head                          Head
+	links                         LinkChainRef
 	dropCohortRefs                DropCohortRefSet
 	historicalSet                 AlternativeSet
 	historicalLineage             uint16

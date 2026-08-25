@@ -246,3 +246,160 @@ func TestLinkProvenanceRejectsAuthenticationMismatches(t *testing.T) {
 		t.Fatal("negative action ordinal was accepted")
 	}
 }
+
+func TestReductionOutputCarriesAuthenticatedLinkChain(t *testing.T) {
+	action := Action{Type: ActionReduce, State: 3, Symbol: 9, ChildCount: 1, ProductionID: 17}
+	core, err := New(&fakeTable{
+		actions: map[tableCell][]Action{{state: 3, symbol: 9}: {action}},
+		gotos:   map[tableCell]StateID{{state: 1, symbol: 9}: 4},
+	}, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := core.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := core.appendDiagnosticPayload(seed, 3, Token{Symbol: 1, StartByte: 0, EndByte: 1}, pathMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary, err := core.ClassifyBoundary(head, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputs, err := core.ReduceOutputsClassifiedInto(nil, boundary, 0, ForkOrder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outputs) != 1 {
+		t.Fatalf("reduction outputs=%d, want one", len(outputs))
+	}
+	node, err := core.node(outputs[0].Head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := LinkChainRef{First: LinkID(node.firstLink), Count: node.linkCount}
+	if outputs[0].Links != want {
+		t.Fatalf("output link chain=%+v, want %+v", outputs[0].Links, want)
+	}
+	if core.dropCohortLinkRefIndexes != nil {
+		t.Fatalf("default reduction allocated sidecar=%v", core.dropCohortLinkRefIndexes)
+	}
+	allocs := testing.AllocsPerRun(100, func() {
+		got, err := core.reductionLinkChainForHead(outputs[0].Head)
+		if err != nil || got != want {
+			t.Fatalf("allocation probe chain=%+v err=%v, want %+v", got, err, want)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("reduction link chain handoff allocations=%v, want zero", allocs)
+	}
+}
+
+func TestReductionLinkChainHandoffPreservesNoncontiguousIDs(t *testing.T) {
+	fixture := newLinkProvenanceFixture(t, 8)
+	chainLink := fixture.core.appendGraphLink(linkRecord{
+		prev: fixture.nodes[0], next: fixture.rangeValue.First - 1,
+	})
+	nodeID, err := fixture.core.appendNode(nodeRecord{
+		state: 3, byteOffset: 2, firstLink: uint32(chainLink), linkCount: 2, pathCount: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := LinkChainRef{First: chainLink, Count: 2}
+	got, err := fixture.core.reductionLinkChainForHead(Head{Node: nodeID})
+	if err != nil || got != want {
+		t.Fatalf("noncontiguous chain=%+v err=%v, want %+v", got, err, want)
+	}
+	if _, err := fixture.core.LinkRangeForHead(Head{Node: nodeID}); err == nil {
+		t.Fatal("sidecar LinkRange accepted a noncontiguous chain")
+	}
+}
+
+func TestReductionLinkChainHandoffRejectsMalformedMetadata(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*Core, NodeID, LinkChainRef)
+	}{
+		{name: "mixed empty", edit: func(core *Core, nodeID NodeID, _ LinkChainRef) {
+			core.nodes[nodeID-1].firstLink = 0
+		}},
+		{name: "first out of bounds", edit: func(core *Core, nodeID NodeID, value LinkChainRef) {
+			core.nodes[nodeID-1].firstLink = uint32(len(core.links) + 1)
+			core.nodes[nodeID-1].linkCount = value.Count
+		}},
+		{name: "count exceeds arena", edit: func(core *Core, nodeID NodeID, value LinkChainRef) {
+			core.nodes[nodeID-1].firstLink = uint32(value.First)
+			core.nodes[nodeID-1].linkCount = uint32(len(core.links) + 1)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newLinkProvenanceFixture(t, 8)
+			nodeID, err := fixture.core.appendNode(nodeRecord{
+				state: 3, byteOffset: 2, firstLink: uint32(fixture.rangeValue.First),
+				linkCount: fixture.rangeValue.Count, pathCount: 1,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.edit(fixture.core, nodeID, LinkChainRef{
+				First: fixture.rangeValue.First, Count: fixture.rangeValue.Count,
+			})
+			if _, err := fixture.core.reductionLinkChainForHead(Head{Node: nodeID}); err == nil {
+				t.Fatalf("malformed node metadata was accepted: %s", test.name)
+			}
+		})
+	}
+}
+
+func TestReductionLinkChainHandoffRollbackAndReset(t *testing.T) {
+	fixture := newLinkProvenanceFixture(t, 8)
+	beforeNodes, beforeLinks := len(fixture.core.nodes), len(fixture.core.links)
+	var escaped Head
+	err := fixture.core.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
+		id, err := fixture.core.appendNode(nodeRecord{
+			state: 3, byteOffset: 2, firstLink: uint32(fixture.rangeValue.First),
+			linkCount: fixture.rangeValue.Count, pathCount: 1,
+		})
+		if err != nil {
+			return err
+		}
+		escaped = Head{Node: id}
+		if _, err := fixture.core.reductionLinkChainForHead(escaped); err != nil {
+			return err
+		}
+		return errors.New("force reduction handoff rollback")
+	})
+	if err == nil {
+		t.Fatal("forced rollback returned nil")
+	}
+	if len(fixture.core.nodes) != beforeNodes || len(fixture.core.links) != beforeLinks {
+		t.Fatalf("rollback arena lengths=%d/%d, want %d/%d", len(fixture.core.nodes), len(fixture.core.links), beforeNodes, beforeLinks)
+	}
+	if _, err := fixture.core.reductionLinkChainForHead(escaped); err == nil {
+		t.Fatal("rolled-back reduction output head remained readable")
+	}
+	if _, err := fixture.core.reductionLinkChainForHead(Head{Node: escaped.Node + 100}); err == nil {
+		t.Fatal("out-of-bounds reduction output head was accepted")
+	}
+
+	validID, err := fixture.core.appendNode(nodeRecord{
+		state: 3, byteOffset: 2, firstLink: uint32(fixture.rangeValue.First),
+		linkCount: fixture.rangeValue.Count, pathCount: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.core.reductionLinkChainForHead(Head{Node: validID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.core.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.core.reductionLinkChainForHead(Head{Node: validID}); err == nil {
+		t.Fatal("reset retained a reduction handoff head")
+	}
+}
