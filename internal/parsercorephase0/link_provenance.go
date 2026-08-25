@@ -16,6 +16,17 @@ type LinkRange struct {
 // Empty reports whether both range fields use their zero value.
 func (r LinkRange) Empty() bool { return r.First == 0 && r.Count == 0 }
 
+// LinkChainRef identifies one published graph adjacency chain. First names
+// the newest link, and Count bounds traversal through link.next. Link IDs need
+// not be physically contiguous.
+type LinkChainRef struct {
+	First LinkID
+	Count uint32
+}
+
+// Empty reports whether both chain reference fields use their zero value.
+func (r LinkChainRef) Empty() bool { return r.First == 0 && r.Count == 0 }
+
 // appendGraphLink keeps the optional sidecar aligned with the link arena. A
 // newly published link starts unbound; authentication binds it later.
 func (c *Core) appendGraphLink(link linkRecord) LinkID {
@@ -89,6 +100,34 @@ func (c *Core) LinkRangeForHead(head Head) (LinkRange, error) {
 		return LinkRange{}, err
 	}
 	return rangeValue, nil
+}
+
+// reductionLinkChainForHead returns the O(1) chain metadata for a reduction
+// output. appendNodeAt authenticates the complete chain before publication,
+// so this handoff reads the stored first link and count. It does not allocate,
+// require physical LinkID contiguity, or walk adjacency.
+func (c *Core) reductionLinkChainForHead(head Head) (LinkChainRef, error) {
+	if c == nil {
+		return LinkChainRef{}, errors.New("parser-core phase zero: reduction link chain on nil core")
+	}
+	node, err := c.node(head.Node)
+	if err != nil {
+		return LinkChainRef{}, err
+	}
+	chain := LinkChainRef{First: LinkID(node.firstLink), Count: node.linkCount}
+	if node.firstLink == 0 && node.linkCount == 0 {
+		return LinkChainRef{}, nil
+	}
+	if chain.First == 0 || chain.Count == 0 {
+		return LinkChainRef{}, errors.New("parser-core phase zero: reduction link chain is mixed-empty")
+	}
+	if uint64(chain.First) > uint64(len(c.links)) {
+		return LinkChainRef{}, errors.New("parser-core phase zero: reduction link chain starts outside the graph")
+	}
+	if uint64(chain.Count) > uint64(len(c.links)) {
+		return LinkChainRef{}, errors.New("parser-core phase zero: reduction link chain exceeds the graph")
+	}
+	return chain, nil
 }
 
 // DropCohortLinkRefIndex returns the one-based certificate index attached to

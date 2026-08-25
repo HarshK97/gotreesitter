@@ -2722,10 +2722,13 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 	if got := unsafe.Sizeof(linkRecord{}); got != 32 {
 		t.Fatalf("linkRecord size = %d, want 32", got)
 	}
-	// G18 adds one value-owned reference set beside the historical set. Keep
-	// the 104-byte output width explicit for scheduler copies.
-	if got := unsafe.Sizeof(ReductionOutput{}); got != 104 {
-		t.Fatalf("ReductionOutput size = %d, want 104", got)
+	// G18 adds one value-owned reference set beside the historical set. The
+	// reduction provenance handoff adds one value-owned LinkChainRef.
+	if got := unsafe.Sizeof(ReductionOutput{}); got != 112 {
+		t.Fatalf("ReductionOutput size = %d, want 112", got)
+	}
+	if got := unsafe.Sizeof(LinkChainRef{}); got != 8 {
+		t.Fatalf("LinkChainRef size = %d, want 8", got)
 	}
 	if got := unsafe.Sizeof(popPath{}); got != 88 {
 		t.Fatalf("popPath size = %d, want 88", got)

@@ -1208,8 +1208,12 @@ func (c *Core) reduceOutputsClassifiedIntoActive(owner SchedulerTransactionToken
 				freshness = ReductionUpdated
 			}
 		}
+		linkChain, err := c.reductionLinkChainForHead(out)
+		if err != nil {
+			return nil, err
+		}
 		scratch.store(boundaryIndex, seen, reductionBoundaryOutput{
-			key: key, head: out, freshness: freshness, cleanPathRank: cleanPathRank,
+			key: key, head: out, links: linkChain, freshness: freshness, cleanPathRank: cleanPathRank,
 			dropCohortRefs:                dropCohortRefs,
 			historicalBoundarySplit:       historicalBoundarySplit,
 			historicalConvergedSplit:      historicalConvergedSplit,
@@ -1232,6 +1236,7 @@ func (c *Core) reduceOutputsClassifiedIntoActive(owner SchedulerTransactionToken
 		}
 		frontier = append(frontier, ReductionOutput{
 			Head:                         output.head,
+			Links:                        output.links,
 			DropCohortRefs:               output.dropCohortRefs,
 			Freshness:                    output.freshness,
 			CleanPathRank:                output.cleanPathRank,

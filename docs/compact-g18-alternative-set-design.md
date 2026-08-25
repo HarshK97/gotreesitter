@@ -124,6 +124,12 @@ The Core now has a default-off link provenance substrate. It records finalized
 reference indexes after an authenticated bind. Routing and admission remain
 unchanged.
 
+Reduction construction now carries an authenticated graph-chain reference in
+each output. It reads published node metadata in constant time and performs no
+adjacency walk. The reference follows `next` links and does not require
+adjacent LinkID values. No current route consumes this field. Routing and
+admission remain unchanged.
+
 The current proof has two limits:
 
 - An inline set has no arena identity.

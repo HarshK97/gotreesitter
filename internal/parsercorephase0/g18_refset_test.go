@@ -227,8 +227,11 @@ func TestG18RefSetRecordSizes(t *testing.T) {
 	if got := unsafe.Sizeof(nodeLineageMutation{}); got != 96 {
 		t.Fatalf("nodeLineageMutation size=%d, want 96", got)
 	}
-	if got := unsafe.Sizeof(ReductionOutput{}); got != 104 {
-		t.Fatalf("ReductionOutput size=%d, want 104", got)
+	if got := unsafe.Sizeof(ReductionOutput{}); got != 112 {
+		t.Fatalf("ReductionOutput size=%d, want 112", got)
+	}
+	if got := unsafe.Sizeof(LinkChainRef{}); got != 8 {
+		t.Fatalf("LinkChainRef size=%d, want 8", got)
 	}
 	if got := unsafe.Sizeof(CondenseCandidate{}); got != 88 {
 		t.Fatalf("CondenseCandidate size=%d, want 88", got)
