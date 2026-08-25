@@ -9,6 +9,13 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Bound temporary conflict-frontier growth with the resolved stack-cull
+  trigger. The reported pinned-file result was 250.8 seconds with an error
+  root. The changed parser completes in 2.335 seconds with a clean root. It
+  uses 88,930 nodes and 232,480 KiB maximum resident set size (RSS), without
+  truncation. Uniform initializer parity remains exact through 72 entries. The
+  cap does not fix the separate 87-byte branch limitation.
+
 - Reduced the temporary recovery memo tier from 262,144 entries to 131,072
   entries. The active table now uses 3 MiB on 64-bit systems. The retained
   standard table uses 384 KiB. Total memo storage is 3.375 MiB before slice

@@ -5303,16 +5303,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	maxIter := caps.maxIter
 	maxDepth := caps.maxDepth
 	maxNodes := caps.maxNodes
-	// Population cap for transient conflict-frontier fork admission
-	// (completeConflictReduceFrontier): active exactly where the boundary
-	// cull's overflow window exists (full parses outside c_sharp, where
-	// glrStackCullTrigger returns maxStacks+fullParseGLRStackOverflow).
-	// Zero disables the gate so incremental and c_sharp behavior is
-	// unchanged.
-	frontierForkPopulationCap := 0
-	if maxStackCullTrigger > maxStacks {
-		frontierForkPopulationCap = maxStackCullTrigger
-	}
+	// Use the resolved cull trigger as the transient frontier population cap.
+	// This keeps frontier admission aligned with boundary culling.
+	// A non-positive trigger keeps the gate disabled.
+	frontierForkPopulationCap := maxStackCullTrigger
 	parseRuntime.IterationLimit = maxIter
 	parseRuntime.StackDepthLimit = maxDepth
 	parseRuntime.NodeLimit = maxNodes
