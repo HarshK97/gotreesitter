@@ -859,6 +859,9 @@ func (p *Parser) cRecoverResumeLookahead(ts TokenSource, source []byte, s *glrSt
 			immediateTokens: lang.ImmediateTokens,
 			zeroWidthTokens: lang.ZeroWidthTokens,
 		}
+		if len(p.included) != 0 && lang.ExternalScanner == nil && len(lang.ExternalSymbols) == 0 {
+			probe.setIncludedRanges(p.included)
+		}
 		stateLexFails := false
 		for {
 			if probe.pos >= len(source) {
@@ -903,6 +906,9 @@ func (p *Parser) cRecoverResumeLookahead(ts TokenSource, source []byte, s *glrSt
 		zeroWidthTokens:     lang.ZeroWidthTokens,
 		errorRunLexState:    uint32(errLS),
 		hasErrorRunLexState: true,
+	}
+	if len(p.included) != 0 && lang.ExternalScanner == nil && len(lang.ExternalSymbols) == 0 {
+		lx.setIncludedRanges(p.included)
 	}
 	relexed := lx.NextWithErrorRuns(uint32(errLS))
 	relexed.lexerErrorModeLexed = true
@@ -1025,6 +1031,9 @@ func (p *Parser) cRecoverInternalErrorModeToken(ts TokenSource, stacks []glrStac
 		zeroWidthTokens:     lang.ZeroWidthTokens,
 		errorRunLexState:    uint32(ls),
 		hasErrorRunLexState: true,
+	}
+	if len(p.included) != 0 && lang.ExternalScanner == nil && len(lang.ExternalSymbols) == 0 {
+		lx.setIncludedRanges(p.included)
 	}
 	tok := lx.NextWithErrorRuns(uint32(ls))
 	tok.lexerErrorModeLexed = true
@@ -3910,6 +3919,9 @@ func (p *Parser) cRecoverElectionLookaheadSymbol(source []byte, member *glrStack
 		errorRunLexState:    uint32(ls),
 		hasErrorRunLexState: true,
 	}
+	if len(p.included) != 0 && lang.ExternalScanner == nil && len(lang.ExternalSymbols) == 0 {
+		lx.setIncludedRanges(p.included)
+	}
 	relexed := lx.NextWithErrorRuns(uint32(ls))
 	if relexed.Symbol == 0 && relexed.StartByte == relexed.EndByte {
 		// Whitespace-only tail: C would see `end` here while the shared
@@ -5295,6 +5307,9 @@ func (p *Parser) relexTokenForStackLexState(source []byte, state StateID, tok To
 		col:             tok.StartPoint.Column,
 		immediateTokens: lang.ImmediateTokens,
 		zeroWidthTokens: lang.ZeroWidthTokens,
+	}
+	if len(p.included) != 0 && lang.ExternalScanner == nil && len(lang.ExternalSymbols) == 0 {
+		probe.setIncludedRanges(p.included)
 	}
 	relexed, ok := probe.scan(uint32(ls), probe.pos, probe.row, probe.col)
 	if !ok || relexed.Symbol == 0 || relexed.Symbol == tok.Symbol {

@@ -52,21 +52,24 @@ func bytesToStringNoCopy(b []byte) string {
 
 // Lexer tokenizes source text using a table-driven DFA.
 type Lexer struct {
-	states          []LexState
-	asciiTable      [][128]int32 // ASCII fast-path transition table (nil = not available)
-	source          []byte
-	pos             int
-	row             uint32
-	col             uint32
-	immediateTokens []bool // symbol IDs that are token.immediate(); rejected after whitespace skip
-	zeroWidthTokens []bool // symbol IDs whose terminal pattern can intentionally match empty input
+	states           []LexState
+	asciiTable       [][128]int32 // ASCII fast-path transition table (nil = not available)
+	source           []byte
+	pos              int
+	row              uint32
+	col              uint32
+	includedRanges   []Range
+	includedRangeIdx int
+	immediateTokens  []bool // symbol IDs that are token.immediate(); rejected after whitespace skip
+	zeroWidthTokens  []bool // symbol IDs whose terminal pattern can intentionally match empty input
 
 	// Set by scan on failure: where the token attempt began after the DFA
 	// consumed skip (whitespace) transitions. errorRunToken uses this so an
 	// unlexable run starts after legitimately skipped whitespace, like C.
-	failTokenStartPos int
-	failTokenStartRow uint32
-	failTokenStartCol uint32
+	failTokenStartPos      int
+	failTokenStartRow      uint32
+	failTokenStartCol      uint32
+	failTokenStartRangeIdx int
 
 	// The grammar's most permissive lex state (LexModes[0], C's ERROR_STATE
 	// mode). NextWithErrorRuns only emits an error-run token when even this
@@ -114,15 +117,17 @@ func (l *Lexer) NextWithErrorRuns(startState uint32) Token {
 }
 
 func (l *Lexer) next(startState uint32, emitErrorRuns bool) Token {
+	l.normalizeIncludedPosition()
 	l.skipLeadingBOM()
 	// C ts_parser__lex resets to the lex call's start position (before any
 	// whitespace the failed attempt skipped) when it switches to error-mode
 	// lexing; capture it for the errorModeRetry branch below.
 	callStartPos, callStartRow, callStartCol := l.pos, l.row, l.col
+	callStartRangeIdx := l.includedRangeIdx
 	skippedPrefix := false
 	for {
 		// EOF check.
-		if l.pos >= len(l.source) {
+		if l.atLogicalEOF() {
 			return Token{
 				StartByte:  uint32(l.pos),
 				EndByte:    uint32(l.pos),
@@ -165,6 +170,7 @@ func (l *Lexer) next(startState uint32, emitErrorRuns bool) Token {
 			// recursive call has startState == errorRunLexState, so it takes
 			// the error-run branch below on failure instead of recursing.
 			l.pos, l.row, l.col = callStartPos, callStartRow, callStartCol
+			l.includedRangeIdx = callStartRangeIdx
 			return l.next(l.errorRunLexState, true)
 		}
 		if emitErrorRuns && l.hasErrorRunLexState && !l.canLexAt(l.errorRunLexState, tokenStartPos, tokenStartRow, tokenStartCol) {
@@ -187,8 +193,10 @@ func (l *Lexer) skipLeadingBOM() {
 // starting at the given position, without moving the lexer.
 func (l *Lexer) canLexAt(lexState uint32, pos int, row, col uint32) bool {
 	savedPos, savedRow, savedCol := l.pos, l.row, l.col
+	savedRangeIdx := l.includedRangeIdx
 	_, ok := l.scan(lexState, pos, row, col)
 	l.pos, l.row, l.col = savedPos, savedRow, savedCol
+	l.includedRangeIdx = savedRangeIdx
 	return ok
 }
 
@@ -204,8 +212,10 @@ func (l *Lexer) errorRunToken() Token {
 		l.pos = l.failTokenStartPos
 		l.row = l.failTokenStartRow
 		l.col = l.failTokenStartCol
+		l.includedRangeIdx = l.failTokenStartRangeIdx
 	}
-	if l.pos >= len(l.source) {
+	l.normalizeIncludedPosition()
+	if l.atLogicalEOF() {
 		// Only whitespace remained: this is end-of-input, not an error run.
 		return Token{
 			StartByte:  uint32(l.pos),
@@ -217,7 +227,7 @@ func (l *Lexer) errorRunToken() Token {
 	startPos, startRow, startCol := l.pos, l.row, l.col
 
 	l.skipOneRune()
-	for l.pos < len(l.source) {
+	for !l.atLogicalEOF() {
 		if l.canLexAt(l.errorRunLexState, l.pos, l.row, l.col) {
 			break
 		}
@@ -225,7 +235,7 @@ func (l *Lexer) errorRunToken() Token {
 	}
 	return Token{
 		Symbol:     errorSymbol,
-		Text:       bytesToStringNoCopy(l.source[startPos:l.pos]),
+		Text:       l.tokenText(startPos, l.pos),
 		StartByte:  uint32(startPos),
 		EndByte:    uint32(l.pos),
 		StartPoint: Point{Row: startRow, Column: startCol},
@@ -237,6 +247,13 @@ func (l *Lexer) errorRunToken() Token {
 // a token and true if an accepting state was reached, or false if not.
 // On a skip (whitespace) match, it returns a zero-Symbol token and true.
 func (l *Lexer) scan(startState uint32, startPos int, startRow, startCol uint32) (Token, bool) {
+	if len(l.includedRanges) != 0 {
+		return l.scanIncluded(startState, startPos, startRow, startCol)
+	}
+	return l.scanContiguous(startState, startPos, startRow, startCol)
+}
+
+func (l *Lexer) scanContiguous(startState uint32, startPos int, startRow, startCol uint32) (Token, bool) {
 	// work-count-assembly: raw main-lexer invocation seam
 	workCountRecordRawMainLexerInvocation()
 	curState := int32(startState)
@@ -392,6 +409,7 @@ func (l *Lexer) scan(startState uint32, startPos int, startRow, startCol uint32)
 		l.failTokenStartPos = tokenStartPos
 		l.failTokenStartRow = tokenStartRow
 		l.failTokenStartCol = tokenStartCol
+		l.failTokenStartRangeIdx = 0
 		return Token{}, false
 	}
 
@@ -427,6 +445,10 @@ func (l *Lexer) scan(startState uint32, startPos int, startRow, startCol uint32)
 
 // skipOneRune advances the lexer position by one rune, updating row/column.
 func (l *Lexer) skipOneRune() {
+	if len(l.includedRanges) != 0 {
+		l.skipOneIncludedRune()
+		return
+	}
 	if l.pos >= len(l.source) {
 		return
 	}
