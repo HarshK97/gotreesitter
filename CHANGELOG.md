@@ -9,6 +9,15 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Bound temporary conflict-frontier growth with the maximum of the resolved
+  stack-cull trigger and the four-stack full-parse overflow window. The
+  reported pinned-file result was 250.8 seconds with an error root. The
+  changed parser completes the pinned file in about 3 seconds with a clean
+  root and no truncation. The raw non-API benchmark route retains its
+  historical unbounded frontier search. Exact C# route and census checks pass,
+  as does uniform initializer parity through 72 entries. The cap does not fix
+  the separate 87-byte branch limitation.
+
 - Reduced the temporary recovery memo tier from 262,144 entries to 131,072
   entries. The active table now uses 3 MiB on 64-bit systems. The retained
   standard table uses 384 KiB. Total memo storage is 3.375 MiB before slice

@@ -2505,6 +2505,54 @@ func TestGLRStackCullTrigger(t *testing.T) {
 	}
 }
 
+func TestMaxTransientFrontierPopulationCap(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	tests := []struct {
+		name      string
+		maxStacks int
+		cull      int
+		want      int
+	}{
+		{name: "zero disabled", maxStacks: 0, cull: 0, want: 0},
+		{name: "zero keeps explicit cull", maxStacks: 0, cull: 7, want: 7},
+		{name: "overflow window with zero trigger", maxStacks: 8, cull: 0, want: 12},
+		{name: "overflow window", maxStacks: 8, cull: 8, want: 12},
+		{name: "cull trigger wins", maxStacks: 8, cull: 16, want: 16},
+		{name: "integer overflow", maxStacks: maxInt, cull: 0, want: maxInt},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := maxTransientFrontierPopulationCap(tt.maxStacks, tt.cull); got != tt.want {
+				t.Fatalf("maxTransientFrontierPopulationCap(%d, %d) = %d, want %d", tt.maxStacks, tt.cull, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTransientFrontierPopulationCap(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	tests := []struct {
+		name      string
+		maxStacks int
+		cull      int
+		noResult  bool
+		want      int
+	}{
+		{name: "production csharp-like", maxStacks: 8, cull: 8, want: 12},
+		{name: "no-result tight", maxStacks: 8, cull: 8, noResult: true, want: 0},
+		{name: "no-result overflow", maxStacks: 8, cull: 12, noResult: true, want: 12},
+		{name: "zero", maxStacks: 0, cull: 0, want: 0},
+		{name: "overflow", maxStacks: maxInt, cull: 0, want: maxInt},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := transientFrontierPopulationCap(tt.maxStacks, tt.cull, tt.noResult); got != tt.want {
+				t.Fatalf("transientFrontierPopulationCap(%d, %d, %t) = %d, want %d", tt.maxStacks, tt.cull, tt.noResult, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveParseMaxStacks(t *testing.T) {
 	if got, retry := resolveParseMaxStacks(6, 0, 2); got != 6 || retry {
 		t.Fatalf("resolveParseMaxStacks(default) = (%d, %t), want (6, false)", got, retry)

@@ -5303,16 +5303,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	maxIter := caps.maxIter
 	maxDepth := caps.maxDepth
 	maxNodes := caps.maxNodes
-	// Population cap for transient conflict-frontier fork admission
-	// (completeConflictReduceFrontier): active exactly where the boundary
-	// cull's overflow window exists (full parses outside c_sharp, where
-	// glrStackCullTrigger returns maxStacks+fullParseGLRStackOverflow).
-	// Zero disables the gate so incremental and c_sharp behavior is
-	// unchanged.
-	frontierForkPopulationCap := 0
-	if maxStackCullTrigger > maxStacks {
-		frontierForkPopulationCap = maxStackCullTrigger
-	}
+	// Select the larger of the resolved cull trigger and full-parse overflow window.
+	// Keep its historical zero-cap rule only when the trigger does not exceed
+	// maxStacks.
+	frontierForkPopulationCap := transientFrontierPopulationCap(maxStacks, maxStackCullTrigger, p.noResultCompatibilityBenchmarkOnly)
 	parseRuntime.IterationLimit = maxIter
 	parseRuntime.StackDepthLimit = maxDepth
 	parseRuntime.NodeLimit = maxNodes
@@ -8617,6 +8611,29 @@ func glrStackCullTrigger(maxStacks int, langName string) int {
 		return maxInt
 	}
 	return maxStacks + fullParseGLRStackOverflow
+}
+
+func maxTransientFrontierPopulationCap(maxStacks, maxStackCullTrigger int) int {
+	if maxStacks <= 0 {
+		return maxStackCullTrigger
+	}
+	maxInt := int(^uint(0) >> 1)
+	overflowWindow := maxInt
+	if maxStacks <= maxInt-fullParseGLRStackOverflow {
+		overflowWindow = maxStacks + fullParseGLRStackOverflow
+	}
+	if maxStackCullTrigger > overflowWindow {
+		return maxStackCullTrigger
+	}
+	return overflowWindow
+}
+
+func transientFrontierPopulationCap(maxStacks, maxStackCullTrigger int, noResultCompatibilityBenchmarkOnly bool) int {
+	cap := maxTransientFrontierPopulationCap(maxStacks, maxStackCullTrigger)
+	if noResultCompatibilityBenchmarkOnly && maxStackCullTrigger <= maxStacks {
+		return 0
+	}
+	return cap
 }
 
 func (p *Parser) promotePrimaryStack(stacks []glrStack) {
