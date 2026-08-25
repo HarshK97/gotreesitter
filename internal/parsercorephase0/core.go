@@ -909,6 +909,12 @@ type Core struct {
 	nodeLineages       []nodeLineageRecord
 	nodeCheckpoints    []CheckpointID
 	links              []linkRecord
+
+	// dropCohortLinkRefIndexes is an optional, LinkID-indexed sidecar. A zero
+	// entry means that no finalized drop-cohort reference is bound.
+	dropCohortLinkRefIndexes []uint32
+	dropCohortLinkRefJournal []dropCohortLinkRefMutation
+
 	subtrees           []subtreeRecord
 	externalProvenance []externalPayloadProvenance
 	children           []SubtreeID
@@ -1081,6 +1087,8 @@ type diagnosticOptions struct {
 type checkpoint struct {
 	nodes, nodeLineages, nodeCheckpoints, links, subtrees, externalProvenance int
 	children, fields, aliases                                                 int
+	dropCohortLinkRefIndexes                                                  int
+	dropCohortLinkRefJournal                                                  int
 	frontier                                                                  uint64
 	checkpoint                                                                CheckpointID
 	boundaryIndex                                                             boundaryIndexSnapshot
@@ -1134,6 +1142,8 @@ type checkpoint struct {
 	dropCohortJournalCap                                                      int
 	dropCohortFrontierJournalCap                                              int
 	dropCohortReservationsCap                                                 int
+	dropCohortLinkRefIndexesHeader                                            []uint32
+	dropCohortLinkRefJournalHeader                                            []dropCohortLinkRefMutation
 	dropCohortRefSpillHeader                                                  []DropCohortRef
 	dropCohortActionsHeader                                                   []dropCohortActionIdentity
 	dropCohortRecordsHeader                                                   []dropCohortRecord
@@ -1194,6 +1204,10 @@ func (c *Core) markInto(mark *checkpoint) {
 		nodeCheckpoints:    len(c.nodeCheckpoints),
 		externalProvenance: len(c.externalProvenance),
 		children:           len(c.children), fields: len(c.fields), aliases: len(c.aliases),
+
+		dropCohortLinkRefIndexes: len(c.dropCohortLinkRefIndexes),
+		dropCohortLinkRefJournal: len(c.dropCohortLinkRefJournal),
+
 		frontier: c.frontier, checkpoint: c.checkpoint,
 		boundaryIndex:                        c.boundaries.snapshot(),
 		journal:                              len(c.boundaryJournal),
@@ -1246,6 +1260,8 @@ func (c *Core) markInto(mark *checkpoint) {
 		dropCohortJournalCap:                 cap(c.dropCohortJournal),
 		dropCohortFrontierJournalCap:         cap(c.dropCohortFrontierJournal),
 		dropCohortReservationsCap:            cap(c.dropCohortReservations),
+		dropCohortLinkRefIndexesHeader:       c.dropCohortLinkRefIndexes,
+		dropCohortLinkRefJournalHeader:       c.dropCohortLinkRefJournal,
 		dropCohortRefSpillHeader:             c.dropCohortRefSpill,
 		dropCohortActionsHeader:              c.dropCohortActions,
 		dropCohortRecordsHeader:              c.dropCohortRecords,
@@ -1301,6 +1317,13 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 	c.frontier = mark.frontier
 	c.checkpoint = mark.checkpoint
 	c.work = mark.work
+	for index := len(c.dropCohortLinkRefJournal) - 1; index >= mark.dropCohortLinkRefJournal; index-- {
+		mutation := c.dropCohortLinkRefJournal[index]
+		if mutation.index >= 0 && mutation.index < len(c.dropCohortLinkRefIndexes) {
+			c.dropCohortLinkRefIndexes[mutation.index] = mutation.previous
+		}
+	}
+	c.dropCohortLinkRefIndexes = mark.dropCohortLinkRefIndexesHeader
 	for index := len(c.boundaryJournal) - 1; index >= mark.journal; index-- {
 		mutation := c.boundaryJournal[index]
 		mutation.slots[mutation.index] = mutation.previous
@@ -1375,6 +1398,7 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 	c.boundaryJournal = c.boundaryJournal[:mark.journal]
 	clear(c.nodeLineageJournal[mark.nodeLineageJournal:])
 	c.nodeLineageJournal = c.nodeLineageJournal[:mark.nodeLineageJournal]
+	c.dropCohortLinkRefJournal = mark.dropCohortLinkRefJournalHeader
 	phase0AObserveRollback(c, mark.transaction, phase0ATakeRollbackCause(c))
 	c.finishTransaction()
 }
@@ -1406,6 +1430,8 @@ func (c *Core) finishTransaction() {
 		c.boundaryJournal = c.boundaryJournal[:0]
 		clear(c.nodeLineageJournal)
 		c.nodeLineageJournal = c.nodeLineageJournal[:0]
+		clear(c.dropCohortLinkRefJournal)
+		c.dropCohortLinkRefJournal = c.dropCohortLinkRefJournal[:0]
 	}
 }
 
@@ -1753,6 +1779,8 @@ func (c *Core) Reset() error {
 	c.nodeLineages = c.nodeLineages[:0]
 	c.nodeCheckpoints = c.nodeCheckpoints[:0]
 	c.links = c.links[:0]
+	clear(c.dropCohortLinkRefIndexes)
+	c.dropCohortLinkRefIndexes = c.dropCohortLinkRefIndexes[:0]
 	c.subtrees = c.subtrees[:0]
 	c.externalProvenance = c.externalProvenance[:0]
 	c.children = c.children[:0]
@@ -1766,6 +1794,8 @@ func (c *Core) Reset() error {
 	c.boundaryJournal = c.boundaryJournal[:0]
 	clear(c.nodeLineageJournal)
 	c.nodeLineageJournal = c.nodeLineageJournal[:0]
+	clear(c.dropCohortLinkRefJournal)
+	c.dropCohortLinkRefJournal = c.dropCohortLinkRefJournal[:0]
 	c.alternativeSpillArena = c.alternativeSpillArena[:0]
 	c.dropCohortRefSpill = c.dropCohortRefSpill[:0]
 	c.dropCohortActions = c.dropCohortActions[:0]
@@ -2814,8 +2844,7 @@ func (c *Core) appendPrivate(state StateID, byteOffset uint32, in linkInput) (He
 	if in.order.Present {
 		flags |= linkFlagHasOrder
 	}
-	linkID := LinkID(uint64(len(c.links)) + 1)
-	c.links = append(c.links, linkRecord{
+	linkID := c.appendGraphLink(linkRecord{
 		prev: in.prev, payload: in.payload, scoreDelta: in.scoreDelta,
 		order: in.order.Value, flags: flags,
 	})
@@ -3171,12 +3200,11 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		}
 		linkCount += old.linkCount
 	}
-	linkID := LinkID(uint64(len(c.links)) + 1)
 	flags := uint32(0)
 	if in.order.Present {
 		flags |= linkFlagHasOrder
 	}
-	c.links = append(c.links, linkRecord{
+	linkID := c.appendGraphLink(linkRecord{
 		prev: in.prev, payload: in.payload, scoreDelta: in.scoreDelta,
 		order: in.order.Value, flags: flags, next: LinkID(old.firstLink),
 	})
@@ -3222,12 +3250,11 @@ func (c *Core) condenseDirectAppend(key boundaryKey, probe boundaryProbe, prevPa
 	if uint64(len(c.nodes))+1 > uint64(c.limits.MaxNodes) || uint64(len(c.nodes)) >= math.MaxUint32 {
 		return condenseOutcome{}, errors.New("parser-core phase zero: node arena cap")
 	}
-	linkID := LinkID(uint64(len(c.links)) + 1)
 	flags := uint32(0)
 	if in.order.Present {
 		flags |= linkFlagHasOrder
 	}
-	c.links = append(c.links, linkRecord{
+	linkID := c.appendGraphLink(linkRecord{
 		prev: in.prev, payload: in.payload, scoreDelta: in.scoreDelta,
 		order: in.order.Value, flags: flags,
 	})
@@ -3913,7 +3940,7 @@ func (c *Core) appendAdjacencyNodeAt(state StateID, byteOffset uint32, checkpoin
 	for _, stored := range links {
 		copy := stored
 		copy.next = first
-		c.links = append(c.links, copy)
+		c.appendGraphLink(copy)
 		c.addWork(&c.work.GraphLinkAdditionsProxy, 1)
 		first = LinkID(len(c.links))
 	}
@@ -4042,6 +4069,7 @@ func (c *Core) replaceBoundaryLink(key boundaryKey, probe boundaryProbe, old nod
 	}
 
 	linkMark := len(c.links)
+	linkRefMark := len(c.dropCohortLinkRefIndexes)
 	var first LinkID
 	for index, stored := range oldLinks {
 		copy := stored
@@ -4056,7 +4084,7 @@ func (c *Core) replaceBoundaryLink(key boundaryKey, probe boundaryProbe, old nod
 			}
 		}
 		copy.next = first
-		c.links = append(c.links, copy)
+		c.appendGraphLink(copy)
 		c.addWork(&c.work.GraphLinkAdditionsProxy, 1)
 		first = LinkID(len(c.links))
 	}
@@ -4066,6 +4094,9 @@ func (c *Core) replaceBoundaryLink(key boundaryKey, probe boundaryProbe, old nod
 	}, key.checkpoint)
 	if err != nil {
 		c.links = c.links[:linkMark]
+		if c.dropCohortLinkRefIndexes != nil {
+			c.dropCohortLinkRefIndexes = c.dropCohortLinkRefIndexes[:linkRefMark]
+		}
 		return Head{}, err
 	}
 	if err := c.publishBoundary(probe, id); err != nil {

@@ -25,6 +25,7 @@ var (
 	coreDropCohortFrontierParticipantBytes = uint64(unsafe.Sizeof(dropCohortFrontierParticipant{}))
 	coreDropCohortFrontierMemberBytes      = uint64(unsafe.Sizeof(dropCohortFrontierMember{}))
 	coreDropCohortFrontierMutationBytes    = uint64(unsafe.Sizeof(dropCohortFrontierMutation{}))
+	coreDropCohortLinkRefMutationBytes     = uint64(unsafe.Sizeof(dropCohortLinkRefMutation{}))
 )
 
 // StorageBytes returns a cheap, deterministic, O(1) estimate of the compact
@@ -60,6 +61,7 @@ func (c *Core) StorageBytes() uint64 {
 	}
 	return uint64(len(c.nodes))*coreNodeRecordBytes +
 		uint64(len(c.links))*coreLinkRecordBytes +
+		uint64(len(c.dropCohortLinkRefIndexes))*coreUint32Bytes +
 		uint64(len(c.subtrees))*coreSubtreeRecordBytes +
 		uint64(len(c.children))*coreChildRecordBytes +
 		uint64(len(c.fields))*coreFieldRecordBytes +
@@ -79,7 +81,8 @@ func (c *Core) StorageBytes() uint64 {
 		uint64(len(c.dropCohortFrontierMembers))*coreDropCohortFrontierMemberBytes +
 		uint64(len(c.dropCohortFrontierJournal))*coreDropCohortFrontierMutationBytes +
 		uint64(len(c.dropCohortReservations))*coreDropCohortReservationBytes +
-		uint64(len(c.dropCohortJournal))*coreDropCohortMutationBytes
+		uint64(len(c.dropCohortJournal))*coreDropCohortMutationBytes +
+		uint64(len(c.dropCohortLinkRefJournal))*coreDropCohortLinkRefMutationBytes
 }
 
 // Byte footprints for the additional families FootprintBytes covers that
@@ -155,6 +158,8 @@ func (c *Core) FootprintBytes() uint64 {
 	total += uint64(cap(c.externalProvenance)) * coreExternalProvenanceBytes
 	total += uint64(cap(c.boundaryJournal)) * coreBoundaryMutationBytes
 	total += uint64(cap(c.nodeLineageJournal)) * coreNodeLineageMutationBytes
+	total += uint64(cap(c.dropCohortLinkRefIndexes)) * coreUint32Bytes
+	total += uint64(cap(c.dropCohortLinkRefJournal)) * coreDropCohortLinkRefMutationBytes
 	total += uint64(cap(c.alternativeSpillArena)) * coreUint32Bytes
 	total += uint64(cap(c.dropCohortRefSpill)) * coreDropCohortRefBytes
 	total += uint64(cap(c.dropCohortActions)) * coreDropCohortActionBytes
@@ -303,6 +308,8 @@ func (c *Core) releaseRecordArenaReserve() {
 	c.nodes = nil
 	c.nodeLineages = nil
 	c.links = nil
+	c.dropCohortLinkRefIndexes = nil
+	c.dropCohortLinkRefJournal = nil
 	c.subtrees = nil
 	c.children = nil
 	c.dropCohortRefSpill = nil
@@ -332,6 +339,8 @@ func (c *Core) releaseOversizedRetention() {
 	c.nodeLineages = nil
 	c.nodeCheckpoints = nil
 	c.links = nil
+	c.dropCohortLinkRefIndexes = nil
+	c.dropCohortLinkRefJournal = nil
 	c.subtrees = nil
 	c.externalProvenance = nil
 	c.children = nil

@@ -120,6 +120,10 @@ The total is `198 + 3 + 5 + 0 = 206`. Keep the denominator and the scorecard unc
 
 `dropGenericNoActionHeads` makes the final drop decision. The current proof requires exact event and branch containment.
 
+The Core now has a default-off link provenance substrate. It records finalized
+reference indexes after an authenticated bind. Routing and admission remain
+unchanged.
+
 The current proof has two limits:
 
 - An inline set has no arena identity.
