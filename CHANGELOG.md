@@ -109,7 +109,8 @@ for tags and release notes while still in `0.x`.
   DFA now advances across selected gaps before token acceptance. It preserves
   logical text and cursor state during reset, relex, and generalized LR (GLR)
   probes. A scannerless synthetic external token now advances the source to
-  its reported end before the next token.
+  its reported end before the next token. The cursor increases the AMD64
+  Parser layout by 40 bytes, from 2,184 to 2,224 bytes.
   The locked Go route now matches C at root byte 26. Child counts remain 10
   for Go and seven for C. Compact and forest included-range routes remain
   uncertified. Keep `dispatch.go.source-file-root` live until exact shape and
