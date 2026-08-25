@@ -5304,11 +5304,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	maxDepth := caps.maxDepth
 	maxNodes := caps.maxNodes
 	// Select the larger of the resolved cull trigger and full-parse overflow window.
-	// The no-result compatibility benchmark disables frontier admission separately.
-	frontierForkPopulationCap := maxTransientFrontierPopulationCap(maxStacks, maxStackCullTrigger)
-	if p.noResultCompatibilityBenchmarkOnly {
-		frontierForkPopulationCap = 0
-	}
+	// Keep its historical zero-cap rule only when the trigger does not exceed
+	// maxStacks.
+	frontierForkPopulationCap := transientFrontierPopulationCap(maxStacks, maxStackCullTrigger, p.noResultCompatibilityBenchmarkOnly)
 	parseRuntime.IterationLimit = maxIter
 	parseRuntime.StackDepthLimit = maxDepth
 	parseRuntime.NodeLimit = maxNodes
@@ -8628,6 +8626,14 @@ func maxTransientFrontierPopulationCap(maxStacks, maxStackCullTrigger int) int {
 		return maxStackCullTrigger
 	}
 	return overflowWindow
+}
+
+func transientFrontierPopulationCap(maxStacks, maxStackCullTrigger int, noResultCompatibilityBenchmarkOnly bool) int {
+	cap := maxTransientFrontierPopulationCap(maxStacks, maxStackCullTrigger)
+	if noResultCompatibilityBenchmarkOnly && maxStackCullTrigger <= maxStacks {
+		return 0
+	}
+	return cap
 }
 
 func (p *Parser) promotePrimaryStack(stacks []glrStack) {
