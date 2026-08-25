@@ -5303,10 +5303,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	maxIter := caps.maxIter
 	maxDepth := caps.maxDepth
 	maxNodes := caps.maxNodes
-	// Use the resolved cull trigger as the transient frontier population cap.
-	// This keeps frontier admission aligned with boundary culling.
-	// A non-positive trigger keeps the gate disabled.
-	frontierForkPopulationCap := maxStackCullTrigger
+	// Keep frontier admission above the resolved cull trigger by the full-parse
+	// overflow window. A non-positive trigger keeps the gate disabled.
+	frontierForkPopulationCap := maxTransientFrontierPopulationCap(maxStacks, maxStackCullTrigger)
+	if p.noResultCompatibilityBenchmarkOnly {
+		frontierForkPopulationCap = 0
+	}
 	parseRuntime.IterationLimit = maxIter
 	parseRuntime.StackDepthLimit = maxDepth
 	parseRuntime.NodeLimit = maxNodes
@@ -8611,6 +8613,21 @@ func glrStackCullTrigger(maxStacks int, langName string) int {
 		return maxInt
 	}
 	return maxStacks + fullParseGLRStackOverflow
+}
+
+func maxTransientFrontierPopulationCap(maxStacks, maxStackCullTrigger int) int {
+	if maxStacks <= 0 {
+		return maxStackCullTrigger
+	}
+	maxInt := int(^uint(0) >> 1)
+	overflowWindow := maxInt
+	if maxStacks <= maxInt-fullParseGLRStackOverflow {
+		overflowWindow = maxStacks + fullParseGLRStackOverflow
+	}
+	if maxStackCullTrigger > overflowWindow {
+		return maxStackCullTrigger
+	}
+	return overflowWindow
 }
 
 func (p *Parser) promotePrimaryStack(stacks []glrStack) {
