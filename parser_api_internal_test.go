@@ -2515,6 +2515,7 @@ func TestMaxTransientFrontierPopulationCap(t *testing.T) {
 	}{
 		{name: "zero disabled", maxStacks: 0, cull: 0, want: 0},
 		{name: "zero keeps explicit cull", maxStacks: 0, cull: 7, want: 7},
+		{name: "overflow window with zero trigger", maxStacks: 8, cull: 0, want: 12},
 		{name: "overflow window", maxStacks: 8, cull: 8, want: 12},
 		{name: "cull trigger wins", maxStacks: 8, cull: 16, want: 16},
 		{name: "integer overflow", maxStacks: maxInt, cull: 0, want: maxInt},

@@ -5303,8 +5303,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	maxIter := caps.maxIter
 	maxDepth := caps.maxDepth
 	maxNodes := caps.maxNodes
-	// Keep frontier admission above the resolved cull trigger by the full-parse
-	// overflow window. A non-positive trigger keeps the gate disabled.
+	// Select the larger of the resolved cull trigger and full-parse overflow window.
+	// The no-result compatibility benchmark disables frontier admission separately.
 	frontierForkPopulationCap := maxTransientFrontierPopulationCap(maxStacks, maxStackCullTrigger)
 	if p.noResultCompatibilityBenchmarkOnly {
 		frontierForkPopulationCap = 0
