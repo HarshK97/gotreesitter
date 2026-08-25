@@ -105,6 +105,11 @@ for tags and release notes while still in `0.x`.
   byte. The parser seeds its initial stack there and preserves the configured
   start point for recovery gaps. A non-seek source preserves a complete
   overlapping token because it cannot reproduce a trimmed boundary token.
+  For grammars without an external scanner or external symbols, the internal
+  DFA now advances across selected gaps before token acceptance. It preserves
+  logical text and cursor state during reset, relex, and generalized LR (GLR)
+  probes. A scannerless synthetic external token now advances the source to
+  its reported end before the next token.
   The locked Go route now matches C at root byte 26. Child counts remain 10
   for Go and seven for C. Compact and forest included-range routes remain
   uncertified. Keep `dispatch.go.source-file-root` live until exact shape and

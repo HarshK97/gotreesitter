@@ -2980,6 +2980,24 @@ seeking preserves the complete overlapping token. Such a token can start
 before the selected boundary. This limitation does not provide strict trim
 parity for non-seek sources.
 
+The internal deterministic finite automaton (DFA) now owns range gaps only
+when the grammar has no external scanner and no external symbols. It keeps the
+DFA state across each gap. It builds logical token text from selected bytes
+when one token crosses a gap. It restores the range cursor during reset,
+relex, frontier, and generalized LR (GLR) probes. The ordinary no-range lexer
+path stays allocation-free.
+
+Grammars with external scanners still use the token filter. Custom token
+sources also use that filter. Scannerless synthetic external tokens advance to
+their reported end before the next read. The Go grammar uses an external
+scanner, so this tranche does not change its 10-child result or its seven-child
+C oracle. Compact and forest range routes remain uncertified.
+
+The focused JSON C-oracle test crosses one string token over a selected gap.
+Its Go and C trees match exactly. The Docker run passed without timeout or an
+out-of-memory failure. The artifact is
+`/tmp/gts-internal-dfa-range-cursor-artifacts/20260825T010353Z-json-internal-dfa-range-p2-main776`.
+
 The included-range production route now proves the root-start correction.
 Focused unit coverage also checks the supported incremental API path.
 Compact and forest included-range routes remain uncertified. Do not use this

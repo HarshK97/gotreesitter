@@ -105,6 +105,104 @@ func TestIncludedRangeTokenSourceDropsAllEmptyRanges(t *testing.T) {
 	}
 }
 
+func TestParserIncludedRangesUseDFAOnlyWithoutExternalScanner(t *testing.T) {
+	p := NewParser(nil)
+	p.SetIncludedRanges([]Range{{StartByte: 1, EndByte: 2}})
+
+	internal := newIncludedRangeTestDFASource([]byte("xa"))
+	if got := p.wrapIncludedRanges(internal); got != internal {
+		t.Fatalf("internal DFA wrapper type = %T, want the producer source", got)
+	}
+	p.SetIncludedRanges(nil)
+	if got := p.wrapIncludedRanges(internal); got != internal || len(internal.lexer.includedRanges) != 0 {
+		t.Fatalf("cleared internal DFA source = %T with %d ranges, want the producer source with no ranges",
+			got, len(internal.lexer.includedRanges))
+	}
+	p.SetIncludedRanges([]Range{{StartByte: 1, EndByte: 2}})
+
+	external := newIncludedRangeTestDFASource([]byte("xa"))
+	external.language.ExternalScanner = dualChoiceExternalScanner{}
+	external.hasExternalScanner = true
+	if _, ok := p.wrapIncludedRanges(external).(*includedRangeTokenSource); !ok {
+		t.Fatal("external-scanner DFA did not use the fallback wrapper")
+	}
+
+	custom := &nextOnlyTokenSource{tokens: []Token{{Symbol: 1, StartByte: 1, EndByte: 2}}}
+	if _, ok := p.wrapIncludedRanges(custom).(*includedRangeTokenSource); !ok {
+		t.Fatal("custom source did not use the fallback wrapper")
+	}
+}
+
+func TestParserIncludedRangesExternalSymbolsWithoutScannerUseWrapper(t *testing.T) {
+	states := buildIdentNumberWSDFA()
+	language := &Language{
+		Name:            "scannerless-external-range-test",
+		SymbolNames:     []string{"end", "identifier", "number", extNameAutomaticSemicolon},
+		ExternalSymbols: []Symbol{3},
+		ExternalLexStates: [][]bool{
+			{true},
+		},
+		LexStates: states,
+		LexModes: []LexMode{{
+			LexState:         0,
+			ExternalLexState: 0,
+		}},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 0}}},
+		},
+	}
+	lookup := func(state StateID, symbol Symbol) uint16 {
+		if state == 0 && symbol == 3 {
+			return 1
+		}
+		return 0
+	}
+	source := newDFATokenSourceDirect(NewLexer(states, []byte("\n++abc")), language, lookup, nil, nil, nil)
+	parser := NewParser(nil)
+	parser.SetIncludedRanges([]Range{
+		{StartByte: 0, EndByte: 1, EndPoint: Point{Row: 1}},
+		{StartByte: 3, EndByte: 6, StartPoint: Point{Row: 1, Column: 2}, EndPoint: Point{Row: 1, Column: 5}},
+	})
+
+	wrapped := parser.wrapIncludedRanges(source)
+	filter, ok := wrapped.(*includedRangeTokenSource)
+	if !ok {
+		t.Fatalf("external-symbol source type = %T, want the fallback wrapper", wrapped)
+	}
+	synthetic := filter.SkipToByteWithPoint(0, Point{})
+	if synthetic.Symbol != 3 || synthetic.StartByte != 0 || synthetic.EndByte != 1 {
+		t.Fatalf("synthetic token = %+v, want symbol 3 at [0,1)", synthetic)
+	}
+	if synthetic.StartByte < 3 && synthetic.EndByte > 1 {
+		t.Fatalf("synthetic token spans excluded bytes [1,3): %+v", synthetic)
+	}
+	selected := filter.Next()
+	if selected.Symbol != 1 || selected.Text != "abc" || selected.StartByte != 3 || selected.EndByte != 6 {
+		t.Fatalf("selected token = %+v, want abc at [3,6) after the excluded gap", selected)
+	}
+}
+
+func TestParserIncludedRangesUseInternalDFACursor(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	p := NewParser(lang)
+	p.SetIncludedRanges([]Range{{
+		StartByte:  1,
+		EndByte:    4,
+		StartPoint: Point{Column: 1},
+		EndPoint:   Point{Column: 4},
+	}})
+
+	tree := mustParse(t, p, []byte("x1+2y"))
+	root := tree.RootNode()
+	if root == nil || root.Type(lang) != "expression" || root.HasError() {
+		t.Fatalf("included-range root = %v, want a clean expression", root)
+	}
+	if root.StartByte() != 1 || root.EndByte() != 4 {
+		t.Fatalf("included-range root bytes = [%d,%d), want [1,4)", root.StartByte(), root.EndByte())
+	}
+}
+
 func TestIncludedRangeTokenSourceFiltersTokens(t *testing.T) {
 	base := &stubTokenSource{
 		tokens: []Token{

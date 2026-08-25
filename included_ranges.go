@@ -8,6 +8,10 @@ type includedRangeTokenSource struct {
 	idx    int
 }
 
+type includedRangeAwareTokenSource interface {
+	setIncludedRanges([]Range) bool
+}
+
 func newIncludedRangeTokenSource(base TokenSource, ranges []Range) TokenSource {
 	if base == nil || len(ranges) == 0 {
 		return base

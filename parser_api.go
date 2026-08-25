@@ -960,7 +960,13 @@ func (p *Parser) IncludedRanges() []Range {
 }
 
 func (p *Parser) wrapIncludedRanges(ts TokenSource) TokenSource {
-	if p == nil || len(p.included) == 0 || ts == nil {
+	if p == nil || ts == nil {
+		return ts
+	}
+	if aware, ok := ts.(includedRangeAwareTokenSource); ok && aware.setIncludedRanges(p.included) {
+		return ts
+	}
+	if len(p.included) == 0 {
 		return ts
 	}
 	return newIncludedRangeTokenSource(ts, p.included)

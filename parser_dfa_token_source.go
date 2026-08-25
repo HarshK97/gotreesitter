@@ -384,6 +384,8 @@ func (d *dfaTokenSource) Reset(source []byte) {
 	d.lexer.pos = 0
 	d.lexer.row = 0
 	d.lexer.col = 0
+	d.lexer.includedRangeIdx = 0
+	d.lexer.normalizeIncludedPosition()
 	if d.language != nil {
 		d.lexer.states = d.language.LexStates
 		d.lexer.immediateTokens = d.language.ImmediateTokens
@@ -422,6 +424,15 @@ func (d *dfaTokenSource) Reset(source []byte) {
 		d.language.ExternalScanner.Destroy(d.externalPayload)
 	}
 	d.externalPayload = d.language.ExternalScanner.Create()
+}
+
+func (d *dfaTokenSource) setIncludedRanges(ranges []Range) bool {
+	if d == nil || d.lexer == nil || d.hasExternalScanner ||
+		(d.language != nil && (d.language.ExternalScanner != nil || len(d.language.ExternalSymbols) != 0)) {
+		return false
+	}
+	d.lexer.setIncludedRanges(ranges)
+	return true
 }
 
 func (d *dfaTokenSource) Close() {
@@ -752,6 +763,7 @@ func (d *dfaTokenSource) nextDFAToken() Token {
 	d.lexer.pos = endPos
 	d.lexer.row = endRow
 	d.lexer.col = endCol
+	d.lexer.includedRangeIdx = d.lexer.includedRangeIndexForPosition(endPos)
 	return tok
 }
 
@@ -1001,6 +1013,8 @@ func (d *dfaTokenSource) SeekTokenFrontier(pos uint32, pt Point) {
 	d.lexer.pos = int(pos)
 	d.lexer.row = pt.Row
 	d.lexer.col = pt.Column
+	d.lexer.includedRangeIdx = 0
+	d.lexer.normalizeIncludedPosition()
 }
 
 func (d *dfaTokenSource) PeekTokenFrontier(states []StateID, dst []tokenCandidate) (tokenFrontier, bool) {
@@ -1043,10 +1057,12 @@ func (d *dfaTokenSource) PeekTokenFrontier(states []StateID, dst []tokenCandidat
 	startPos := d.lexer.pos
 	startRow := d.lexer.row
 	startCol := d.lexer.col
+	startRangeIdx := d.lexer.includedRangeIdx
 	defer func() {
 		d.lexer.pos = startPos
 		d.lexer.row = startRow
 		d.lexer.col = startCol
+		d.lexer.includedRangeIdx = startRangeIdx
 	}()
 
 	type lexModeKey struct {
@@ -1170,6 +1186,7 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 	startPos := d.lexer.pos
 	startRow := d.lexer.row
 	startCol := d.lexer.col
+	startRangeIdx := d.lexer.includedRangeIdx
 	d.beginGLRUnionScanCache()
 
 	bestScore := 0
@@ -1296,12 +1313,14 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 		d.lexer.pos = startPos
 		d.lexer.row = startRow
 		d.lexer.col = startCol
+		d.lexer.includedRangeIdx = startRangeIdx
 		return Token{}, false
 	}
 
 	d.lexer.pos = bestEndPos
 	d.lexer.row = bestEndRow
 	d.lexer.col = bestEndCol
+	d.lexer.includedRangeIdx = d.lexer.includedRangeIndexForPosition(bestEndPos)
 	return bestTok, true
 }
 
@@ -1445,6 +1464,7 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 	savedPos := d.lexer.pos
 	savedRow := d.lexer.row
 	savedCol := d.lexer.col
+	savedRangeIdx := d.lexer.includedRangeIdx
 	savedState := d.state
 
 	d.state = state
@@ -1461,6 +1481,7 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 			d.lexer.pos = savedPos
 			d.lexer.row = savedRow
 			d.lexer.col = savedCol
+			d.lexer.includedRangeIdx = savedRangeIdx
 			d.state = savedState
 			if DebugDFA.Load() {
 				fmt.Printf("  SCHEME-ERR run %d-%d state=%d\n", errTok.StartByte, errTok.EndByte, state)
@@ -1473,6 +1494,7 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 		d.lexer.pos = savedPos
 		d.lexer.row = savedRow
 		d.lexer.col = savedCol
+		d.lexer.includedRangeIdx = savedRangeIdx
 	}
 	if tok.Symbol == errorSymbol {
 		// Unlexable-run error token from the lexer (mirrors C skipped-error
@@ -1481,6 +1503,7 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 		d.lexer.pos = savedPos
 		d.lexer.row = savedRow
 		d.lexer.col = savedCol
+		d.lexer.includedRangeIdx = savedRangeIdx
 		d.state = savedState
 		if DebugDFA.Load() {
 			fmt.Printf("  LEX-ERR run %d-%d state=%d\n", tok.StartByte, tok.EndByte, state)
@@ -1493,6 +1516,7 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 			d.lexer.pos = savedPos
 			d.lexer.row = savedRow
 			d.lexer.col = savedCol
+			d.lexer.includedRangeIdx = savedRangeIdx
 		}
 	}
 	var keywordDemoted bool
@@ -1506,6 +1530,7 @@ func (d *dfaTokenSource) scanDFATokenForState(state StateID, lexState uint32) (T
 	d.lexer.pos = savedPos
 	d.lexer.row = savedRow
 	d.lexer.col = savedCol
+	d.lexer.includedRangeIdx = savedRangeIdx
 	d.state = savedState
 
 	return tok, endPos, endRow, endCol
@@ -1542,6 +1567,7 @@ func (d *dfaTokenSource) scanRawDFATokenForLexState(lexState uint32) (Token, int
 	savedPos := d.lexer.pos
 	savedRow := d.lexer.row
 	savedCol := d.lexer.col
+	savedRangeIdx := d.lexer.includedRangeIdx
 
 	tok := d.nextTokenForLexState(lexState)
 	endPos := d.lexer.pos
@@ -1551,6 +1577,7 @@ func (d *dfaTokenSource) scanRawDFATokenForLexState(lexState uint32) (Token, int
 	d.lexer.pos = savedPos
 	d.lexer.row = savedRow
 	d.lexer.col = savedCol
+	d.lexer.includedRangeIdx = savedRangeIdx
 	return tok, endPos, endRow, endCol
 }
 
@@ -2268,6 +2295,9 @@ func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state Stat
 		immediateTokens: lang.ImmediateTokens,
 		zeroWidthTokens: lang.ZeroWidthTokens,
 	}
+	if len(p.included) != 0 && lang.ExternalScanner == nil && len(lang.ExternalSymbols) == 0 {
+		probe.setIncludedRanges(p.included)
+	}
 	stateToken, ok := probe.scan(uint32(lexState), probe.pos, probe.row, probe.col)
 	if !ok || int(stateToken.Symbol) >= len(lang.SymbolNames) {
 		return false
@@ -2829,6 +2859,8 @@ func (d *dfaTokenSource) SkipToByteWithPoint(offset uint32, pt Point) Token {
 		d.lexer.pos = target
 		d.lexer.row = pt.Row
 		d.lexer.col = pt.Column
+		d.lexer.includedRangeIdx = 0
+		d.lexer.normalizeIncludedPosition()
 	}
 	return d.Next()
 }
@@ -2858,9 +2890,10 @@ func (d *dfaTokenSource) CanRelexFromTokenStart(tok Token) bool {
 }
 
 type dfaRelexSnapshot struct {
-	lexerPos int
-	lexerRow uint32
-	lexerCol uint32
+	lexerPos      int
+	lexerRow      uint32
+	lexerCol      uint32
+	lexerRangeIdx int
 
 	externalPayload []byte
 
@@ -2893,6 +2926,7 @@ func (d *dfaTokenSource) snapshotRelexStateWithExternalBuffer(buf []byte) (dfaRe
 		lexerPos:                    d.lexer.pos,
 		lexerRow:                    d.lexer.row,
 		lexerCol:                    d.lexer.col,
+		lexerRangeIdx:               d.lexer.includedRangeIdx,
 		lastExternalTokenStartByte:  d.lastExternalTokenStartByte,
 		lastExternalTokenEndByte:    d.lastExternalTokenEndByte,
 		lastExternalTokenValid:      d.lastExternalTokenValid,
@@ -2930,6 +2964,7 @@ func (s dfaRelexSnapshot) restore(d *dfaTokenSource) {
 	d.lexer.pos = s.lexerPos
 	d.lexer.row = s.lexerRow
 	d.lexer.col = s.lexerCol
+	d.lexer.includedRangeIdx = s.lexerRangeIdx
 	if d.hasExternalScanner && d.language != nil && d.language.ExternalScanner != nil {
 		d.language.ExternalScanner.Deserialize(d.externalPayload, s.externalPayload)
 	}
@@ -3051,6 +3086,8 @@ func (d *dfaTokenSource) beginRelexAt(target int, pt Point) {
 	d.lexer.pos = target
 	d.lexer.row = pt.Row
 	d.lexer.col = pt.Column
+	d.lexer.includedRangeIdx = 0
+	d.lexer.normalizeIncludedPosition()
 	if d.hasExternalScanner && d.usesExternalCheckpoints {
 		d.restoreExternalScannerState(d.externalTokenStart)
 	}
@@ -3256,6 +3293,9 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 			return Token{}, false
 		}
 		d.trackZeroWidthExternalToken(tok)
+		d.lexer.pos = int(tok.EndByte)
+		d.lexer.row = tok.EndPoint.Row
+		d.lexer.col = tok.EndPoint.Column
 		return tok, true
 	}
 
@@ -4667,13 +4707,17 @@ func (d *dfaTokenSource) stateLexModeProducesSameSpan(state StateID, tok Token, 
 	savedPos := d.lexer.pos
 	savedRow := d.lexer.row
 	savedCol := d.lexer.col
+	savedRangeIdx := d.lexer.includedRangeIdx
 	d.lexer.pos = scanStartPos
 	d.lexer.row = scanStartRow
 	d.lexer.col = scanStartCol
+	d.lexer.includedRangeIdx = 0
+	d.lexer.normalizeIncludedPosition()
 	rawTok, rawEndPos, _, _ := d.scanRawPreferredTokenForState(state)
 	d.lexer.pos = savedPos
 	d.lexer.row = savedRow
 	d.lexer.col = savedCol
+	d.lexer.includedRangeIdx = savedRangeIdx
 	if rawTok.Symbol == 0 || rawTok.Symbol == errorSymbol {
 		return false
 	}
