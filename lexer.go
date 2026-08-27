@@ -41,11 +41,11 @@ type Token struct {
 	// lexerInternalDFALexed proves that Lexer.scan accepted this token from
 	// the internal DFA. External, generated, missing, and EOF tokens omit it.
 	lexerInternalDFALexed bool
-	// IsKeyword mirrors C's Subtree.is_keyword bit (subtree.h:131): the
+	// isKeyword mirrors C's Subtree.is_keyword bit (subtree.h:131): the
 	// keyword-capture word token was re-lexed as a keyword and the parser
 	// adopted that keyword symbol (parser.c:645-668). False for every other
 	// token, including a word token the keyword re-lex did not adopt.
-	IsKeyword bool
+	isKeyword bool
 }
 
 func bytesToStringNoCopy(b []byte) string {

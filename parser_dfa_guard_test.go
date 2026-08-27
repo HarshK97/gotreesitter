@@ -1191,6 +1191,71 @@ func TestContextualActionDefersUnsignedShiftLineageAfterSingleCloseElection(t *t
 	}
 }
 
+// TestTokenMaybeContextualCloseAngleShapeGate pins tokenMaybeContextualCloseAngle,
+// the cheap, state-free shape pre-check extracted from
+// deferContextualCloseAngleAction's own first guard (finding F9): a
+// narrow, same-row, single ">" token passes; anything else fails.
+func TestTokenMaybeContextualCloseAngleShapeGate(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", ">", ">>"}}
+	sameRowNarrowClose := Token{
+		Symbol:     1,
+		StartByte:  4,
+		EndByte:    5,
+		StartPoint: Point{Row: 2, Column: 1},
+		EndPoint:   Point{Row: 2, Column: 2},
+	}
+
+	if !tokenMaybeContextualCloseAngle(lang, sameRowNarrowClose) {
+		t.Fatal("a same-row, single-byte \">\" token must pass the shape gate")
+	}
+	if tokenMaybeContextualCloseAngle(nil, sameRowNarrowClose) {
+		t.Fatal("a nil language must fail the shape gate")
+	}
+	if tokenMaybeContextualCloseAngle(lang, Token{Symbol: 99, StartByte: 0, EndByte: 1}) {
+		t.Fatal("a symbol outside the language's SymbolNames must fail the shape gate")
+	}
+	wideClose := sameRowNarrowClose
+	wideClose.Symbol = 2 // ">>"
+	if tokenMaybeContextualCloseAngle(lang, wideClose) {
+		t.Fatal("a token whose symbol name is not exactly \">\" must fail the shape gate")
+	}
+	wideSpan := sameRowNarrowClose
+	wideSpan.EndByte = sameRowNarrowClose.StartByte + 2
+	if tokenMaybeContextualCloseAngle(lang, wideSpan) {
+		t.Fatal("a \">\" token wider than one byte must fail the shape gate")
+	}
+	crossRow := sameRowNarrowClose
+	crossRow.EndPoint.Row++
+	if tokenMaybeContextualCloseAngle(lang, crossRow) {
+		t.Fatal("a \">\" token crossing a line must fail the shape gate")
+	}
+}
+
+// TestDeferContextualCloseAngleActionSharesShapeGateWithPreCheck pins the
+// single-source-of-truth property finding F9 requires: every shape
+// tokenMaybeContextualCloseAngle rejects must also make
+// deferContextualCloseAngleAction's own (identical) first guard return
+// false, so a caller that pre-checks with the extracted helper before
+// resolving its own state (dispatchCorridor, parsercore_c4_vm.go) never
+// disagrees with the full predicate it defers to.
+func TestDeferContextualCloseAngleActionSharesShapeGateWithPreCheck(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", ">", ">>"}}
+	probe := &Lexer{}
+	rejectedShapes := []Token{
+		{Symbol: 2, StartByte: 0, EndByte: 1},                          // wrong symbol name
+		{Symbol: 1, StartByte: 0, EndByte: 2},                          // width != 1
+		{Symbol: 1, StartByte: 0, EndByte: 1, EndPoint: Point{Row: 1}}, // crosses a row
+	}
+	for _, tok := range rejectedShapes {
+		if tokenMaybeContextualCloseAngle(lang, tok) {
+			t.Fatalf("token %+v unexpectedly passed the shape gate", tok)
+		}
+		if deferContextualCloseAngleAction(lang, []byte(">>"), 0, tok, nil, probe) {
+			t.Fatalf("token %+v unexpectedly deferred despite failing the shared shape gate", tok)
+		}
+	}
+}
+
 func TestPromoteActiveLiteralDoesNotUndoContextualKeywordDemotion(t *testing.T) {
 	lang := &Language{
 		Name:                "javascript",

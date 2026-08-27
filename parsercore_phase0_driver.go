@@ -3752,6 +3752,12 @@ func (cell *diagnosticParserCoreGenericCell) dispatchToken(shared Token) Token {
 		shared.Symbol = cell.relexedSymbol
 		shared.ExternalScannerToken = false
 		shared.ExternalScannerStartByte = 0
+		// isKeyword is a promotion-path artifact of the shared token's own
+		// lex, not a property of the relexed symbol replacing it here;
+		// clear it alongside the external-scanner fields above so a
+		// promoted keyword token's dispatch view is judged on the relexed
+		// symbol, not on which lex path produced the original.
+		shared.isKeyword = false
 	}
 	return shared
 }
@@ -3809,13 +3815,13 @@ func diagnosticParserCoreRelexedSymbol(shared, relexed Token) (Symbol, bool) {
 	candidate.Symbol = relexed.Symbol
 	candidate.ExternalScannerToken = false
 	candidate.ExternalScannerStartByte = 0
-	// IsKeyword is a promotion-path artifact of the DFA token source's
+	// isKeyword is a promotion-path artifact of the DFA token source's
 	// keyword re-lex (promoteKeyword), not a property probe.scan's raw
 	// DFA-only relex can ever report; clear it here too, alongside the
 	// external-scanner fields above, so a promoted keyword token's relex
 	// probe is judged on tokenization identity, not on which lex path
 	// produced it.
-	candidate.IsKeyword = false
+	candidate.isKeyword = false
 	if candidate != relexed {
 		return 0, false
 	}
@@ -5842,6 +5848,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 	cells := singletonCells[:0]
 	scratchCells := s.dispatchScratch.cells
 	pausedNoActionHeads := 0
+	deferredNoActionHeads := 0
 	for index, header := range s.headers {
 		if header.shifted || header.accepted {
 			continue
@@ -6013,7 +6020,6 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 		}
 		s.work.ActionLookups++
 		actions := boundary.Actions()
-		workCountRecordResolvedActionCell(actions.Len())
 		// Production's per-stack contextualActionIndex (parser_dfa_token_source.go)
 		// zeroes an action for this exact shared token shape when the header's own
 		// lex mode reads a wider close-angle operator that itself carries a real
@@ -6022,7 +6028,11 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 		// check would let the compact route accept a derivation the production
 		// route provably declines (issue #983). A header this defers falls into
 		// the ordinary no-action machinery below -- it never gets a synthesized
-		// token or an altered election.
+		// token or an altered election. The work-count record below is skipped
+		// for a deferred cell (recorded as zero instead, matching production's
+		// zeroed action index) and deferredNoActionHeads is tracked separately
+		// from pausedNoActionHeads so the no-action classification below can
+		// tell a deferral apart from a genuinely empty action row.
 		if actions.Len() != 0 && s.tokenSource != nil && s.tokenSource.lexer != nil {
 			probe := s.tokenSource.relexProbeLexer
 			if probe == nil {
@@ -6032,10 +6042,13 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			if deferContextualCloseAngleAction(
 				s.tokenSource.language, s.tokenSource.lexer.source, StateID(boundary.State()), cellToken, nil, probe,
 			) {
+				workCountRecordResolvedActionCell(0)
 				s.dispatchScratch.noActionIndices = append(s.dispatchScratch.noActionIndices, index)
+				deferredNoActionHeads++
 				continue
 			}
 		}
+		workCountRecordResolvedActionCell(actions.Len())
 		if actions.Len() == 0 {
 			state := StateID(boundary.State())
 			if len(s.headers) > 1 {
@@ -6161,20 +6174,24 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			return nil, s.dropGenericNoActionHeads(noActionIndices)
 		}
 		if len(noActionIndices) != 0 {
-			// pausedNoActionHeads == 0 means every no-action head reached this
-			// point through a genuinely empty action row (no table action for
-			// the elected token), not through the unrelated group-election
-			// pause tracked by header.paused above. That exact shape is the
-			// error-entry point locked-C production pauses on for recovery
-			// (glr.go cPaused: "the stack hit a no-action point"; the
-			// real-corpus matrix's 13 recovery-handoff rows trigger here with
-			// "the elected token has no table action at end-of-file"). Publish
-			// the typed recovery boundary for that shape instead of the
-			// generic no-action boundary so census and receipts can tell a
-			// recovery handoff apart from an internal election pause. This is
-			// a dispatch classification only: both boundaries still decline
-			// and fall back to production unchanged (B3 stage S1).
-			if pausedNoActionHeads == 0 {
+			// pausedNoActionHeads == 0 && deferredNoActionHeads == 0 means
+			// every no-action head reached this point through a genuinely
+			// empty action row (no table action for the elected token), not
+			// through the unrelated group-election pause tracked by
+			// header.paused above, and not through the issue #983 contextual
+			// close-angle deferral tracked by deferredNoActionHeads above
+			// (that shape has a real, non-empty action row the header simply
+			// must not take this pass). That exact genuinely-empty shape is
+			// the error-entry point locked-C production pauses on for
+			// recovery (glr.go cPaused: "the stack hit a no-action point";
+			// the real-corpus matrix's 13 recovery-handoff rows trigger here
+			// with "the elected token has no table action at end-of-file").
+			// Publish the typed recovery boundary for that shape instead of
+			// the generic no-action boundary so census and receipts can tell
+			// a recovery handoff apart from an internal election pause. This
+			// is a dispatch classification only: both boundaries still
+			// decline and fall back to production unchanged (B3 stage S1).
+			if pausedNoActionHeads == 0 && deferredNoActionHeads == 0 {
 				// B3 stage S3: attempt native strategy-2 recovery for the
 				// certified witness class instead of declining outright.
 				// Scoped to the sole-header, sole-no-action-head shape only
@@ -6196,6 +6213,22 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				return &diagnosticParserCoreGenericUnsupported{
 					boundary:    DiagnosticParserCoreRecovery,
 					detail:      diagnosticParserCoreNoTableActionDetail,
+					headerIndex: noActionIndices[0],
+				}, nil
+			}
+			if pausedNoActionHeads == 0 {
+				// deferredNoActionHeads > 0: at least one no-action head
+				// reached this point through the issue #983 contextual
+				// close-angle deferral, not a genuinely empty action row.
+				// Never route a deferred header through s3TryOpenErrorRegion:
+				// the S3 resume path re-reads the raw table without the
+				// deferral and can bounce forever if the certification gate
+				// ever widens beyond html. Keep the boundary class Recovery
+				// so routing is unchanged, but give the decline a distinct,
+				// accurate detail instead of claiming the row had no action.
+				return &diagnosticParserCoreGenericUnsupported{
+					boundary:    DiagnosticParserCoreRecovery,
+					detail:      "generic scheduler deferred a contextual close-angle action for the elected token",
 					headerIndex: noActionIndices[0],
 				}, nil
 			}

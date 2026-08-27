@@ -63,7 +63,7 @@ func TestPromoteKeywordSetsIsKeywordOnAdoption(t *testing.T) {
 	if tok.Symbol != 2 {
 		t.Fatalf("token symbol = %d, want 2 (if keyword — adopted)", tok.Symbol)
 	}
-	if !tok.IsKeyword {
+	if !tok.isKeyword {
 		t.Fatal("adopted keyword token: IsKeyword = false, want true")
 	}
 }
@@ -84,7 +84,7 @@ func TestPromoteKeywordLeavesIsKeywordFalseForNonKeywordWord(t *testing.T) {
 	if tok.Symbol != 1 {
 		t.Fatalf("token symbol = %d, want 1 (identifier — not adopted)", tok.Symbol)
 	}
-	if tok.IsKeyword {
+	if tok.isKeyword {
 		t.Fatal("non-keyword word token: IsKeyword = true, want false")
 	}
 }
@@ -106,7 +106,113 @@ func TestPromoteKeywordIsKeywordFalseWithoutKeywordCapture(t *testing.T) {
 	if tok.Symbol != 1 {
 		t.Fatalf("token symbol = %d, want 1 (identifier — no keyword capture)", tok.Symbol)
 	}
-	if tok.IsKeyword {
+	if tok.isKeyword {
 		t.Fatal("language without keyword capture: IsKeyword = true, want false")
+	}
+}
+
+// unionSameLexKeywordLanguage builds a two-lex-mode language where one GLR
+// stack state reaches the "if" keyword through the identifier-capture path
+// (promoted, IsKeyword = true) and another reaches the literal "if"
+// spelling directly in the main DFA (IsKeyword = false). Both lex the same
+// span and symbol for source "if", so they are the same tokenization and
+// the live-GLR union election must treat them as such, regardless of which
+// lex path produced the token. Symbols:
+//
+//	0: end
+//	1: identifier (terminal, named) — keyword capture token
+//	2: if (terminal, anonymous) — keyword, reachable via promotion or direct
+//
+// Parser states used by the test: state 1 selects the identifier-capture
+// lex mode (DFA state 0); state 2 selects the direct keyword-literal lex
+// mode (DFA state 2).
+func unionSameLexKeywordLanguage() *Language {
+	return &Language{
+		Name:                "keyword_union_samelex_test",
+		SymbolCount:         3,
+		TokenCount:          2,
+		KeywordCaptureToken: 1, // identifier
+		SymbolNames:         []string{"end", "identifier", "if"},
+		LexStates: []LexState{
+			// state 0: identifier path start — dispatch any lowercase letter
+			{Default: -1, EOF: -1, Transitions: []LexTransition{
+				{Lo: 'a', Hi: 'z', NextState: 1},
+			}},
+			// state 1: accept identifier, loop on further lowercase letters
+			{AcceptToken: 1, Default: -1, EOF: -1, Transitions: []LexTransition{
+				{Lo: 'a', Hi: 'z', NextState: 1},
+			}},
+			// state 2: direct keyword path start — dispatch 'i'
+			{Default: -1, EOF: -1, Transitions: []LexTransition{
+				{Lo: 'i', Hi: 'i', NextState: 3},
+			}},
+			// state 3: saw 'i' — dispatch 'f'
+			{Default: -1, EOF: -1, Transitions: []LexTransition{
+				{Lo: 'f', Hi: 'f', NextState: 4},
+			}},
+			// state 4: saw "if" directly — accept the keyword (symbol 2)
+			// without going through the identifier-capture promotion path.
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+		LexModes: []LexMode{
+			{},            // parser state 0: unused placeholder
+			{LexState: 0}, // parser state 1: identifier-capture path
+			{LexState: 2}, // parser state 2: direct keyword-literal path
+		},
+		KeywordLexStates: []LexState{
+			// kw state 0: start — dispatch 'i'
+			{AcceptToken: 0, Default: -1, EOF: -1, Transitions: []LexTransition{
+				{Lo: 'i', Hi: 'i', NextState: 1},
+			}},
+			// kw state 1: saw 'i' — dispatch 'f'
+			{AcceptToken: 0, Default: -1, EOF: -1, Transitions: []LexTransition{
+				{Lo: 'f', Hi: 'f', NextState: 2},
+			}},
+			// kw state 2: saw "if" — accept the keyword (symbol 2)
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+	}
+}
+
+// TestPeekTokenFrontierMergesSameLexDespiteIsKeywordMismatch pins the F1
+// finding: PeekTokenFrontier must not let IsKeyword split one tokenization
+// across two candidates in the live GLR union election. One state lexes
+// "if" through the identifier-capture path and adopts the keyword
+// (IsKeyword = true); another lexes the same span directly as the keyword
+// literal (IsKeyword = false). Same symbol, same span — the union election
+// must merge them into a single candidate whose route mask covers both
+// states, not split the vote across two candidates that each look
+// unsupported by the other state.
+func TestPeekTokenFrontierMergesSameLexDespiteIsKeywordMismatch(t *testing.T) {
+	lang := unionSameLexKeywordLanguage()
+	lookup := func(state StateID, sym Symbol) uint16 {
+		if sym == 2 && (state == 1 || state == 2) {
+			return 1
+		}
+		return 0
+	}
+
+	source := []byte("if")
+	ts := acquireDFATokenSource(NewLexer(lang.LexStates, source), lang, lookup, nil, nil, nil)
+	defer ts.Close()
+	ts.SetParserState(1)
+
+	states := []StateID{1, 2}
+	frontier, ok := ts.PeekTokenFrontier(states, nil)
+	if !ok {
+		t.Fatal("PeekTokenFrontier returned false")
+	}
+	if len(frontier.Candidates) != 1 {
+		t.Fatalf("candidates = %d, want 1 (identifier-promoted and direct-literal \"if\" must merge into one candidate)", len(frontier.Candidates))
+	}
+	cand := frontier.Candidates[0]
+	if cand.Tok.Symbol != 2 {
+		t.Fatalf("candidate symbol = %d, want 2 (if keyword)", cand.Tok.Symbol)
+	}
+	if cand.Tok.StartByte != 0 || cand.Tok.EndByte != 2 {
+		t.Fatalf("candidate span = %d..%d, want 0..2", cand.Tok.StartByte, cand.Tok.EndByte)
+	}
+	if want := uint16(1<<0 | 1<<1); cand.RouteMask != want {
+		t.Fatalf("candidate route mask = %#x, want %#x (both states must vote for the merged tokenization)", cand.RouteMask, want)
 	}
 }

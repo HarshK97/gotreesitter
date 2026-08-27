@@ -185,7 +185,18 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchCorridor() (progressed bo
 		// elected token either. Refusing before any counter is spent hands
 		// the untouched election back to the generic pass, which re-runs full
 		// classification and reaches the identical no-action outcome.
-		if s.tokenSource != nil && s.tokenSource.lexer != nil {
+		//
+		// tokenMaybeContextualCloseAngle is a cheap, state-free shape check
+		// on the elected token (symbol name and width) that rules out the
+		// overwhelming majority of tokens before paying for
+		// corridorHeaderState()'s resolve below; deferContextualCloseAngleAction
+		// still runs its own full guard, including this same check, as the
+		// single source of truth. A refusal here when progressed is already
+		// true (finding F13) costs exactly one extra run-loop iteration and
+		// cannot livelock: progressed is a fresh local for this call, so the
+		// next dispatchCorridor call always starts it over at false.
+		if s.tokenSource != nil && s.tokenSource.lexer != nil &&
+			tokenMaybeContextualCloseAngle(s.tokenSource.language, s.token) {
 			corridorState, stateErr := s.corridorHeaderState()
 			if stateErr != nil {
 				return progressed, stateErr

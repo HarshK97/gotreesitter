@@ -8,10 +8,17 @@ package gotreesitter
 // re-lexing. Nothing consumes it yet; the per-epoch token cell and the
 // scheduler election land in later tranches of the same lane.
 
-// tokenReuseLeaf carries the leaf facts C reads from a Subtree. A bare
-// token cell sets LeafState and ParseState equal; a reused subtree keeps
-// them distinct (the first leaf's lex state against the root's parse
-// state, per ts_subtree_leaf_parse_state and ts_subtree_parse_state).
+// tokenReuseLeaf carries the leaf facts C reads from a Subtree, split
+// across two different accessors exactly as
+// ts_parser__can_reuse_first_leaf (parser.c:472-505) reads them: Symbol
+// and LeafState come from the first leaf (ts_subtree_leaf_symbol and
+// ts_subtree_leaf_parse_state, which both read through the subtree's
+// leftmost leaf); ParseState, SizeBytes, and IsKeyword come from the root
+// subtree itself (ts_subtree_parse_state, ts_subtree_size, and
+// ts_subtree_is_keyword). A bare token cell sets LeafState and ParseState
+// equal; a reused subtree keeps them distinct (the first leaf's lex state
+// against the root's parse state, per ts_subtree_leaf_parse_state and
+// ts_subtree_parse_state).
 type tokenReuseLeaf struct {
 	Symbol     Symbol
 	LeafState  StateID
@@ -20,21 +27,31 @@ type tokenReuseLeaf struct {
 	IsKeyword  bool
 }
 
-// lexerModeTriple is C's TSLexerMode (parser.h:89-93): exactly the three
-// fields the C reuse test compares with memcmp. Go's LexMode carries
-// additional derived fields (AfterWhitespaceLexState, LexStateID, and
-// friends) that are functions of the same state row; the literal port
-// compares only the C triple.
+// lexerModeTriple starts from C's TSLexerMode (parser.h:89-93), the three
+// fields the C reuse test compares with memcmp, but widens and extends it
+// for this engine's own table layout rather than reading Go's LexMode raw
+// fields directly:
+//
+//   - lexState uses LexStateIndex() (uint32), not the raw uint16 LexState
+//     field, because grammargen tables can exceed 64K lexer states and the
+//     widened index is the only field that stays collision-free at that
+//     size (Language.LexStateID / LexMode.LexStateIndex's own doc comment).
+//   - afterWhitespaceLexState (via AfterWhitespaceLexStateIndex()) is
+//     included even though C's TSLexerMode has no equivalent field: in this
+//     engine, after-whitespace is an independent table entry populated by a
+//     separate pass over the DFA (grammargen/assemble.go:138-142), so two
+//     states with an identical C triple can still lex differently here if
+//     their after-whitespace entries differ. Leaving it out of the identity
+//     would let the reuse rule below fire on a match C never has to prove
+//     safe. Including it keeps the comparison aligned with actual lexer
+//     behavior and errs fail-closed relative to C rather than risking an
+//     unsound reuse.
 type lexerModeTriple struct {
-	lexState          uint16
-	externalLexState  uint16
-	reservedWordSetID uint16
+	lexState                uint32
+	externalLexState        uint16
+	reservedWordSetID       uint16
+	afterWhitespaceLexState uint32
 }
-
-// nonTerminalExtraLexState mirrors C's (uint16_t)-1 sentinel: at the end
-// of a non-terminal extra the lexer returns no token, so nothing may be
-// reused there (parser.c:483-487).
-const nonTerminalExtraLexState = ^uint16(0)
 
 func lexerModeTripleForState(lang *Language, state StateID) (lexerModeTriple, bool) {
 	if lang == nil || int(state) >= len(lang.LexModes) {
@@ -42,9 +59,10 @@ func lexerModeTripleForState(lang *Language, state StateID) (lexerModeTriple, bo
 	}
 	mode := lang.LexModes[state]
 	return lexerModeTriple{
-		lexState:          mode.LexState,
-		externalLexState:  mode.ExternalLexState,
-		reservedWordSetID: mode.ReservedWordSetID,
+		lexState:                mode.LexStateIndex(),
+		externalLexState:        mode.ExternalLexState,
+		reservedWordSetID:       mode.ReservedWordSetID,
+		afterWhitespaceLexState: mode.AfterWhitespaceLexStateIndex(),
 	}, true
 }
 
@@ -62,8 +80,13 @@ func canReuseFirstLeaf(lang *Language, state StateID, leaf tokenReuseLeaf, entry
 		return false
 	}
 
-	// parser.c:487 -- never reuse at the end of a non-terminal extra.
-	if currentMode.lexState == nonTerminalExtraLexState {
+	// parser.c:487 -- never reuse at the end of a non-terminal extra. C's
+	// sentinel is (uint16_t)-1 on the raw LexState field; this engine's
+	// package-wide noLookaheadLexState sentinel is the same value widened
+	// through LexStateIndex() (parser_dfa_token_source.go), so comparing
+	// against it here follows the same convention every other no-lookahead
+	// check in this package uses instead of duplicating a private sentinel.
+	if currentMode.lexState == noLookaheadLexState {
 		return false
 	}
 

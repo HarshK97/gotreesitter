@@ -100,6 +100,11 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Apply the production route's contextual close-angle deferral in the
+  compact dispatch and the C4 corridor (issue #983). Add the two Swift
+  witnesses to the committed route-equality seed corpus. Totals stay
+  unchanged: 69/0/30/10 canonical, 88/0/46/12 full.
+
 - Added bounded materiality-only acceptance for no-primary multi-derivation
   end-of-file (EOF) frontiers. The route selects a deterministic provisional
   candidate only for the existing bounded public-tree comparison. It routes
