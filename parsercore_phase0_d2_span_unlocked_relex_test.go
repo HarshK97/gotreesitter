@@ -195,9 +195,8 @@ func TestD2SpanUnlockedSchedulerDeclinesRaggedEndRelex(t *testing.T) {
 // division-state's own token first (mirroring what a real shared election
 // would report), then the regex-state's own relex at that identical span;
 // diagnosticParserCoreSameSpanRelex accepts the pair and returns the
-// promoted (symbol 111) token, exactly the contract
-// TestD2SpanUnlockedSameSpanRelexStillShiftsRealBashInstallWitness pins
-// against the git-ignored bash corpus fixture.
+// promoted (symbol 111) token. This pins the same-span accept contract
+// that the shift path depends on; no CI test drives the shift itself.
 func TestD2SpanUnlockedSameSpanRelexOnRealJavaScriptDivisionRegexWitness(t *testing.T) {
 	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
 	entry := grammars.DetectLanguageByName("javascript")
@@ -256,8 +255,9 @@ func TestD2SpanUnlockedSameSpanRelexOnRealJavaScriptDivisionRegexWitness(t *test
 // scorecard call already fail there, for an unrelated G18/D6 alternative-
 // set convergence reason -- see the D2-1 report). This test substitutes a
 // real, unmodified grammar fixture instead: tree-sitter-bash's own
-// examples/install.sh (present locally, when GTS_ADMISSION_REAL_CORPUS=1
-// provisions it, at cgo_harness/corpus_real/bash/medium__install.sh --
+// examples/install.sh (when the directory is present locally and
+// GTS_ADMISSION_REAL_CORPUS=1 enables the test, at
+// cgo_harness/corpus_real/bash/medium__install.sh --
 // see the git-ignored note below; it is never committed), confirmed by direct
 // code-path instrumentation during evidence gathering to exercise a
 // successful same-span relex mid-parse.
@@ -276,7 +276,8 @@ func TestD2SpanUnlockedSameSpanRelexOnRealJavaScriptDivisionRegexWitness(t *test
 // (admission_real_corpus_matrix_test.go): that directory is git-ignored and
 // no CI job provisions it (docs/ci-gate-coverage.md), so this test must
 // skip cleanly, not fail, when it is absent. F3's CI-covered anchor below
-// exercises the same shift path over an embedded-grammar fixture instead.
+// pins the same-span accept contract the shift path depends on over an
+// embedded-grammar fixture; no CI test drives the shift itself.
 func TestD2SpanUnlockedSameSpanRelexStillShiftsRealBashInstallWitness(t *testing.T) {
 	if os.Getenv("GTS_ADMISSION_REAL_CORPUS") != "1" {
 		t.Skip("set GTS_ADMISSION_REAL_CORPUS=1 to run this cgo_harness/corpus_real-backed witness")

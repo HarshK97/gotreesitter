@@ -6353,7 +6353,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			// real, non-empty action row the header must not take this pass.
 			// The ragged-end decline's own action row is empty too (that
 			// emptiness is what triggers the per-header relex in the first
-			// place), but a live C stack in this exact state would relex its
+			// place), but a live C stack in this exact state may relex its
 			// own version and shift that token instead of entering recovery
 			// -- so this shape is not the C recovery-entry shape either,
 			// even though its action row looks the same as one. That
