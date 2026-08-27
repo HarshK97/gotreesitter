@@ -110,6 +110,7 @@ func (d ActionRowDescriptor) DispatchSupported() bool { return d.dispatchSupport
 type actionRowData struct {
 	actions    []Action
 	descriptor ActionRowDescriptor
+	reusable   bool
 }
 
 // ActionRow is an immutable decoded parse-table cell. Its backing storage is
@@ -146,14 +147,17 @@ func (b ClassifiedBoundary) ByteOffset() uint32 { return b.byteOffset }
 // Actions returns the immutable decoded action row for this classification.
 func (b ClassifiedBoundary) Actions() ActionRow { return b.actions }
 
-// NewActionRow snapshots actions into an immutable row.
-func NewActionRow(actions []Action) ActionRow {
+// NewActionRow snapshots actions into an immutable row. reusable carries the
+// language table's per-entry token-reuse eligibility bit (Language.
+// ParseActions[i].Reusable) through to the decoded row unchanged; it is not
+// derived from actions and does not affect Descriptor's dispatch shape.
+func NewActionRow(actions []Action, reusable bool) ActionRow {
 	if len(actions) == 0 {
 		return ActionRow{}
 	}
 	snapshot := append([]Action(nil), actions...)
 	return ActionRow{data: &actionRowData{
-		actions: snapshot, descriptor: describeActionRow(snapshot),
+		actions: snapshot, descriptor: describeActionRow(snapshot), reusable: reusable,
 	}}
 }
 
@@ -175,6 +179,16 @@ func (r ActionRow) Descriptor() ActionRowDescriptor {
 		return ActionRowDescriptor{kind: ActionRowEmpty}
 	}
 	return r.data.descriptor
+}
+
+// Reusable reports the language table's token-reuse eligibility bit for this
+// row, unchanged from Language.ParseActions[i].Reusable. Nothing reads it
+// yet; it is substrate for a later forced-reuse tranche.
+func (r ActionRow) Reusable() bool {
+	if r.data == nil {
+		return false
+	}
+	return r.data.reusable
 }
 
 func (r ActionRow) actionRef(index int) *Action { return &r.data.actions[index] }

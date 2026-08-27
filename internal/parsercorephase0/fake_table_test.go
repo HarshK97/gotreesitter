@@ -23,7 +23,7 @@ func (f *fakeTable) Actions(state StateID, symbol Symbol) (ActionRow, error) {
 	if f == nil {
 		return ActionRow{}, errors.New("fake table is nil")
 	}
-	return NewActionRow(f.actions[tableCell{state: state, symbol: symbol}]), nil
+	return NewActionRow(f.actions[tableCell{state: state, symbol: symbol}], false), nil
 }
 
 func actionRowValues(row ActionRow) []Action {

@@ -137,7 +137,7 @@ type g4EOFTable struct {
 }
 
 func (t *g4EOFTable) Actions(state core.StateID, symbol core.Symbol) (core.ActionRow, error) {
-	return core.NewActionRow(t.cells[g4EOFCell{state: state, symbol: symbol}]), nil
+	return core.NewActionRow(t.cells[g4EOFCell{state: state, symbol: symbol}], false), nil
 }
 
 func (t *g4EOFTable) Goto(state core.StateID, symbol core.Symbol) (core.StateID, error) {

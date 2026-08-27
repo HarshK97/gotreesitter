@@ -625,7 +625,7 @@ func buildParserCoreLanguageTables(parser *Parser) (*parserCoreLanguageTables, e
 				return nil, fmt.Errorf("parser-core phase zero: convert action row %d ordinal %d: %w", index, ordinal, err)
 			}
 		}
-		rows[index] = core.NewActionRow(converted)
+		rows[index] = core.NewActionRow(converted, entry.Reusable)
 	}
 	tables := &parserCoreLanguageTables{actionRows: rows}
 	maxProductionID, maxChildCount := 0, 0
@@ -2120,6 +2120,19 @@ func diagnosticParserCoreHeaderPathReceipts(compact *core.Core, headers []diagno
 	return out, nil
 }
 
+// diagnosticParserCoreTokenCell caches the epoch's elected token identity for
+// the forced-reuse tranche: the token, the lexer-mode identity it was lexed
+// under, and its scanner checkpoints. One cell per election; nothing reads it
+// yet.
+type diagnosticParserCoreTokenCell struct {
+	token            Token
+	state            StateID
+	byteOffset       uint32
+	beforeCheckpoint core.CheckpointID
+	afterCheckpoint  core.CheckpointID
+	valid            bool
+}
+
 type diagnosticParserCoreGenericScheduler struct {
 	compact                    *core.Core
 	tokenSource                *dfaTokenSource
@@ -2130,6 +2143,7 @@ type diagnosticParserCoreGenericScheduler struct {
 	checkpointBeforeID         core.CheckpointID
 	checkpointID               core.CheckpointID
 	currentElection            DiagnosticParserCoreElection
+	tokenCell                  diagnosticParserCoreTokenCell
 	electionIndex              int
 	noLookaheadSteps           uint8
 	tokens                     uint64
@@ -5585,6 +5599,7 @@ func diagnosticParserCoreSchedulerFootprintBytes(s *diagnosticParserCoreGenericS
 	add(cap(s.acceptedPayloads), unsafe.Sizeof(core.SubtreeID(0)))
 	add(len(s.seedHeaders), unsafe.Sizeof(diagnosticParserCoreHeader{}))
 	add(len(s.corridorCells), unsafe.Sizeof(diagnosticParserCoreGenericCell{}))
+	add(1, unsafe.Sizeof(s.tokenCell))
 	if s.compact != nil {
 		coreBytes := s.compact.FootprintBytes()
 		if math.MaxUint64-total < coreBytes {
@@ -6010,6 +6025,10 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 					// from where this absorb actually left off, not from
 					// the shared token's own (now-stale) end.
 					s.tokenSource.SeekTokenFrontier(resumeToken.EndByte, resumeToken.EndPoint)
+					// The lexer moved without an election: the cell's elected
+					// token/checkpoints no longer describe the token source's
+					// position, so invalidate it rather than leave it stale.
+					s.tokenCell.valid = false
 				}
 				// Return this pass immediately: a header can only reach
 				// s3Region!=nil through s3TryOpenErrorRegion, which requires
@@ -6825,6 +6844,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericAccept(before []Diagn
 		return err
 	}
 	dispatchesBefore, workBefore, epochProgressBefore := s.dispatches, s.work, s.epochProgress
+	tokenCellBefore := s.tokenCell
 	roundsBefore := len(s.receipt.Rounds)
 	defer func() {
 		s.headerRollbackScratch.finish(&s.headers, err != nil)
@@ -6832,6 +6852,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericAccept(before []Diagn
 			return
 		}
 		s.dispatches, s.work, s.epochProgress = dispatchesBefore, workBefore, epochProgressBefore
+		s.tokenCell = tokenCellBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 	}()
 	return s.compact.ApplySchedulerAtomic(func(owner core.SchedulerTransactionToken) error {
@@ -7791,6 +7812,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReduction(before []Di
 	dispatchesBefore, nextSeqBefore := s.dispatches, s.nextSeq
 	nextCleanPathLineageBefore := s.nextCleanPathLineage
 	workBefore, epochProgressBefore := s.work, s.epochProgress
+	tokenCellBefore := s.tokenCell
 	roundsBefore := len(s.receipt.Rounds)
 	defer func() {
 		s.headerRollbackScratch.finish(&s.headers, err != nil)
@@ -7800,6 +7822,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReduction(before []Di
 		s.dispatches, s.nextSeq = dispatchesBefore, nextSeqBefore
 		s.nextCleanPathLineage = nextCleanPathLineageBefore
 		s.work, s.epochProgress = workBefore, epochProgressBefore
+		s.tokenCell = tokenCellBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 	}()
 	return s.compact.ApplySchedulerAtomic(func(owner core.SchedulerTransactionToken) error {
@@ -8358,6 +8381,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflict(before []Dia
 	dispatchesBefore, branchOrderBefore, nextSeqBefore := s.dispatches, s.branchOrder, s.nextSeq
 	nextCleanPathLineageBefore := s.nextCleanPathLineage
 	workBefore, epochProgressBefore := s.work, s.epochProgress
+	tokenCellBefore := s.tokenCell
 	roundsBefore, conflictsBefore := len(s.receipt.Rounds), len(s.receipt.Conflicts)
 	externalShiftsBefore := len(s.receipt.ExternalShifts)
 	defer func() {
@@ -8368,6 +8392,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflict(before []Dia
 		s.dispatches, s.branchOrder, s.nextSeq = dispatchesBefore, branchOrderBefore, nextSeqBefore
 		s.nextCleanPathLineage = nextCleanPathLineageBefore
 		s.work, s.epochProgress = workBefore, epochProgressBefore
+		s.tokenCell = tokenCellBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 		s.receipt.Conflicts = s.receipt.Conflicts[:conflictsBefore]
 		s.receipt.ExternalShifts = s.receipt.ExternalShifts[:externalShiftsBefore]
@@ -8560,6 +8585,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []Diagn
 		return err
 	}
 	dispatchesBefore, workBefore, epochProgressBefore := s.dispatches, s.work, s.epochProgress
+	tokenCellBefore := s.tokenCell
 	roundsBefore, externalBefore := len(s.receipt.Rounds), len(s.receipt.ExternalShifts)
 	defer func() {
 		s.headerRollbackScratch.finish(&s.headers, err != nil)
@@ -8567,6 +8593,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []Diagn
 			return
 		}
 		s.dispatches, s.work, s.epochProgress = dispatchesBefore, workBefore, epochProgressBefore
+		s.tokenCell = tokenCellBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 		s.receipt.ExternalShifts = s.receipt.ExternalShifts[:externalBefore]
 	}()
@@ -8673,6 +8700,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 		return err
 	}
 	dispatchesBefore, workBefore, epochProgressBefore := s.dispatches, s.work, s.epochProgress
+	tokenCellBefore := s.tokenCell
 	roundsBefore, externalShiftsBefore := len(s.receipt.Rounds), len(s.receipt.ExternalShifts)
 	defer func() {
 		s.headerRollbackScratch.finish(&s.headers, err != nil)
@@ -8680,6 +8708,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 			return
 		}
 		s.dispatches, s.work, s.epochProgress = dispatchesBefore, workBefore, epochProgressBefore
+		s.tokenCell = tokenCellBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 		s.receipt.ExternalShifts = s.receipt.ExternalShifts[:externalShiftsBefore]
 	}()
@@ -9087,6 +9116,15 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 	s.token = token
 	s.checkpoint = after
 	s.checkpointID = afterID
+	// tokenCell mirrors this election's freshly elected token identity for the
+	// forced-reuse tranche (substrate only; nothing reads it yet). state is
+	// the primary election state passed to SetParserState above;
+	// beforeCheckpoint/afterCheckpoint are the same interned checkpoint IDs
+	// just assigned to checkpointBeforeID/checkpointID.
+	s.tokenCell = diagnosticParserCoreTokenCell{
+		token: token, state: states[0], byteOffset: token.StartByte,
+		beforeCheckpoint: beforeID, afterCheckpoint: afterID, valid: true,
+	}
 	s.epochProgress = false
 	// Summary receipts read currentElection.States only within this round, so
 	// the reused scratch is safe. Full receipts retain the election, so clone

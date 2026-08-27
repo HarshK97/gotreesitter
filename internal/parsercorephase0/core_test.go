@@ -2764,7 +2764,7 @@ func TestActionRowDescriptorClassifiesImmutableRows(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			row := NewActionRow(test.actions)
+			row := NewActionRow(test.actions, false)
 			descriptor := row.Descriptor()
 			if descriptor.Kind() != test.kind || descriptor.HasShift() != test.hasShift || descriptor.HasReduce() != test.hasReduce {
 				t.Fatalf("descriptor=(kind=%v shift=%t reduce=%t), want (%v %t %t)", descriptor.Kind(), descriptor.HasShift(), descriptor.HasReduce(), test.kind, test.hasShift, test.hasReduce)
@@ -2779,6 +2779,42 @@ func TestActionRowDescriptorClassifiesImmutableRows(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestActionRowReusableCarriesLanguageTableBitUnchanged pins that NewActionRow's
+// reusable argument (Language.ParseActions[i].Reusable) round-trips through
+// Reusable() unchanged. This is substrate for a later forced-reuse tranche:
+// nothing reads Reusable() yet, and it does not affect Descriptor's dispatch
+// shape (describeActionRow never sees it; it is derived only from actions).
+func TestActionRowReusableCarriesLanguageTableBitUnchanged(t *testing.T) {
+	tests := []struct {
+		name     string
+		reusable bool
+	}{
+		{name: "reusable-true", reusable: true},
+		{name: "reusable-false", reusable: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			row := NewActionRow([]Action{{Type: ActionShift, State: 2}}, test.reusable)
+			if got := row.Reusable(); got != test.reusable {
+				t.Fatalf("row.Reusable() = %t, want %t", got, test.reusable)
+			}
+		})
+	}
+}
+
+// TestActionRowReusableZeroValueIsFalse pins that a zero-value ActionRow
+// (returned for an empty action list, matching NewActionRow's pre-existing
+// empty-row short circuit) reports Reusable() == false regardless of the
+// reusable argument, since the empty row never allocates actionRowData.
+func TestActionRowReusableZeroValueIsFalse(t *testing.T) {
+	if got := (ActionRow{}).Reusable(); got != false {
+		t.Fatalf("zero-value ActionRow.Reusable() = %t, want false", got)
+	}
+	if got := NewActionRow(nil, true).Reusable(); got != false {
+		t.Fatalf("NewActionRow(nil, true).Reusable() = %t, want false (empty row drops the bit)", got)
 	}
 }
 

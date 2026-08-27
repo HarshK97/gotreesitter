@@ -37,7 +37,7 @@ func (a gotreesitterTableAdapter) Actions(state core.StateID, symbol core.Symbol
 	if int(index) >= len(a.language.ParseActions) {
 		return core.ActionRow{}, errors.New("test adapter: action index out of range")
 	}
-	return core.NewActionRow(adaptActions(a.language.ParseActions[index].Actions)), nil
+	return core.NewActionRow(adaptActions(a.language.ParseActions[index].Actions), a.language.ParseActions[index].Reusable), nil
 }
 
 func actionRowValues(row core.ActionRow) []core.Action {
