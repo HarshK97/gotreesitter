@@ -125,6 +125,15 @@ func TestDiagnosticParserCoreSameSpanRelexRejectsTokenFieldChanges(t *testing.T)
 	}
 }
 
+// DiagnosticParserCoreSameSpanRelexForTest exposes diagnosticParserCoreSameSpanRelex
+// directly so the external test package can pin the same-span verifier's
+// own contract (F3) against a real, per-header relex a real grammar's raw
+// DFA produced (via RelexTokenForStateForTest), not just synthetic
+// hand-built tokens.
+func DiagnosticParserCoreSameSpanRelexForTest(shared, relexed Token) (Token, bool) {
+	return diagnosticParserCoreSameSpanRelex(shared, relexed)
+}
+
 // RelexTokenForStateForTest exposes relexTokenForState directly so the
 // external test package can pin the probe's own contract (D2-1 Phase 1
 // item 2) against a real witness, independent of dispatchPassActive's own
