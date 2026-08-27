@@ -542,7 +542,7 @@
       "expected": {
         "c_has_error": true,
         "production_has_error": true,
-        "compact_has_error": false
+        "compact_has_error": true
       }
     },
     {
@@ -569,7 +569,7 @@
       "expected": {
         "c_has_error": true,
         "production_has_error": true,
-        "compact_has_error": false
+        "compact_has_error": true
       }
     }
   ]

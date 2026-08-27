@@ -1017,6 +1017,14 @@ func (d *dfaTokenSource) SeekTokenFrontier(pos uint32, pt Point) {
 	d.lexer.normalizeIncludedPosition()
 }
 
+// tokensSameLex compares tokenization identity, not the lex path that
+// produced the token. isKeyword records the promotion path, so it must
+// not take part in a same-tokenization test.
+func tokensSameLex(a, b Token) bool {
+	a.isKeyword, b.isKeyword = false, false
+	return a == b
+}
+
 func (d *dfaTokenSource) PeekTokenFrontier(states []StateID, dst []tokenCandidate) (tokenFrontier, bool) {
 	dst = dst[:0]
 	if d == nil || d.lexer == nil || d.language == nil || d.lookupActionIndex == nil {
@@ -1098,7 +1106,7 @@ func (d *dfaTokenSource) PeekTokenFrontier(states []StateID, dst []tokenCandidat
 
 		merged := false
 		for i := range dst {
-			if dst[i].Tok == candTok && dst[i].EndPos == candEndPos && dst[i].EndRow == candEndRow && dst[i].EndCol == candEndCol {
+			if tokensSameLex(dst[i].Tok, candTok) && dst[i].EndPos == candEndPos && dst[i].EndRow == candEndRow && dst[i].EndCol == candEndCol {
 				dst[i].RouteMask |= routeMask
 				merged = true
 				break
@@ -1146,7 +1154,7 @@ func (d *dfaTokenSource) tokenFrontierRouteMask(states []StateID, tok Token, end
 
 func (d *dfaTokenSource) stateProducesTokenFrontierCandidate(state StateID, tok Token, endPos int, endRow, endCol uint32) bool {
 	stateTok, stateEndPos, stateEndRow, stateEndCol := d.scanPreferredTokenForState(state)
-	return stateTok == tok && stateEndPos == endPos && stateEndRow == endRow && stateEndCol == endCol
+	return tokensSameLex(stateTok, tok) && stateEndPos == endPos && stateEndRow == endRow && stateEndCol == endCol
 }
 
 // nextGLRUnionDFAToken tries each unique GLR stack state's lex mode and
@@ -1235,7 +1243,7 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 				continue
 			}
 			stateTok, stateEndPos, stateEndRow, stateEndCol := d.glrUnionScanForState(liveState)
-			if stateTok != candTok || stateEndPos != candEndPos || stateEndRow != candEndRow || stateEndCol != candEndCol {
+			if !tokensSameLex(stateTok, candTok) || stateEndPos != candEndPos || stateEndRow != candEndRow || stateEndCol != candEndCol {
 				continue
 			}
 			score++
@@ -2267,11 +2275,43 @@ func (p *Parser) contextualActionIndex(source []byte, state StateID, tok Token) 
 // reads an adjacent pair as one operator. Another live stack selected the
 // single close-angle prefix, so this stack must not consume that prefix.
 func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state StateID, tok Token) bool {
-	lang := p.language
-	if lang == nil || int(tok.Symbol) >= len(lang.SymbolNames) ||
-		lang.SymbolNames[tok.Symbol] != ">" ||
-		tok.EndByte != tok.StartByte+1 ||
-		tok.EndPoint.Row != tok.StartPoint.Row {
+	return deferContextualCloseAngleAction(p.language, source, state, tok, p.included, &p.relexProbeLexer)
+}
+
+// tokenMaybeContextualCloseAngle reports whether tok could possibly be the
+// narrow half of a contextual close-angle pair: a single ">" byte that does
+// not cross a line. This is exactly deferContextualCloseAngleAction's own
+// first guard, extracted so a caller that resolves its own state lazily
+// (dispatchCorridor's corridor pre-check, parsercore_c4_vm.go) can rule out
+// the common non-">"-token case before paying for that resolve, without a
+// second, independently-maintained copy of the shape check.
+// deferContextualCloseAngleAction is still the single source of truth for
+// the full predicate: it calls this helper for its own first guard rather
+// than re-deriving it.
+func tokenMaybeContextualCloseAngle(lang *Language, tok Token) bool {
+	if lang == nil || int(tok.Symbol) >= len(lang.SymbolNames) {
+		return false
+	}
+	return lang.SymbolNames[tok.Symbol] == ">" &&
+		tok.EndByte == tok.StartByte+1 &&
+		tok.EndPoint.Row == tok.StartPoint.Row
+}
+
+// deferContextualCloseAngleAction reports whether state's own lex mode reads
+// the bytes under tok as one wider close-angle operator that carries a real
+// parse action in state. When it does, a different, narrower-lexing route
+// already elected tok, and state must defer rather than consume tok's
+// prefix. The check is symbol-shape based (an adjacent run of `>` bytes),
+// not tied to any one language, so both the production stack route and the
+// compact admission route can share it. included and probe let the
+// production route reuse its own included-range handling and scratch
+// lexer; the compact callers (parsercore_c4_vm.go, parsercore_phase0_driver.go)
+// always pass included=nil and their own scratch lexer instead, because the
+// compact route declines any included-range parse outright before it ever
+// reaches here (admission_switch.go:208's own eligibility check) — there is
+// no included-range case for a compact caller to reuse.
+func deferContextualCloseAngleAction(lang *Language, source []byte, state StateID, tok Token, included []Range, probe *Lexer) bool {
+	if probe == nil || !tokenMaybeContextualCloseAngle(lang, tok) {
 		return false
 	}
 	start := int(tok.StartByte)
@@ -2284,7 +2324,6 @@ func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state Stat
 		return false
 	}
 
-	probe := &p.relexProbeLexer
 	*probe = Lexer{
 		states:          lang.LexStates,
 		asciiTable:      lang.LexAsciiTable(),
@@ -2295,25 +2334,30 @@ func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state Stat
 		immediateTokens: lang.ImmediateTokens,
 		zeroWidthTokens: lang.ZeroWidthTokens,
 	}
-	if len(p.included) != 0 && lang.ExternalScanner == nil && len(lang.ExternalSymbols) == 0 {
-		probe.setIncludedRanges(p.included)
+	if len(included) != 0 && lang.ExternalScanner == nil && len(lang.ExternalSymbols) == 0 {
+		probe.setIncludedRanges(included)
 	}
 	stateToken, ok := probe.scan(uint32(lexState), probe.pos, probe.row, probe.col)
 	if !ok || int(stateToken.Symbol) >= len(lang.SymbolNames) {
 		return false
 	}
 	stateTokenName := lang.SymbolNames[stateToken.Symbol]
-	if !isWideCloseAngleTokenName(stateTokenName) ||
-		stateToken.StartByte != tok.StartByte ||
-		!p.stateHasActionForSymbol(state, stateToken.Symbol) {
+	// Short-circuit order matches the pre-extraction code: the table lookup
+	// below only runs once the cheap shape checks (wide close-angle name,
+	// same start byte) already passed, not unconditionally on every call.
+	if !isWideCloseAngleTokenName(stateTokenName) || stateToken.StartByte != tok.StartByte {
+		return false
+	}
+	shiftIdx := lookupRepairActionIndex(lang, state, stateToken.Symbol)
+	stateHasShiftAction := shiftIdx != 0 && int(shiftIdx) < len(lang.ParseActions) && len(lang.ParseActions[shiftIdx].Actions) > 0
+	if !stateHasShiftAction {
 		return false
 	}
 	width := uint32(len(stateTokenName))
 	if stateToken.EndByte != tok.StartByte+width {
 		return false
 	}
-	closeIdx := p.lookupActionIndex(state, tok.Symbol)
-	shiftIdx := p.lookupActionIndex(state, stateToken.Symbol)
+	closeIdx := lookupRepairActionIndex(lang, state, tok.Symbol)
 	if closeIdx != 0 && closeIdx == shiftIdx && int(closeIdx) < len(lang.ParseActions) {
 		actions := lang.ParseActions[closeIdx].Actions
 		if len(actions) > 0 {
@@ -4607,6 +4651,7 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) (Token, bool) {
 		if !kwHasAction {
 			if altSym, ok := d.activeLiteralKeywordSymbol(tok); ok {
 				tok.Symbol = altSym
+				tok.isKeyword = true
 				return tok, false
 			}
 		}
@@ -4622,6 +4667,7 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) (Token, bool) {
 	}
 
 	tok.Symbol = kwTok.Symbol
+	tok.isKeyword = true
 	return tok, false
 }
 

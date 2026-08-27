@@ -299,6 +299,15 @@ func seedAdmissionRouteEqualityCorpus(f *testing.F, languages []admissionRouteEq
 	f.Add([]byte("a; # ; b"), langIndex["javascript"])
 	f.Add([]byte("<html> & <body>Hello</body></html>"), langIndex["html"])
 	f.Add([]byte("e \\ cho hi"), langIndex["bash"])
+
+	// Issue #983 pin: the shared token source splits Swift's ">>" into two
+	// ">" tokens. Production's contextualActionIndex defers the narrow ">"
+	// shift whenever the header's own lex mode reads the wider ">>" with a
+	// real action; the compact dispatch loop lacked that deferral and
+	// elected a clean derivation production declines
+	// (deferContextualCloseAngleAction, parser_dfa_token_source.go).
+	f.Add([]byte(" 0%0>>"), langIndex["swift"])
+	f.Add([]byte("0>>"), langIndex["swift"])
 }
 
 // routeEqualityTreeCarriesNativeRecoveryErrorContainer reports whether root's

@@ -1191,6 +1191,139 @@ func TestContextualActionDefersUnsignedShiftLineageAfterSingleCloseElection(t *t
 	}
 }
 
+// TestTokenMaybeContextualCloseAngleShapeGate pins tokenMaybeContextualCloseAngle,
+// the cheap, state-free shape pre-check extracted from
+// deferContextualCloseAngleAction's own first guard (finding F9): a
+// narrow, same-row, single ">" token passes; anything else fails.
+func TestTokenMaybeContextualCloseAngleShapeGate(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", ">", ">>"}}
+	sameRowNarrowClose := Token{
+		Symbol:     1,
+		StartByte:  4,
+		EndByte:    5,
+		StartPoint: Point{Row: 2, Column: 1},
+		EndPoint:   Point{Row: 2, Column: 2},
+	}
+
+	if !tokenMaybeContextualCloseAngle(lang, sameRowNarrowClose) {
+		t.Fatal("a same-row, single-byte \">\" token must pass the shape gate")
+	}
+	if tokenMaybeContextualCloseAngle(nil, sameRowNarrowClose) {
+		t.Fatal("a nil language must fail the shape gate")
+	}
+	if tokenMaybeContextualCloseAngle(lang, Token{Symbol: 99, StartByte: 0, EndByte: 1}) {
+		t.Fatal("a symbol outside the language's SymbolNames must fail the shape gate")
+	}
+	wideClose := sameRowNarrowClose
+	wideClose.Symbol = 2 // ">>"
+	if tokenMaybeContextualCloseAngle(lang, wideClose) {
+		t.Fatal("a token whose symbol name is not exactly \">\" must fail the shape gate")
+	}
+	wideSpan := sameRowNarrowClose
+	wideSpan.EndByte = sameRowNarrowClose.StartByte + 2
+	if tokenMaybeContextualCloseAngle(lang, wideSpan) {
+		t.Fatal("a \">\" token wider than one byte must fail the shape gate")
+	}
+	crossRow := sameRowNarrowClose
+	crossRow.EndPoint.Row++
+	if tokenMaybeContextualCloseAngle(lang, crossRow) {
+		t.Fatal("a \">\" token crossing a line must fail the shape gate")
+	}
+}
+
+// TestDeferContextualCloseAngleActionSharesShapeGateWithPreCheck pins the
+// single-source-of-truth property finding F9 requires: every shape
+// tokenMaybeContextualCloseAngle rejects must also make
+// deferContextualCloseAngleAction's own (identical) first guard return
+// false, so a caller that pre-checks with the extracted helper before
+// resolving its own state (dispatchCorridor, parsercore_c4_vm.go) never
+// disagrees with the full predicate it defers to.
+//
+// This uses the same "artifact_probe" language and state/source
+// TestContextualActionDefersUnsignedShiftLineageAfterSingleCloseElection
+// already proves triggers a real deferral (a well-formed narrow ">" token,
+// state 1, source ">>>") specifically so the language has real LexModes and
+// LexStates: with a language that has none (an earlier, weaker version of
+// this test used a bare &Language{SymbolNames: ...}), every rejected-shape
+// token also fails deferContextualCloseAngleAction's SEPARATE missing-lex-
+// mode guard, so the test cannot tell "declined because of the shared shape
+// gate" apart from "declined because of an unrelated missing-table guard" --
+// a regression that deleted the internal tokenMaybeContextualCloseAngle
+// call from deferContextualCloseAngleAction entirely could still pass it.
+// Each malformed variant below shares the valid token's state, source, and
+// start byte, so if the shared shape-gate call were ever removed, the
+// downstream logic would run to completion and return true for every one of
+// them (verified by mutation: deleting that call flips all three cases).
+func TestDeferContextualCloseAngleActionSharesShapeGateWithPreCheck(t *testing.T) {
+	lang := &Language{
+		Name:        "artifact_probe",
+		SymbolNames: []string{"end", ">", ">>>"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false, Named: false},
+			{Name: ">", Visible: true, Named: false},
+			{Name: ">>>", Visible: true, Named: false},
+		},
+		SymbolCount:     3,
+		TokenCount:      3,
+		StateCount:      2,
+		LargeStateCount: 2,
+		InitialState:    1,
+		LexStates: []LexState{
+			{Default: -1, EOF: -1},
+			{AcceptToken: 0, Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: '>', Hi: '>', NextState: 2}}},
+			{AcceptToken: 1, Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: '>', Hi: '>', NextState: 3}}},
+			{AcceptToken: 1, Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: '>', Hi: '>', NextState: 4}}},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 1},
+		},
+		ParseTable: [][]uint16{
+			{0, 0, 0},
+			{0, 1, 2},
+		},
+		ParseActions: []ParseActionEntry{
+			{Actions: nil},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+		},
+	}
+	const state = StateID(1)
+	source := []byte(">>>")
+	probe := &Lexer{}
+
+	// The valid, well-formed token this exact fixture defers for (sanity
+	// control: proves the fixture and probe are wired correctly).
+	valid := Token{Symbol: 1, StartByte: 0, EndByte: 1, StartPoint: Point{}, EndPoint: Point{Column: 1}}
+	if !tokenMaybeContextualCloseAngle(lang, valid) {
+		t.Fatal("the valid narrow \">\" token unexpectedly failed the shape gate")
+	}
+	if !deferContextualCloseAngleAction(lang, source, state, valid, nil, probe) {
+		t.Fatal("the valid narrow \">\" token unexpectedly did not defer")
+	}
+
+	rejectedShapes := []Token{
+		// wrong symbol name: same span as valid, but tagged as ">>>" (the
+		// wide token's own symbol), not ">".
+		{Symbol: 2, StartByte: 0, EndByte: 1, StartPoint: Point{}, EndPoint: Point{Column: 1}},
+		// width != 1: same start byte and symbol as valid, but spans two
+		// bytes instead of one.
+		{Symbol: 1, StartByte: 0, EndByte: 2, StartPoint: Point{}, EndPoint: Point{Column: 2}},
+		// crosses a row: same span and symbol as valid, but EndPoint reports
+		// a different row than StartPoint.
+		{Symbol: 1, StartByte: 0, EndByte: 1, StartPoint: Point{}, EndPoint: Point{Row: 1}},
+	}
+	for _, tok := range rejectedShapes {
+		if tokenMaybeContextualCloseAngle(lang, tok) {
+			t.Fatalf("token %+v unexpectedly passed the shape gate", tok)
+		}
+		if deferContextualCloseAngleAction(lang, source, state, tok, nil, probe) {
+			t.Fatalf("token %+v unexpectedly deferred despite failing the shared shape gate", tok)
+		}
+	}
+}
+
 func TestPromoteActiveLiteralDoesNotUndoContextualKeywordDemotion(t *testing.T) {
 	lang := &Language{
 		Name:                "javascript",
