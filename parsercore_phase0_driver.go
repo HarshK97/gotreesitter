@@ -59,6 +59,12 @@ type DiagnosticParserCorePrefixOptions struct {
 	// unbounded. The boundary is checked before another scanner election.
 	GenericStopAtClosedByte *uint32
 	ReceiptMode             DiagnosticParserCoreReceiptMode
+	// DisablePerHeaderSpanUnlockedRelex restores relexTokenForState's
+	// pre-D2-1 span-locked probe (only an exact-span relex is eligible; a
+	// relex whose EndByte differs from the shared election is declined the
+	// same way a scan failure is, never routed through the ragged-end
+	// decline). The zero value keeps the span-unlocked probe on.
+	DisablePerHeaderSpanUnlockedRelex bool
 	// recordDropCohortCertificates keeps the Slice C certificate stores inert
 	// until a focused authentic producer test enables the later activation.
 	recordDropCohortCertificates bool
@@ -3752,9 +3758,22 @@ const (
 )
 
 type diagnosticParserCoreGenericCell struct {
-	headerIndex              int
-	boundary                 core.ClassifiedBoundary
-	selectedOrdinal          int
+	headerIndex     int
+	boundary        core.ClassifiedBoundary
+	selectedOrdinal int
+	// relexedSymbol is the symbol a same-span per-header relex
+	// (diagnosticParserCoreSameSpanRelex) found for this header, or 0 when
+	// this header dispatches the shared election unchanged. Kept as just
+	// the Symbol, not the verified relex's full Token: diagnosticParserCoreGenericCell
+	// has a certified <=64-byte size cap
+	// (TestDiagnosticParserCoreClassifiedBoundaryAndReductionPlanShape) that
+	// a 72-byte Token field alone would blow past, and dispatchToken can
+	// reconstruct the exact same-span relexed token from the Symbol alone
+	// (diagnosticParserCoreSameSpanRelex already proved every other field
+	// matches the shared token, or is cleared, before returning true). A
+	// ragged-end relex (D2-1's other new shape, a different EndByte) never
+	// reaches a cell at all: dispatchPassActive declines that header
+	// fail-closed before cell construction.
 	relexedSymbol            Symbol
 	selectedBy               diagnosticParserCoreCellSelection
 	corridorTrustedReduction bool
@@ -3821,9 +3840,17 @@ func dropCohortSelectionClass(selected diagnosticParserCoreCellSelection) core.D
 	}
 }
 
-func diagnosticParserCoreRelexedSymbol(shared, relexed Token) (Symbol, bool) {
+// diagnosticParserCoreSameSpanRelex verifies a per-header relex that landed
+// on exactly the shared election's span (same StartByte and EndByte): the
+// only difference a same-span relex may legitimately carry is Symbol (and
+// the external-scanner/isKeyword bits, which are provenance of the shared
+// token's own lex path, not of tokenization identity). Every other field
+// must already match the shared token exactly; this checks that assumption
+// instead of trusting it. A different EndByte never reaches this function --
+// dispatchPassActive routes that shape to the ragged-end decline instead.
+func diagnosticParserCoreSameSpanRelex(shared, relexed Token) (Token, bool) {
 	if relexed.Symbol == 0 || relexed.Symbol == shared.Symbol {
-		return 0, false
+		return Token{}, false
 	}
 	candidate := shared
 	candidate.Symbol = relexed.Symbol
@@ -3837,9 +3864,9 @@ func diagnosticParserCoreRelexedSymbol(shared, relexed Token) (Symbol, bool) {
 	// produced it.
 	candidate.isKeyword = false
 	if candidate != relexed {
-		return 0, false
+		return Token{}, false
 	}
-	return relexed.Symbol, true
+	return relexed, true
 }
 
 var diagnosticParserCoreRepetitionFoldOptOut = map[string]bool{
@@ -3920,8 +3947,19 @@ func diagnosticParserCoreConflictPolicyOrdinal(
 	return 0, false
 }
 
-// relexTokenForState mirrors the production parser's span-exact lexer probe.
-// It gives one no-action header the tokenization required by its current state.
+// relexTokenForState mirrors production's per-stack lexer: each no-action
+// header re-lexes at its own byte position under its own current state's
+// lex mode, exactly like a live C stack version, instead of trusting the
+// shared election's tokenization. The probe accepts any genuine internal-
+// DFA token that starts where the shared election started; it may differ
+// in Symbol and/or EndByte/EndPoint from the shared token. The caller alone
+// decides what to do with a different EndByte (dispatchPassActive declines
+// that shape fail-closed instead of shifting it -- see the ragged-end
+// handling there); this probe only decides whether a same-start token
+// exists at all.
+//
+// DisablePerHeaderSpanUnlockedRelex restores the pre-D2-1 span-locked
+// probe: only an exact-span (same StartByte and EndByte) relex is eligible.
 func (s *diagnosticParserCoreGenericScheduler) relexTokenForState(state StateID, tok Token) (Token, bool) {
 	if s == nil || s.tokenSource == nil || s.tokenSource.lexer == nil {
 		return tok, false
@@ -3962,10 +4000,22 @@ func (s *diagnosticParserCoreGenericScheduler) relexTokenForState(state StateID,
 		zeroWidthTokens: lang.ZeroWidthTokens,
 	}
 	relexed, ok := probe.scan(uint32(lexState), probe.pos, probe.row, probe.col)
-	if !ok || relexed.Symbol == 0 || relexed.Symbol == tok.Symbol {
+	if !ok || relexed.Symbol == 0 {
 		return tok, false
 	}
-	if relexed.StartByte != tok.StartByte || relexed.EndByte != tok.EndByte {
+	// A genuine per-header relex must start exactly where the shared
+	// election started. A different start byte is a leading-skip
+	// differential (this header's own lex mode treats intervening bytes as
+	// extras the shared election did not skip) -- a distinct shape this
+	// slice does not own; leave that header on the ordinary no-action path.
+	if relexed.StartByte != tok.StartByte {
+		return tok, false
+	}
+	if relexed.Symbol == tok.Symbol && relexed.EndByte == tok.EndByte {
+		// True no-op: identical tokenization: nothing this probe can offer.
+		return tok, false
+	}
+	if s.options.DisablePerHeaderSpanUnlockedRelex && relexed.EndByte != tok.EndByte {
 		return tok, false
 	}
 	return relexed, true
@@ -5838,6 +5888,52 @@ func DiagnosticParserCoreContextualCloseAngleDeferralDetailForTest() string {
 	return diagnosticParserCoreContextualCloseAngleDeferralDetail
 }
 
+// diagnosticParserCoreRaggedRelexDeclineDetail is the decline detail prefix
+// for a no-action head whose own-mode per-header relex (relexTokenForState)
+// found a genuine internal-DFA token starting where the shared election
+// started but ending at a different byte (D2-1's ragged-end shape). This
+// scheduler shares one token source's byte cursor across every header in a
+// pass; shifting one header onto a wider or narrower span than every other
+// header sees would desynchronize that shared cursor, so this shape always
+// declines fail-closed instead of shifting -- never a guess. Kept distinct
+// from diagnosticParserCoreNoTableActionDetail and
+// diagnosticParserCoreContextualCloseAngleDeferralDetail so census,
+// receipts, and tests can tell the three shapes apart even though all three
+// share the Recovery boundary. The full decline detail appends the
+// offending relexed token's symbol and span (fmt.Sprintf), matching this
+// file's existing dynamic-detail pattern (e.g. "accepted-leaf-tiling-gap").
+const diagnosticParserCoreRaggedRelexDeclineDetail = "generic scheduler declined a per-header token with a different span"
+
+// DiagnosticParserCoreRaggedRelexDeclineDetailForTest exposes
+// diagnosticParserCoreRaggedRelexDeclineDetail so the external test package
+// can assert on the ragged-end decline's detail prefix without duplicating
+// the literal string.
+func DiagnosticParserCoreRaggedRelexDeclineDetailForTest() string {
+	return diagnosticParserCoreRaggedRelexDeclineDetail
+}
+
+// diagnosticParserCoreRaggedRelexDeclineDetailFor builds the full ragged-end
+// decline detail: the fixed prefix plus the offending relexed token's own
+// symbol and span, and the shared election's span it declined to widen or
+// narrow onto. A small standalone function so the exact format is directly
+// testable without driving a full multi-header dispatch pass.
+func diagnosticParserCoreRaggedRelexDeclineDetailFor(relexedWitness, shared Token) string {
+	return fmt.Sprintf(
+		"%s: relexed symbol=%d span=%d..%d shared span=%d..%d",
+		diagnosticParserCoreRaggedRelexDeclineDetail,
+		relexedWitness.Symbol, relexedWitness.StartByte, relexedWitness.EndByte,
+		shared.StartByte, shared.EndByte,
+	)
+}
+
+// DiagnosticParserCoreRaggedRelexDeclineDetailFormatForTest exposes
+// diagnosticParserCoreRaggedRelexDeclineDetailFor so the external test
+// package can assert on the exact ragged-end decline detail a given
+// (relexed, shared) token pair produces.
+func DiagnosticParserCoreRaggedRelexDeclineDetailFormatForTest(relexedWitness, shared Token) string {
+	return diagnosticParserCoreRaggedRelexDeclineDetailFor(relexedWitness, shared)
+}
+
 func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParserCoreGenericUnsupported, error) {
 	if err := s.dispatchScratch.begin(); err != nil {
 		return nil, err
@@ -5880,6 +5976,8 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 	scratchCells := s.dispatchScratch.cells
 	pausedNoActionHeads := 0
 	deferredNoActionHeads := 0
+	raggedRelexNoActionHeads := 0
+	var raggedRelexWitness Token // the first ragged-end relex this pass, for the decline detail
 	for index, header := range s.headers {
 		if header.shifted || header.accepted {
 			continue
@@ -6089,9 +6187,27 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			if len(s.headers) > 1 {
 				relexed, ok := s.relexTokenForState(state, s.token)
 				if ok {
-					relexedSymbol, ok = diagnosticParserCoreRelexedSymbol(s.token, relexed)
-					if ok {
-						cellToken = relexed
+					if relexed.EndByte != s.token.EndByte {
+						// Ragged end (D2-1): this header's own lex mode found a
+						// genuine internal-DFA token starting where the shared
+						// election started but ending at a different byte.
+						// Every header in this pass shares one token source's
+						// byte cursor; shifting only this header onto a wider
+						// or narrower span would desynchronize that cursor for
+						// every other header. Decline fail-closed instead of
+						// guessing -- excluded from the genuinely-empty-row
+						// classification and from s3TryOpenErrorRegion below,
+						// the same way a contextual close-angle deferral is.
+						if raggedRelexNoActionHeads == 0 {
+							raggedRelexWitness = relexed
+						}
+						raggedRelexNoActionHeads++
+						s.dispatchScratch.noActionIndices = append(s.dispatchScratch.noActionIndices, index)
+						continue
+					}
+					if verified, ok := diagnosticParserCoreSameSpanRelex(s.token, relexed); ok {
+						relexedSymbol = verified.Symbol
+						cellToken = verified
 						boundary, err = s.compact.ClassifyBoundary(header.head, core.Symbol(cellToken.Symbol))
 						if err != nil {
 							return nil, err
@@ -6209,24 +6325,28 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			return nil, s.dropGenericNoActionHeads(noActionIndices)
 		}
 		if len(noActionIndices) != 0 {
-			// pausedNoActionHeads == 0 && deferredNoActionHeads == 0 means
-			// every no-action head reached this point through a genuinely
-			// empty action row (no table action for the elected token), not
-			// through the unrelated group-election pause tracked by
-			// header.paused above, and not through the issue #983 contextual
-			// close-angle deferral tracked by deferredNoActionHeads above
-			// (that shape has a real, non-empty action row the header simply
-			// must not take this pass). That exact genuinely-empty shape is
-			// the error-entry point locked-C production pauses on for
-			// recovery (glr.go cPaused: "the stack hit a no-action point";
-			// the real-corpus matrix's 13 recovery-handoff rows trigger here
-			// with "the elected token has no table action at end-of-file").
-			// Publish the typed recovery boundary for that shape instead of
-			// the generic no-action boundary so census and receipts can tell
-			// a recovery handoff apart from an internal election pause. This
-			// is a dispatch classification only: both boundaries still
-			// decline and fall back to production unchanged (B3 stage S1).
-			if pausedNoActionHeads == 0 && deferredNoActionHeads == 0 {
+			// pausedNoActionHeads == 0 && deferredNoActionHeads == 0 &&
+			// raggedRelexNoActionHeads == 0 means every no-action head
+			// reached this point through a genuinely empty action row (no
+			// table action for the elected token), not through the
+			// unrelated group-election pause tracked by header.paused
+			// above, not through the issue #983 contextual close-angle
+			// deferral tracked by deferredNoActionHeads above, and not
+			// through the D2-1 ragged-end decline tracked by
+			// raggedRelexNoActionHeads below (both of those shapes have a
+			// real, non-empty action row -- or a real, differently-spanned
+			// token -- the header simply must not take this pass). That
+			// exact genuinely-empty shape is the error-entry point locked-C
+			// production pauses on for recovery (glr.go cPaused: "the stack
+			// hit a no-action point"; the real-corpus matrix's 13 recovery-
+			// handoff rows trigger here with "the elected token has no
+			// table action at end-of-file"). Publish the typed recovery
+			// boundary for that shape instead of the generic no-action
+			// boundary so census and receipts can tell a recovery handoff
+			// apart from an internal election pause. This is a dispatch
+			// classification only: every one of these boundaries still
+			// declines and falls back to production unchanged (B3 stage S1).
+			if pausedNoActionHeads == 0 && deferredNoActionHeads == 0 && raggedRelexNoActionHeads == 0 {
 				// B3 stage S3: attempt native strategy-2 recovery for the
 				// certified witness class instead of declining outright.
 				// Scoped to the sole-header, sole-no-action-head shape only
@@ -6248,6 +6368,25 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				return &diagnosticParserCoreGenericUnsupported{
 					boundary:    DiagnosticParserCoreRecovery,
 					detail:      diagnosticParserCoreNoTableActionDetail,
+					headerIndex: noActionIndices[0],
+				}, nil
+			}
+			if pausedNoActionHeads == 0 && deferredNoActionHeads == 0 {
+				// raggedRelexNoActionHeads > 0: at least one no-action head
+				// reached this point through the D2-1 ragged-end decline
+				// (relexTokenForState found a genuine, same-start relex
+				// whose EndByte differs from the shared election), not a
+				// genuinely empty action row and not the close-angle
+				// deferral. Never route a ragged-end header through
+				// s3TryOpenErrorRegion: like the close-angle deferral just
+				// above, the S3 resume path re-reads the raw table without
+				// this decline's own reasoning and could bounce forever.
+				// Keep the boundary class Recovery so routing is unchanged;
+				// the detail carries the offending relexed token's own
+				// symbol and span for census and receipts.
+				return &diagnosticParserCoreGenericUnsupported{
+					boundary:    DiagnosticParserCoreRecovery,
+					detail:      diagnosticParserCoreRaggedRelexDeclineDetailFor(raggedRelexWitness, s.token),
 					headerIndex: noActionIndices[0],
 				}, nil
 			}

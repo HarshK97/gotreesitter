@@ -4,7 +4,7 @@ package gotreesitter
 
 import "testing"
 
-func TestDiagnosticParserCoreRelexedSymbolReconstructsExactToken(t *testing.T) {
+func TestDiagnosticParserCoreSameSpanRelexReconstructsExactToken(t *testing.T) {
 	shared := Token{
 		Symbol:                   3,
 		Text:                     "token",
@@ -20,13 +20,13 @@ func TestDiagnosticParserCoreRelexedSymbolReconstructsExactToken(t *testing.T) {
 	relexed.ExternalScannerToken = false
 	relexed.ExternalScannerStartByte = 0
 
-	symbol, ok := diagnosticParserCoreRelexedSymbol(shared, relexed)
-	if !ok || symbol != relexed.Symbol {
-		t.Fatalf("relexed symbol = %d/%t, want %d/true", symbol, ok, relexed.Symbol)
+	verified, ok := diagnosticParserCoreSameSpanRelex(shared, relexed)
+	if !ok || verified != relexed {
+		t.Fatalf("verified token = %+v/%t, want %+v/true", verified, ok, relexed)
 	}
-	cell := diagnosticParserCoreGenericCell{relexedSymbol: symbol}
+	cell := diagnosticParserCoreGenericCell{relexedSymbol: verified.Symbol}
 	if got := cell.dispatchToken(shared); got != relexed {
-		t.Fatalf("reconstructed token = %+v, want %+v", got, relexed)
+		t.Fatalf("dispatched token = %+v, want %+v", got, relexed)
 	}
 }
 
@@ -80,7 +80,7 @@ func TestDispatchTokenPreservesIsKeywordWithoutRelexedSymbolOverride(t *testing.
 	}
 }
 
-func TestDiagnosticParserCoreRelexedSymbolRejectsTokenFieldChanges(t *testing.T) {
+func TestDiagnosticParserCoreSameSpanRelexRejectsTokenFieldChanges(t *testing.T) {
 	shared := Token{
 		Symbol:                   3,
 		Text:                     "token",
@@ -118,20 +118,61 @@ func TestDiagnosticParserCoreRelexedSymbolRejectsTokenFieldChanges(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			relexed := exact
 			test.change(&relexed)
-			if symbol, ok := diagnosticParserCoreRelexedSymbol(shared, relexed); ok || symbol != 0 {
-				t.Fatalf("relexed symbol = %d/%t, want 0/false; token=%+v", symbol, ok, relexed)
+			if verified, ok := diagnosticParserCoreSameSpanRelex(shared, relexed); ok || verified.Symbol != 0 {
+				t.Fatalf("verified token = %+v/%t, want zero/false; token=%+v", verified, ok, relexed)
 			}
 		})
 	}
 }
 
+// RelexTokenForStateForTest exposes relexTokenForState directly so the
+// external test package can pin the probe's own contract (D2-1 Phase 1
+// item 2) against a real witness, independent of dispatchPassActive's own
+// caller-side ragged-end decline (covered separately by
+// RunStateDependentRelexSchedulerForTest). checkpointLength only needs to
+// be non-zero for a language with an external scanner: the probe reads
+// nothing else from the checkpoint (Lexer.scan only needs DFA fields), so
+// any non-zero value satisfies the "this header owns checkpoint identity"
+// guard without a real serialized scanner snapshot.
+func RelexTokenForStateForTest(
+	lang *Language, source []byte, checkpointLength int,
+	options DiagnosticParserCorePrefixOptions, state StateID, tok Token,
+) (Token, bool) {
+	parser := NewParser(lang)
+	tokenSource := parser.acquireParserDFATokenSource(source)
+	if tokenSource == nil {
+		return Token{}, false
+	}
+	defer tokenSource.Close()
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		tokenSource: tokenSource,
+		checkpoint:  DiagnosticParserCoreScannerCheckpoint{Length: checkpointLength},
+		options:     options,
+	}
+	return scheduler.relexTokenForState(state, tok)
+}
+
 func RunStateDependentRelexSchedulerForTest(lang *Language, source []byte) (DiagnosticParserCoreGenericScheduler, error) {
+	return runStateDependentRelexSchedulerForTest(lang, source, false)
+}
+
+// RunStateDependentRelexSchedulerWithSpanUnlockedRelexDisabledForTest is
+// RunStateDependentRelexSchedulerForTest with
+// DisablePerHeaderSpanUnlockedRelex forced on, for the D2-1 gate test
+// (Phase 1 item 5: "when disabled, restore the span-locked behavior
+// exactly").
+func RunStateDependentRelexSchedulerWithSpanUnlockedRelexDisabledForTest(lang *Language, source []byte) (DiagnosticParserCoreGenericScheduler, error) {
+	return runStateDependentRelexSchedulerForTest(lang, source, true)
+}
+
+func runStateDependentRelexSchedulerForTest(lang *Language, source []byte, disablePerHeaderSpanUnlockedRelex bool) (DiagnosticParserCoreGenericScheduler, error) {
 	parser := NewParser(lang)
 	runner, err := newAdmissionCandidateRunner(parser)
 	if err != nil {
 		return DiagnosticParserCoreGenericScheduler{}, err
 	}
 	runner.options.ReceiptMode = DiagnosticParserCoreReceiptFull
+	runner.options.DisablePerHeaderSpanUnlockedRelex = disablePerHeaderSpanUnlockedRelex
 	tokenSource := parser.acquireParserDFATokenSource(source)
 	if tokenSource == nil {
 		return DiagnosticParserCoreGenericScheduler{}, nil
