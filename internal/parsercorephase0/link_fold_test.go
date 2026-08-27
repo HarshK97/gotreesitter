@@ -314,7 +314,7 @@ func TestDiagnosticShallowFoldKeepsDistinctClasses(t *testing.T) {
 	}
 }
 
-func TestDiagnosticShallowNonExactOuterEdgeDeclinesRecursiveInsertion(t *testing.T) {
+func TestDiagnosticShallowNonExactOuterEdgeUsesPrecedenceMaximum(t *testing.T) {
 	core, leftSeed := newDiagnosticShallowFoldCore(t, Limits{MaxDerivations: 4})
 	rightNode, err := core.appendNode(nodeRecord{state: 1, byteOffset: 10, pathCount: 1})
 	if err != nil {
@@ -335,8 +335,8 @@ func TestDiagnosticShallowNonExactOuterEdgeDeclinesRecursiveInsertion(t *testing
 	if leftState != rightState || leftByte != rightByte {
 		t.Fatalf("predecessor boundaries differ: left=(%d,%d) right=(%d,%d)", leftState, leftByte, rightState, rightByte)
 	}
-	left := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, startByte: 12, endByte: 17})
-	right := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, productionID: 7, startByte: 12, endByte: 17})
+	left := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, startByte: 12, endByte: 17, childSymbols: []Symbol{30}})
+	right := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, productionID: 7, startByte: 12, endByte: 17, childSymbols: []Symbol{31}})
 	key := core.boundaryKey(2, 17)
 	head, err := core.condense(key, linkInput{prev: leftSeed.Node, payload: left, scoreDelta: 1})
 	if err != nil {
@@ -346,12 +346,36 @@ func TestDiagnosticShallowNonExactOuterEdgeDeclinesRecursiveInsertion(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = core.condense(key, linkInput{prev: rightSeed.Node, payload: right, scoreDelta: 2}); err == nil || !strings.Contains(err.Error(), "shallow non-exact outer edge") {
+	beforeRecord, err := core.node(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newHead, err := core.condense(key, linkInput{prev: rightSeed.Node, payload: right, scoreDelta: 2})
+	if err != nil {
 		t.Fatalf("shallow non-exact outer edge error=%v", err)
 	}
+	if newHead == head {
+		t.Fatal("shallow non-exact outer edge did not publish the higher private maximum")
+	}
+	// Arena-global stats fields (Nodes, Links) grow with the new publication;
+	// the historical head's own path count and full node record must not move.
 	after, statErr := core.Stats(head)
-	if statErr != nil || after != before {
-		t.Fatalf("decline mutated core: before=%+v after=%+v err=%v", before, after, statErr)
+	if statErr != nil || after.CurrentExactPaths != before.CurrentExactPaths {
+		t.Fatalf("historical head path count changed: before=%+v after=%+v err=%v", before, after, statErr)
+	}
+	oldRecord, err := core.node(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *oldRecord != *beforeRecord {
+		t.Fatalf("historical head record changed: before=%+v after=%+v", *beforeRecord, *oldRecord)
+	}
+	newRecord, err := core.node(newHead.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldRecord.precedenceMax != 1 || newRecord.precedenceMax != 2 {
+		t.Fatalf("old/new precedence maxima=%d/%d, want 1/2", oldRecord.precedenceMax, newRecord.precedenceMax)
 	}
 }
 

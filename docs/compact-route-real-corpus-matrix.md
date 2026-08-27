@@ -1,8 +1,23 @@
 # Compact route real-corpus matrix
 
 Current evidence date: 2026-08-25.
-Current base commit: `e4557bac36ec1794922a1ecce9ca5772d31f1a31` from `main`.
-Current candidate base commit: `e4557bac36ec1794922a1ecce9ca5772d31f1a31`.
+Current base commit: `6dab5c9516c1372c87fa4ea08da1e155f9599dec` from `main`.
+Current candidate base commit: `6dab5c9516c1372c87fa4ea08da1e155f9599dec`.
+
+## Current compact-graduation matrix
+
+Evidence date: 2026-08-25.
+
+- Matrix totals: 64 PASS, 25 FALLBACK, and 8 SKIP.
+- Divergence and error rows: zero.
+- Execution: 49 sequential processes.
+- Corpus manifest SHA-256: `14e811c4c278570e795a4a79f387dd15c61ff20718e3430f2091fe386e35c92b`.
+- Haskell `small__Main.hs`: 260 bytes; source SHA-256
+  `c60b55de99836dacb00a0f2808835895132996a95d52304cefab548b8cbdef65`;
+  route `1/0`; one compact acceptance; recursive link-union work is non-zero;
+  production, compact, and locked-C deep SHA-256
+  `6e3806c54c39af93701157f87ac8ee9ef947108d66b7d6069d6908a4d5c71e9f`.
+- The `nodeRecord` is 32 bytes. The eight-link cap is unchanged.
 
 ## Latest Swift issue #576 parser recovery candidate
 

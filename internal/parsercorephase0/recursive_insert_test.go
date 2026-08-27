@@ -897,13 +897,13 @@ func TestRecursiveInsertExactExternalRollback(t *testing.T) {
 func TestRecursiveInsertDeclinesSelfAndAncestry(t *testing.T) {
 	core := newTinyCoreWithLimits(t, Limits{})
 	seed, _ := core.Seed(1, 0)
-	if _, _, err := core.mergePredecessorsBounded(seed.Node, seed.Node, 0); err == nil || !strings.Contains(err.Error(), "self-merge") {
+	if _, _, err := core.mergePredecessorsBounded(seed.Node, seed.Node, 0, &precedenceMaximumWitness{}); err == nil || !strings.Contains(err.Error(), "self-merge") {
 		t.Fatalf("self merge error=%v", err)
 	}
 	payload := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, endByte: 1})
 	rightID, _ := core.appendNode(nodeRecord{state: 7, byteOffset: 1, pathCount: 1})
 	leftID, _ := core.appendAdjacencyNode(7, 1, []linkRecord{{prev: rightID, payload: payload}})
-	if _, _, err := core.mergePredecessorsBounded(leftID, rightID, 0); err == nil || !strings.Contains(err.Error(), "ancestry-related") {
+	if _, _, err := core.mergePredecessorsBounded(leftID, rightID, 0, &precedenceMaximumWitness{}); err == nil || !strings.Contains(err.Error(), "ancestry-related") {
 		t.Fatalf("ancestry merge error=%v", err)
 	}
 }

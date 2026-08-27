@@ -14,6 +14,7 @@ type linkProvenanceFixture struct {
 	rangeValue LinkRange
 	refs       []DropCohortRef
 	action     Action
+	payload    SubtreeID
 	nodes      []NodeID
 }
 
@@ -35,8 +36,12 @@ func newLinkProvenanceFixture(t *testing.T, maxLinksPerBoundary uint32) linkProv
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstLink := core.appendGraphLink(linkRecord{prev: firstNode})
-	secondLink := core.appendGraphLink(linkRecord{prev: secondNode, next: firstLink})
+	payload := appendShallowPayload(t, core, shallowPayloadSpec{
+		symbol: 20, productionID: action.ProductionID, startByte: 0, endByte: 1,
+		childSymbols: []Symbol{30},
+	})
+	firstLink := core.appendGraphLink(linkRecord{prev: firstNode, payload: payload})
+	secondLink := core.appendGraphLink(linkRecord{prev: secondNode, payload: payload, next: firstLink})
 	boundary, err := core.ClassifyBoundary(Head{Node: firstNode}, 9)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +72,7 @@ func newLinkProvenanceFixture(t *testing.T, maxLinksPerBoundary uint32) linkProv
 	core.dropCohortCertificateRefs = append(core.dropCohortCertificateRefs, refs...)
 	return linkProvenanceFixture{
 		core: core, boundary: boundary, descriptor: boundary.actions.Descriptor(), plan: plan,
-		rangeValue: LinkRange{First: secondLink, Count: 2}, refs: refs, action: action,
+		rangeValue: LinkRange{First: secondLink, Count: 2}, refs: refs, action: action, payload: payload,
 		nodes: []NodeID{firstNode, secondNode},
 	}
 }
@@ -87,6 +92,7 @@ func TestLinkProvenanceDefaultOffAndAccounting(t *testing.T) {
 		t.Fatal("new core allocated link provenance sidecar")
 	}
 	want := uint64(len(core.nodes))*coreNodeRecordBytes + uint64(len(core.links))*coreLinkRecordBytes +
+		uint64(len(core.subtrees))*coreSubtreeRecordBytes + uint64(len(core.children))*coreChildRecordBytes +
 		uint64(len(core.dropCohortRecords))*coreDropCohortRecordBytes +
 		uint64(len(core.dropCohortMembers))*coreDropCohortMemberBytes +
 		uint64(len(core.dropCohortCertificateRefs))*coreDropCohortRefBytes
@@ -300,7 +306,7 @@ func TestReductionOutputCarriesAuthenticatedLinkChain(t *testing.T) {
 func TestReductionLinkChainHandoffPreservesNoncontiguousIDs(t *testing.T) {
 	fixture := newLinkProvenanceFixture(t, 8)
 	chainLink := fixture.core.appendGraphLink(linkRecord{
-		prev: fixture.nodes[0], next: fixture.rangeValue.First - 1,
+		prev: fixture.nodes[0], payload: fixture.payload, next: fixture.rangeValue.First - 1,
 	})
 	nodeID, err := fixture.core.appendNode(nodeRecord{
 		state: 3, byteOffset: 2, firstLink: uint32(chainLink), linkCount: 2, pathCount: 1,

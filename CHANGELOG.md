@@ -115,6 +115,27 @@ for tags and release notes while still in `0.x`.
   locked-C trees.
   The change grants no language profile or digest grant.
 
+- Added a stored cumulative maximum for dynamic precedence, which ranks
+  competing parse paths. Each node keeps C's running value. Merge
+  transactions seed the fold from that stored value and apply the C rule
+  table from `stack_node_add_link`: a same-pair assignment overwrites the
+  value and can lower it, mergeable and appended links max the incoming
+  predecessor's stored value plus the payload contribution, and duplicate
+  or lower same-pair links change nothing. Publication never recomputes
+  the value from the final link array. Leaf payloads contribute zero. The
+  rule-table tests in `internal/parsercorephase0/precedence_rule_table_test.go`
+  pin one case per C branch. The canonical real-corpus ratchet now pins
+  69 PASS and at most 30 FALLBACK over 109 rows. The `nodeRecord` grows
+  from 24 to 32 bytes. The Haskell small
+  `Main.hs` row has 260 bytes and source SHA-256
+  `c60b55de99836dacb00a0f2808835895132996a95d52304cefab548b8cbdef65`.
+  It routes with counters `1/0` and real recursive link-union work. Production,
+  compact, and locked C report deep digest
+  `6e3806c54c39af93701157f87ac8ee9ef947108d66b7d6069d6908a4d5c71e9f`.
+  The matrix moves from 63 PASS, 26 FALLBACK, and 8 SKIP to 64 PASS,
+  25 FALLBACK, and 8 SKIP, with zero DIVERGE or ERROR rows. The eight-link
+  cap remains. No language profile or grammar digest grant was added.
+
 - Raw accepted-leaf coverage now preserves hidden terminals and exact `ERROR`
   provenance with bounded reusable scratch and cancellation polling. The
   authenticated matrix moves from 60 PASS, 29 FALLBACK, and 8 SKIP to 62 PASS,
