@@ -448,15 +448,25 @@ type nodeRecord struct {
 	precedenceMax int64
 }
 
-// precedenceCandidate is a recomputed precedence value. It never crosses a
-// publication boundary without the link that authenticated it.
+// precedenceCandidate is a computed precedence value. It carries no
+// verification of its own; the fold rules in precedenceMaximumWitness and
+// their C sources (stack.c stack_node_add_link) are the model it comes from.
 type precedenceCandidate struct {
 	value int64
 }
 
-// precedenceMaximumWitness stores authenticated discarded link provenance.
-// Publication recomputes each stored link against its immutable predecessor.
+// precedenceMaximumWitness folds C's per-node dynamic_precedence running
+// value across one bounded merge transaction. seed carries the mutated
+// node's stored value (C's self->dynamic_precedence before the transaction);
+// replacement models the C same-pair assignment, which overwrites the
+// running value and can lower it; discarded and postReplacement each hold
+// the highest max-rule contribution observed before and after the last
+// assignment. Publication folds seed, assignment, and contributions in that
+// order; it never recomputes from the final link array, because C never
+// does.
 type precedenceMaximumWitness struct {
+	seed               int64
+	hasSeed            bool
 	discarded          linkRecord
 	hasDiscarded       bool
 	replacement        linkRecord
@@ -828,6 +838,47 @@ func (c *Core) computePrecedenceMaximumFromNode(r nodeRecord, folded precedenceM
 }
 
 func (c *Core) computePrecedenceMaximum(links []linkRecord, folded precedenceMaximumWitness) (precedenceCandidate, error) {
+	// A seeded witness folds C's stored running value: start from the mutated
+	// node's stored maximum, let the last same-pair assignment overwrite it,
+	// and max in the contributions observed around that assignment. The final
+	// link array plays no part, matching stack_node_add_link, which never
+	// recomputes self->dynamic_precedence from the link set.
+	if folded.hasSeed {
+		maximum := precedenceCandidate{value: folded.seed}
+		if folded.hasReplacement {
+			replacement, err := c.linkPrecedenceMaximum(folded.replacement)
+			if err != nil {
+				return precedenceCandidate{}, err
+			}
+			matched := false
+			for _, link := range links {
+				if link.prev == folded.replacement.prev && c.linkEdgesEqual(link, folded.replacement) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return precedenceCandidate{}, errors.New("parser-core phase zero: replacement witness is not present in final adjacency")
+			}
+			maximum = replacement
+			if folded.hasPostReplacement {
+				postReplacement, err := c.linkPrecedenceMaximum(folded.postReplacement)
+				if err != nil {
+					return precedenceCandidate{}, err
+				}
+				if postReplacement.value > maximum.value {
+					maximum = postReplacement
+				}
+			}
+			return maximum, nil
+		}
+		if discarded, ok, err := c.discardedPrecedenceMaximum(folded); err != nil {
+			return precedenceCandidate{}, err
+		} else if ok && discarded.value > maximum.value {
+			maximum = discarded
+		}
+		return maximum, nil
+	}
 	var maximum precedenceCandidate
 	haveMaximum := false
 	for _, link := range links {
@@ -3678,16 +3729,19 @@ func (c *Core) factorExactPredecessorMerge(key boundaryKey, probe boundaryProbe,
 		}
 		return condenseOutcome{}, true, mergeErr
 	}
-	// The nested merge already authenticated and published its maximum on the
-	// merged predecessor. Recompute the outer edge exactly once. Do not carry
-	// nested discarded or replacement records into the outer adjacency.
-	*folded = precedenceMaximumWitness{}
+	// The nested merge already published its own maximum on the merged
+	// predecessor. The boundary node folds separately: C rule 3 maxes the
+	// boundary's stored value with the INCOMING predecessor's stored value
+	// plus the payload contribution (stack.c:237-243 reads link.node, which
+	// the recursion never mutates). Do not carry nested discarded or
+	// replacement records into the outer adjacency.
 	oldMaximum, mergeErr := c.nodePrecedenceMaximum(oldID)
 	if mergeErr != nil {
 		return condenseOutcome{}, true, mergeErr
 	}
+	*folded = precedenceMaximumWitness{seed: oldMaximum.value, hasSeed: true}
 	outerDiscarded := linkRecord{
-		prev: merged, payload: in.payload, scoreDelta: in.scoreDelta,
+		prev: in.prev, payload: in.payload, scoreDelta: in.scoreDelta,
 	}
 	if in.order.Present {
 		outerDiscarded.order = in.order.Value
@@ -3762,7 +3816,9 @@ func (c *Core) mergePredecessorsBounded(leftID, rightID NodeID, depth int, folde
 	if err != nil {
 		return 0, false, err
 	}
-	*folded = precedenceMaximumWitness{}
+	// The merge mutates the left node in C terms, so the fold starts from the
+	// left node's stored running value (stack_node_add_link's self).
+	*folded = precedenceMaximumWitness{seed: leftMaximum.value, hasSeed: true}
 	leftCheckpoint, leftExact := c.nodeScannerCheckpoint(leftID)
 	rightCheckpoint, rightExact := c.nodeScannerCheckpoint(rightID)
 	if left.state != right.state || left.byteOffset != right.byteOffset ||
@@ -3800,8 +3856,8 @@ func (c *Core) mergePredecessorsBounded(leftID, rightID NodeID, depth int, folde
 		return leftID, false, nil
 	}
 	// C updates the containing node's maximum even when the incoming edge is
-	// shallow-equivalent and the link set stays unchanged. Recompute the final
-	// links and every authenticated discarded link before making that decision.
+	// shallow-equivalent and the link set stays unchanged. Fold the stored
+	// seed with the observed rule contributions before making that decision.
 	maximum, err := c.computePrecedenceMaximum(links, *folded)
 	if err != nil {
 		return 0, false, err
@@ -3836,6 +3892,10 @@ func (c *Core) insertLinkBounded(state StateID, byteOffset uint32, links []linkR
 		return nil, false, err
 	}
 	if len(links) == 0 {
+		if err := c.observeDiscardedLink(folded, incoming); err != nil {
+			c.recordLinkUnionRejected()
+			return nil, false, err
+		}
 		return append(slices.Clone(links), incoming), true, nil
 	}
 	c.recordLinkUnionAttempt()
@@ -3859,10 +3919,8 @@ func (c *Core) insertLinkBounded(state StateID, byteOffset uint32, links []linkR
 			return nil, false, errors.New("parser-core phase zero: recursive insertion declined inexact external payload provenance")
 		}
 		if c.linkRecordsEqual(incumbent, incoming) {
-			if err := c.observeDiscardedLink(folded, incoming); err != nil {
-				c.recordLinkUnionRejected()
-				return nil, false, err
-			}
+			// C rule 2: an exact duplicate performs no update at all
+			// (stack.c:225), so the fold observes nothing.
 			c.recordLinkUnionDuplicateNoop()
 			if phase0AEnabled {
 				phase0AMergeDecision(c, index, phase0ATransitionDuplicateDrop)
@@ -3889,20 +3947,17 @@ func (c *Core) insertLinkBounded(state StateID, byteOffset uint32, links []linkR
 				return nil, false, err
 			}
 			if incomingPrecedence <= incumbentPrecedence {
-				if err := c.observeDiscardedLink(folded, incoming); err != nil {
-					c.recordLinkUnionRejected()
-					return nil, false, err
-				}
+				// C rule 2: a same-pair link that does not raise the subtree
+				// precedence performs no update (stack.c:225).
 				c.recordLinkUnionDuplicateNoop()
 				if phase0AEnabled {
 					phase0AMergeDecision(c, index, phase0ATransitionPrecedenceDrop)
 				}
 				return links, false, nil
 			}
-			if err := c.observeDiscardedLink(folded, incumbent); err != nil {
-				c.recordLinkUnionRejected()
-				return nil, false, err
-			}
+			// C rule 1: the assignment overwrites the running value
+			// (stack.c:222-223), so the incumbent's value is discarded, not
+			// recorded, and any post-assignment contributions start fresh.
 			updated := slices.Clone(links)
 			updated[index] = incoming
 			folded.replacement = incoming
@@ -3958,29 +4013,18 @@ func (c *Core) insertLinkBounded(state StateID, byteOffset uint32, links []linkR
 			phase0AObserveAdjacencyPublished(c, merged)
 			phase0AMergeRecursiveDecision(c, index, merged)
 		}
-		mergedMaximum, err := c.nodePrecedenceMaximum(merged)
-		if err != nil {
+		// C rule 3 runs whether or not the recursion changed the incumbent
+		// predecessor: it maxes the containing node with the INCOMING
+		// predecessor's stored value plus the payload contribution
+		// (stack.c:237-243 reads link.node, which the recursion never
+		// mutates). The published link points at the merged predecessor, but
+		// the fold contribution does not.
+		if err := c.observeDiscardedLink(folded, incoming); err != nil {
 			c.recordLinkUnionRejected()
 			return nil, false, err
-		}
-		contribution, err := c.effectivePayloadPrecedence(incoming.payload, incoming.scoreDelta)
-		if err != nil {
-			c.recordLinkUnionRejected()
-			return nil, false, err
-		}
-		_, err = checkedAddScore(mergedMaximum.value, contribution)
-		if err != nil {
-			c.recordLinkUnionRejected()
-			return nil, false, errors.New("parser-core phase zero: precedence maximum overflow")
 		}
 		updated := slices.Clone(links)
 		updated[index].prev = merged
-		if folded.hasReplacement {
-			if err := c.observePostReplacementLink(folded, updated[index]); err != nil {
-				c.recordLinkUnionRejected()
-				return nil, false, err
-			}
-		}
 		c.recordLinkUnionRecursiveChanged()
 		return updated, true, nil
 	}
@@ -3988,11 +4032,12 @@ func (c *Core) insertLinkBounded(state StateID, byteOffset uint32, links []linkR
 		c.recordLinkUnionRejected()
 		return nil, false, &LiveLinkCapacityError{State: state, ByteOffset: byteOffset, ObservedLinks: uint64(len(links)) + 1, Limit: c.limits.MaxLinksPerBoundary}
 	}
-	if folded.hasReplacement {
-		if err := c.observePostReplacementLink(folded, incoming); err != nil {
-			c.recordLinkUnionRejected()
-			return nil, false, err
-		}
+	// C rule 5: an appended link maxes its contribution into the running
+	// value (stack.c:253-263). The seeded fold no longer recomputes from the
+	// final adjacency, so every append observes its contribution here.
+	if err := c.observeDiscardedLink(folded, incoming); err != nil {
+		c.recordLinkUnionRejected()
+		return nil, false, err
 	}
 	c.recordLinkUnionAlternateAppended()
 	if phase0AEnabled {
@@ -4274,9 +4319,12 @@ func (c *Core) appendAdjacencyNodeAt(state StateID, byteOffset uint32, checkpoin
 	return c.appendAdjacencyNodeAtWithPrecedence(state, byteOffset, checkpoint, links, precedenceMaximumWitness{})
 }
 
-// appendAdjacencyNodeAtWithPrecedence authenticates the complete final link
-// slice before it appends any link. folded is private and is built only from
-// checked predecessor records and discarded incoming links.
+// appendAdjacencyNodeAtWithPrecedence publishes an adjacency with its folded
+// precedence maximum. A seeded witness carries C's stored running value
+// through a merge transaction; an unseeded witness computes a fresh node's
+// value from its link contributions, matching stack_node_new plus appends.
+// Neither shape verifies the value against outside evidence; the C rule
+// table in the precedence rule-table tests is the behavioral contract.
 func (c *Core) appendAdjacencyNodeAtWithPrecedence(state StateID, byteOffset uint32, checkpoint CheckpointID, links []linkRecord, folded precedenceMaximumWitness) (NodeID, error) {
 	if len(links) == 0 {
 		return 0, errors.New("parser-core phase zero: recursive insertion produced empty adjacency")

@@ -346,6 +346,10 @@ func TestDiagnosticShallowNonExactOuterEdgeUsesPrecedenceMaximum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	beforeRecord, err := core.node(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
 	newHead, err := core.condense(key, linkInput{prev: rightSeed.Node, payload: right, scoreDelta: 2})
 	if err != nil {
 		t.Fatalf("shallow non-exact outer edge error=%v", err)
@@ -353,6 +357,8 @@ func TestDiagnosticShallowNonExactOuterEdgeUsesPrecedenceMaximum(t *testing.T) {
 	if newHead == head {
 		t.Fatal("shallow non-exact outer edge did not publish the higher private maximum")
 	}
+	// Arena-global stats fields (Nodes, Links) grow with the new publication;
+	// the historical head's own path count and full node record must not move.
 	after, statErr := core.Stats(head)
 	if statErr != nil || after.CurrentExactPaths != before.CurrentExactPaths {
 		t.Fatalf("historical head path count changed: before=%+v after=%+v err=%v", before, after, statErr)
@@ -360,6 +366,9 @@ func TestDiagnosticShallowNonExactOuterEdgeUsesPrecedenceMaximum(t *testing.T) {
 	oldRecord, err := core.node(head.Node)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if *oldRecord != *beforeRecord {
+		t.Fatalf("historical head record changed: before=%+v after=%+v", *beforeRecord, *oldRecord)
 	}
 	newRecord, err := core.node(newHead.Node)
 	if err != nil {

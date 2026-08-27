@@ -115,10 +115,18 @@ for tags and release notes while still in `0.x`.
   locked-C trees.
   The change grants no language profile or digest grant.
 
-- Added an authenticated cumulative maximum for dynamic precedence, which
-  ranks competing parse paths. Leaf payloads contribute zero. Discarded and
-  replacement edges preserve C operation order. Outer edges recompute nested
-  maxima once. The `nodeRecord` grows from 24 to 32 bytes. The Haskell small
+- Added a stored cumulative maximum for dynamic precedence, which ranks
+  competing parse paths. Each node keeps C's running value. Merge
+  transactions seed the fold from that stored value and apply the C rule
+  table from `stack_node_add_link`: a same-pair assignment overwrites the
+  value and can lower it, mergeable and appended links max the incoming
+  predecessor's stored value plus the payload contribution, and duplicate
+  or lower same-pair links change nothing. Publication never recomputes
+  the value from the final link array. Leaf payloads contribute zero. The
+  rule-table tests in `internal/parsercorephase0/precedence_rule_table_test.go`
+  pin one case per C branch. The canonical real-corpus ratchet now pins
+  69 PASS and at most 30 FALLBACK over 109 rows. The `nodeRecord` grows
+  from 24 to 32 bytes. The Haskell small
   `Main.hs` row has 260 bytes and source SHA-256
   `c60b55de99836dacb00a0f2808835895132996a95d52304cefab548b8cbdef65`.
   It routes with counters `1/0` and real recursive link-union work. Production,
