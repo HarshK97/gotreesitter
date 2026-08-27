@@ -31,7 +31,7 @@ func TestDiagnosticParserCoreGenericRepetitionFoldMatchesProductionScope(t *test
 	actions := core.NewActionRow([]core.Action{
 		{Type: core.ActionShift, State: 2, Repetition: true},
 		{Type: core.ActionReduce, Symbol: 4},
-	})
+	}, false)
 	if ordinal, ok := diagnosticParserCoreRepetitionFoldOrdinal(&Language{Name: "bash"}, actions); !ok || ordinal != 1 {
 		t.Fatalf("bash repetition fold ordinal=%d ok=%t, want 1 true", ordinal, ok)
 	}
@@ -45,16 +45,16 @@ func TestDiagnosticParserCoreGenericRepetitionFoldMatchesProductionScope(t *test
 		t.Fatal("nil-language repetition fold was admitted")
 	}
 	malformed := []core.ActionRow{
-		core.NewActionRow([]core.Action{{Type: core.ActionShift, State: 2, Repetition: true}}),
+		core.NewActionRow([]core.Action{{Type: core.ActionShift, State: 2, Repetition: true}}, false),
 		core.NewActionRow([]core.Action{
 			{Type: core.ActionShift, State: 2},
 			{Type: core.ActionReduce, Symbol: 4},
-		}),
+		}, false),
 		core.NewActionRow([]core.Action{
 			{Type: core.ActionShift, State: 2, Repetition: true},
 			{Type: core.ActionReduce, Symbol: 4},
 			{Type: core.ActionReduce, Symbol: 5},
-		}),
+		}, false),
 	}
 	for index, row := range malformed {
 		if _, ok := diagnosticParserCoreRepetitionFoldOrdinal(&Language{Name: "bash"}, row); ok {
@@ -292,7 +292,7 @@ func TestDiagnosticParserCoreGenericConflictPolicyRequiresExactRow(t *testing.T)
 	actions := core.NewActionRow([]core.Action{
 		{Type: core.ActionShift, State: 3, Repetition: true},
 		{Type: core.ActionReduce, Symbol: 4},
-	})
+	}, false)
 	language := &Language{
 		Name: "haskell",
 		ConflictPolicies: []ConflictPolicy{{
@@ -360,7 +360,7 @@ func TestDiagnosticParserCoreDescriptorPreservesUnsupportedOrdinalOrdering(t *te
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			row := core.NewActionRow(test.actions)
+			row := core.NewActionRow(test.actions, false)
 			if got := row.Descriptor().Kind(); got != core.ActionRowUnsupported {
 				t.Fatalf("descriptor=%v, want unsupported", got)
 			}
@@ -383,7 +383,7 @@ func TestDiagnosticParserCoreDescriptorAdmitsZeroWidthOrdinaryShift(t *testing.T
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			row := core.NewActionRow(test.actions)
+			row := core.NewActionRow(test.actions, false)
 			if unsupported := diagnosticParserCoreGenericUnsupportedCell(0, token, row); unsupported != nil {
 				t.Fatalf("zero-width ordinary shift declined: %+v", unsupported)
 			}
@@ -497,10 +497,10 @@ type genericConflictTable struct {
 
 func (t *genericConflictTable) Actions(state core.StateID, symbol core.Symbol) (core.ActionRow, error) {
 	if actions := t.cells[genericConflictCell{state: state, symbol: symbol}]; actions != nil {
-		return core.NewActionRow(actions), nil
+		return core.NewActionRow(actions, false), nil
 	}
 	if state == 1 && symbol == 9 {
-		return core.NewActionRow(t.actions), nil
+		return core.NewActionRow(t.actions, false), nil
 	}
 	return core.ActionRow{}, nil
 }

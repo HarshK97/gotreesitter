@@ -521,7 +521,7 @@ func (t *corridorTables) row(state StateID, sym Symbol) (core.ActionRow, uint16,
 			return core.ActionRow{}, idx, err
 		}
 	}
-	return core.NewActionRow(converted), idx, nil
+	return core.NewActionRow(converted, entry.Reusable), idx, nil
 }
 
 // externalState reports whether the state's external-token row is non-empty,

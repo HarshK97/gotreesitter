@@ -169,8 +169,8 @@ func TestParserCoreSameLookaheadGuardsDeclineBeforeMutation(t *testing.T) {
 		token   Token
 		actions core.ActionRow
 	}{
-		{name: "no-lookahead", token: Token{NoLookahead: true}, actions: core.NewActionRow([]core.Action{{Type: core.ActionShift, State: 2}})},
-		{name: "repetition", actions: core.NewActionRow([]core.Action{{Type: core.ActionShift, State: 2, Repetition: true}})},
+		{name: "no-lookahead", token: Token{NoLookahead: true}, actions: core.NewActionRow([]core.Action{{Type: core.ActionShift, State: 2}}, false)},
+		{name: "repetition", actions: core.NewActionRow([]core.Action{{Type: core.ActionShift, State: 2, Repetition: true}}, false)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
