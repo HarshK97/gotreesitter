@@ -2267,8 +2267,20 @@ func (p *Parser) contextualActionIndex(source []byte, state StateID, tok Token) 
 // reads an adjacent pair as one operator. Another live stack selected the
 // single close-angle prefix, so this stack must not consume that prefix.
 func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state StateID, tok Token) bool {
-	lang := p.language
-	if lang == nil || int(tok.Symbol) >= len(lang.SymbolNames) ||
+	return deferContextualCloseAngleAction(p.language, source, state, tok, p.included, &p.relexProbeLexer)
+}
+
+// deferContextualCloseAngleAction reports whether state's own lex mode reads
+// the bytes under tok as one wider close-angle operator that carries a real
+// parse action in state. When it does, a different, narrower-lexing route
+// already elected tok, and state must defer rather than consume tok's
+// prefix. The check is symbol-shape based (an adjacent run of `>` bytes),
+// not tied to any one language, so both the production stack route and the
+// compact admission route can share it. included and probe let the
+// production route reuse its own included-range handling and scratch
+// lexer; the compact route passes nil and its own scratch lexer.
+func deferContextualCloseAngleAction(lang *Language, source []byte, state StateID, tok Token, included []Range, probe *Lexer) bool {
+	if lang == nil || probe == nil || int(tok.Symbol) >= len(lang.SymbolNames) ||
 		lang.SymbolNames[tok.Symbol] != ">" ||
 		tok.EndByte != tok.StartByte+1 ||
 		tok.EndPoint.Row != tok.StartPoint.Row {
@@ -2284,7 +2296,6 @@ func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state Stat
 		return false
 	}
 
-	probe := &p.relexProbeLexer
 	*probe = Lexer{
 		states:          lang.LexStates,
 		asciiTable:      lang.LexAsciiTable(),
@@ -2295,25 +2306,26 @@ func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state Stat
 		immediateTokens: lang.ImmediateTokens,
 		zeroWidthTokens: lang.ZeroWidthTokens,
 	}
-	if len(p.included) != 0 && lang.ExternalScanner == nil && len(lang.ExternalSymbols) == 0 {
-		probe.setIncludedRanges(p.included)
+	if len(included) != 0 && lang.ExternalScanner == nil && len(lang.ExternalSymbols) == 0 {
+		probe.setIncludedRanges(included)
 	}
 	stateToken, ok := probe.scan(uint32(lexState), probe.pos, probe.row, probe.col)
 	if !ok || int(stateToken.Symbol) >= len(lang.SymbolNames) {
 		return false
 	}
 	stateTokenName := lang.SymbolNames[stateToken.Symbol]
+	shiftIdx := lookupRepairActionIndex(lang, state, stateToken.Symbol)
+	stateHasShiftAction := shiftIdx != 0 && int(shiftIdx) < len(lang.ParseActions) && len(lang.ParseActions[shiftIdx].Actions) > 0
 	if !isWideCloseAngleTokenName(stateTokenName) ||
 		stateToken.StartByte != tok.StartByte ||
-		!p.stateHasActionForSymbol(state, stateToken.Symbol) {
+		!stateHasShiftAction {
 		return false
 	}
 	width := uint32(len(stateTokenName))
 	if stateToken.EndByte != tok.StartByte+width {
 		return false
 	}
-	closeIdx := p.lookupActionIndex(state, tok.Symbol)
-	shiftIdx := p.lookupActionIndex(state, stateToken.Symbol)
+	closeIdx := lookupRepairActionIndex(lang, state, tok.Symbol)
 	if closeIdx != 0 && closeIdx == shiftIdx && int(closeIdx) < len(lang.ParseActions) {
 		actions := lang.ParseActions[closeIdx].Actions
 		if len(actions) > 0 {

@@ -176,6 +176,31 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchCorridor() (progressed bo
 		if !s.corridorTokenGateOpen(op) {
 			return progressed, nil
 		}
+		// body != 0 means this exact (state, elected-token) pair carries a
+		// real compiled action -- the corridor's compiled equivalent of a
+		// non-empty generic action row for the shared token. Apply the same
+		// shared-token deferral dispatchPassActive applies at that point
+		// (issue #983): a header whose own lex mode reads a wider close-angle
+		// operator with a real action here must not act on the narrower
+		// elected token either. Refusing before any counter is spent hands
+		// the untouched election back to the generic pass, which re-runs full
+		// classification and reaches the identical no-action outcome.
+		if s.tokenSource != nil && s.tokenSource.lexer != nil {
+			corridorState, stateErr := s.corridorHeaderState()
+			if stateErr != nil {
+				return progressed, stateErr
+			}
+			probe := s.tokenSource.relexProbeLexer
+			if probe == nil {
+				probe = &Lexer{}
+				s.tokenSource.relexProbeLexer = probe
+			}
+			if deferContextualCloseAngleAction(
+				s.tokenSource.language, s.tokenSource.lexer.source, corridorState, s.token, nil, probe,
+			) {
+				return progressed, nil
+			}
+		}
 		switch op {
 		case corridorOpShift:
 			handled, err := s.corridorShift(prog[body+1])

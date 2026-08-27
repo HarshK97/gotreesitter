@@ -6014,6 +6014,28 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 		s.work.ActionLookups++
 		actions := boundary.Actions()
 		workCountRecordResolvedActionCell(actions.Len())
+		// Production's per-stack contextualActionIndex (parser_dfa_token_source.go)
+		// zeroes an action for this exact shared token shape when the header's own
+		// lex mode reads a wider close-angle operator that itself carries a real
+		// action here: a differently-lexing stack already claimed the elected
+		// narrow prefix, so this header must not shift it either. Skipping this
+		// check would let the compact route accept a derivation the production
+		// route provably declines (issue #983). A header this defers falls into
+		// the ordinary no-action machinery below -- it never gets a synthesized
+		// token or an altered election.
+		if actions.Len() != 0 && s.tokenSource != nil && s.tokenSource.lexer != nil {
+			probe := s.tokenSource.relexProbeLexer
+			if probe == nil {
+				probe = &Lexer{}
+				s.tokenSource.relexProbeLexer = probe
+			}
+			if deferContextualCloseAngleAction(
+				s.tokenSource.language, s.tokenSource.lexer.source, StateID(boundary.State()), cellToken, nil, probe,
+			) {
+				s.dispatchScratch.noActionIndices = append(s.dispatchScratch.noActionIndices, index)
+				continue
+			}
+		}
 		if actions.Len() == 0 {
 			state := StateID(boundary.State())
 			if len(s.headers) > 1 {
