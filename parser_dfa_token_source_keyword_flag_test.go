@@ -216,3 +216,127 @@ func TestPeekTokenFrontierMergesSameLexDespiteIsKeywordMismatch(t *testing.T) {
 		t.Fatalf("candidate route mask = %#x, want %#x (both states must vote for the merged tokenization)", cand.RouteMask, want)
 	}
 }
+
+// unionSameLexKeywordLanguageWithDecoy extends unionSameLexKeywordLanguage
+// with a second, unrelated pair of GLR states (3 and 4) that both lex "if"
+// as a same-span, differently-symbolled decoy token ("other", symbol 3)
+// through two independently-dedup-safe lex modes (DFA states 5 and 8). The
+// decoy pair always scores 2 (each votes for the other; neither promotion
+// nor isKeyword ever enters their comparison), which is exactly high enough
+// to beat the keyword pair's score if — and only if — nextGLRUnionDFAToken's
+// keyword-adoption pair (states 1 and 2) loses ITS mutual vote to the
+// isKeyword-mismatch bug fixed at parser_dfa_token_source.go's tokensSameLex
+// call in that function's own score loop. With the bug: keyword-pair score
+// stays at 1 (self only), the decoy's constant 2 wins outright, and
+// Next() elects the wrong token (symbol 3, "other") for source "if". Fixed:
+// the keyword pair also scores 2, ties the decoy under identical span/
+// visibility/specificity, and the first-processed state (1) keeps the
+// correctly-elected keyword (symbol 2, isKeyword = true).
+//
+// This isolates the SPECIFIC production call site the F1 mutation-testing
+// gap flagged (nextGLRUnionDFAToken's own tokensSameLex call): unlike
+// TestPeekTokenFrontierMergesSameLexDespiteIsKeywordMismatch, reverting only
+// that one call site to a raw != comparison flips this test's elected
+// token, because here the decoy pair's constant score of 2 only wins when
+// the keyword pair's score is wrongly held down to 1.
+//
+// Symbols:
+//
+//	0: end
+//	1: identifier (terminal, named) — keyword capture token
+//	2: if (terminal, anonymous) — keyword, reachable via promotion or direct
+//	3: other (terminal, anonymous) — same-span decoy, never keyword-related
+//
+// Parser states: 1 (identifier-capture path, DFA state 0), 2 (direct
+// keyword-literal path, DFA state 2), 3 (decoy path A, DFA state 5), 4
+// (decoy path B, DFA state 8).
+func unionSameLexKeywordLanguageWithDecoy() *Language {
+	lang := unionSameLexKeywordLanguage()
+	lang.Name = "keyword_union_samelex_decoy_test"
+	lang.SymbolCount = 4
+	// TokenCount stays at the base fixture's 2 (not 4): buildSymbolMaps only
+	// registers a symbol's name in the anonymous-token shape index when its
+	// index is below TokenCount. Registering "if" there would let
+	// promoteActiveLiteralForCurrentState's UNRELATED literal-promotion path
+	// (triggered by matching raw source text against any live-actionable
+	// anonymous token name, not by symbol identity) silently rewrite the
+	// decoy's own Symbol 3 token back to Symbol 2, because both tokens
+	// share the literal source text "if" and Symbol 2 has live actions in
+	// states 1 and 2. Leaving TokenCount at 2 keeps "if" (and "other") out
+	// of that registry, exactly as the base two-state fixture already
+	// relies on, so this decoy exercises only the score-based tie-break
+	// nextGLRUnionDFAToken itself performs.
+	lang.SymbolNames = []string{"end", "identifier", "if", "other"}
+	lang.LexStates = append(lang.LexStates,
+		// state 5: decoy path A start — dispatch 'i'
+		LexState{Default: -1, EOF: -1, Transitions: []LexTransition{
+			{Lo: 'i', Hi: 'i', NextState: 6},
+		}},
+		// state 6: saw 'i' — dispatch 'f'
+		LexState{Default: -1, EOF: -1, Transitions: []LexTransition{
+			{Lo: 'f', Hi: 'f', NextState: 7},
+		}},
+		// state 7: saw "if" — accept the decoy (symbol 3), independent of
+		// both the identifier-capture and direct-keyword paths.
+		LexState{AcceptToken: 3, Default: -1, EOF: -1},
+		// state 8: decoy path B start — an independent DFA chain that
+		// accepts the identical decoy token as path A, so the two decoy
+		// parser states are never dedup-merged (different LexState indexes)
+		// but always agree on their own tokenization.
+		LexState{Default: -1, EOF: -1, Transitions: []LexTransition{
+			{Lo: 'i', Hi: 'i', NextState: 9},
+		}},
+		LexState{Default: -1, EOF: -1, Transitions: []LexTransition{
+			{Lo: 'f', Hi: 'f', NextState: 10},
+		}},
+		LexState{AcceptToken: 3, Default: -1, EOF: -1},
+	)
+	lang.LexModes = append(lang.LexModes,
+		LexMode{LexState: 5}, // parser state 3: decoy path A
+		LexMode{LexState: 8}, // parser state 4: decoy path B
+	)
+	return lang
+}
+
+// TestNextGLRUnionDFATokenElectsMergedKeywordOverCompetingDecoy closes the
+// F1 mutation-testing gap: it fails when tokensSameLex's call inside
+// nextGLRUnionDFAToken's own score loop (parser_dfa_token_source.go) is
+// reverted to a raw != comparison, even though
+// TestPeekTokenFrontierMergesSameLexDespiteIsKeywordMismatch (which pins the
+// other two call sites) keeps passing under that exact mutation.
+//
+// See unionSameLexKeywordLanguageWithDecoy's doc comment for the scoring
+// argument. Verified by mutation: reverting nextGLRUnionDFAToken's
+// tokensSameLex call to `stateTok != candTok` makes this test fail (elects
+// symbol 3, "other") and leaves
+// TestPeekTokenFrontierMergesSameLexDespiteIsKeywordMismatch passing;
+// restoring the call makes both pass.
+func TestNextGLRUnionDFATokenElectsMergedKeywordOverCompetingDecoy(t *testing.T) {
+	lang := unionSameLexKeywordLanguageWithDecoy()
+	lookup := func(state StateID, sym Symbol) uint16 {
+		switch {
+		case sym == 2 && (state == 1 || state == 2):
+			return 1
+		case sym == 3 && (state == 3 || state == 4):
+			return 1
+		}
+		return 0
+	}
+
+	source := []byte("if")
+	ts := acquireDFATokenSource(NewLexer(lang.LexStates, source), lang, lookup, nil, nil, nil)
+	defer ts.Close()
+	ts.SetParserState(1)
+	ts.SetGLRStates([]StateID{1, 2, 3, 4})
+
+	tok := ts.Next()
+	if tok.Symbol != 2 {
+		t.Fatalf("elected symbol = %d, want 2 (if keyword — the merged keyword pair must outscore the decoy pair)", tok.Symbol)
+	}
+	if !tok.isKeyword {
+		t.Fatal("elected keyword token: isKeyword = false, want true (elected via the identifier-capture path's own promotion)")
+	}
+	if tok.StartByte != 0 || tok.EndByte != 2 {
+		t.Fatalf("elected span = %d..%d, want 0..2", tok.StartByte, tok.EndByte)
+	}
+}

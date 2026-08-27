@@ -5807,6 +5807,22 @@ type diagnosticParserCoreGenericUnsupported struct {
 
 const diagnosticParserCoreNoTableActionDetail = "generic scheduler has no table action for the elected token"
 
+// diagnosticParserCoreContextualCloseAngleDeferralDetail is the decline
+// detail for a no-action head that reached dispatchPassActive's no-action
+// classification through the issue #983 contextual close-angle deferral,
+// not a genuinely empty action row. Kept distinct from
+// diagnosticParserCoreNoTableActionDetail so census, receipts, and tests can
+// tell the two shapes apart even though both share the Recovery boundary.
+const diagnosticParserCoreContextualCloseAngleDeferralDetail = "generic scheduler deferred a contextual close-angle action for the elected token"
+
+// DiagnosticParserCoreContextualCloseAngleDeferralDetailForTest exposes
+// diagnosticParserCoreContextualCloseAngleDeferralDetail so the external
+// test package can assert on the issue #983 deferral's decline detail
+// without duplicating the literal string.
+func DiagnosticParserCoreContextualCloseAngleDeferralDetailForTest() string {
+	return diagnosticParserCoreContextualCloseAngleDeferralDetail
+}
+
 func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParserCoreGenericUnsupported, error) {
 	if err := s.dispatchScratch.begin(); err != nil {
 		return nil, err
@@ -6228,7 +6244,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				// accurate detail instead of claiming the row had no action.
 				return &diagnosticParserCoreGenericUnsupported{
 					boundary:    DiagnosticParserCoreRecovery,
-					detail:      "generic scheduler deferred a contextual close-angle action for the elected token",
+					detail:      diagnosticParserCoreContextualCloseAngleDeferralDetail,
 					headerIndex: noActionIndices[0],
 				}, nil
 			}

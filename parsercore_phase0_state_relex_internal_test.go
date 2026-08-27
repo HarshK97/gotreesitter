@@ -30,6 +30,56 @@ func TestDiagnosticParserCoreRelexedSymbolReconstructsExactToken(t *testing.T) {
 	}
 }
 
+// TestDispatchTokenClearsIsKeywordOnRelexedSymbolOverride pins finding F7:
+// when relexedSymbol overrides the shared token's symbol, dispatchToken must
+// clear isKeyword alongside the external-scanner fields. isKeyword records
+// that the ORIGINAL symbol was reached through the keyword-adoption
+// promotion path; that fact does not carry over to an unrelated relexed
+// symbol replacing it, so a dispatch view built from a promoted keyword
+// token must not still claim the relexed token is a keyword adoption.
+func TestDispatchTokenClearsIsKeywordOnRelexedSymbolOverride(t *testing.T) {
+	shared := Token{
+		Symbol:                   2,
+		Text:                     "if",
+		StartByte:                0,
+		EndByte:                  2,
+		EndPoint:                 Point{Column: 2},
+		ExternalScannerToken:     true,
+		ExternalScannerStartByte: 1,
+		isKeyword:                true,
+	}
+	cell := diagnosticParserCoreGenericCell{relexedSymbol: 9}
+
+	got := cell.dispatchToken(shared)
+	if got.isKeyword {
+		t.Fatal("dispatchToken with a relexedSymbol override: isKeyword = true, want false")
+	}
+	if got.Symbol != 9 {
+		t.Fatalf("dispatchToken symbol = %d, want 9 (the relexed symbol)", got.Symbol)
+	}
+	if got.ExternalScannerToken || got.ExternalScannerStartByte != 0 {
+		t.Fatalf("dispatchToken external-scanner fields = %v/%d, want false/0",
+			got.ExternalScannerToken, got.ExternalScannerStartByte)
+	}
+}
+
+// TestDispatchTokenPreservesIsKeywordWithoutRelexedSymbolOverride pins the
+// other half of finding F7: dispatchToken must leave isKeyword untouched
+// when there is no relexedSymbol override at all (cell.relexedSymbol == 0),
+// so the clear above is scoped to the override branch only.
+func TestDispatchTokenPreservesIsKeywordWithoutRelexedSymbolOverride(t *testing.T) {
+	shared := Token{Symbol: 2, isKeyword: true}
+	cell := diagnosticParserCoreGenericCell{}
+
+	got := cell.dispatchToken(shared)
+	if !got.isKeyword {
+		t.Fatal("dispatchToken without a relexedSymbol override: isKeyword = false, want true (unmodified)")
+	}
+	if got != shared {
+		t.Fatalf("dispatchToken without an override = %+v, want unmodified %+v", got, shared)
+	}
+}
+
 func TestDiagnosticParserCoreRelexedSymbolRejectsTokenFieldChanges(t *testing.T) {
 	shared := Token{
 		Symbol:                   3,

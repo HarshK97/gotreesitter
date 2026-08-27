@@ -37,7 +37,7 @@ func TestCompactSchedulerDeclinesContextualCloseAngleDeferralWithDistinctDetail(
 	}
 	lang := entry.Language()
 
-	const wantDetail = "generic scheduler deferred a contextual close-angle action for the elected token"
+	wantDetail := gts.DiagnosticParserCoreContextualCloseAngleDeferralDetailForTest()
 
 	for _, src := range [][]byte{[]byte("0>>"), []byte(" 0%0>>")} {
 		src := src
