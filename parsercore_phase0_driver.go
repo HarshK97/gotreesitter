@@ -3809,6 +3809,13 @@ func diagnosticParserCoreRelexedSymbol(shared, relexed Token) (Symbol, bool) {
 	candidate.Symbol = relexed.Symbol
 	candidate.ExternalScannerToken = false
 	candidate.ExternalScannerStartByte = 0
+	// IsKeyword is a promotion-path artifact of the DFA token source's
+	// keyword re-lex (promoteKeyword), not a property probe.scan's raw
+	// DFA-only relex can ever report; clear it here too, alongside the
+	// external-scanner fields above, so a promoted keyword token's relex
+	// probe is judged on tokenization identity, not on which lex path
+	// produced it.
+	candidate.IsKeyword = false
 	if candidate != relexed {
 		return 0, false
 	}

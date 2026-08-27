@@ -4607,6 +4607,7 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) (Token, bool) {
 		if !kwHasAction {
 			if altSym, ok := d.activeLiteralKeywordSymbol(tok); ok {
 				tok.Symbol = altSym
+				tok.IsKeyword = true
 				return tok, false
 			}
 		}
@@ -4622,6 +4623,7 @@ func (d *dfaTokenSource) promoteKeyword(tok Token) (Token, bool) {
 	}
 
 	tok.Symbol = kwTok.Symbol
+	tok.IsKeyword = true
 	return tok, false
 }
 
