@@ -132,7 +132,7 @@ func (c *Core) VisitMaterializationPostorderWithScratch(
 				StartByte:         record.startByte, EndByte: record.endByte,
 				Children: c.children[record.firstChild : record.firstChild+record.childCount],
 				Extra:    record.extra, External: record.external, Terminal: record.terminal,
-				Fragile: record.fragile,
+				Fragile: record.fragile, Missing: record.missing,
 			}
 			if err := visit(top.id, view); err != nil {
 				return err

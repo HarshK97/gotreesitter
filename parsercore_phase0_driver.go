@@ -5226,6 +5226,28 @@ func materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization(compac
 				)
 				node.setExtra(view.Extra)
 				node.setExternalScannerToken(view.External)
+				// B3 stage S5 substrate: a recovery-inserted MISSING terminal
+				// (core.MissingLeaf) carries both public bits, matching the
+				// pinned C oracle and production's own port
+				// (parser.go's missing-shift path sets exactly this pair).
+				// has-error belongs on the missing node ITSELF, not only on
+				// its ancestors: C defines ts_node_has_error as
+				// error_cost > 0 (node.c:520-522), and ts_subtree_error_cost
+				// short-circuits on the missing bit to return
+				// ERROR_COST_PER_MISSING_TREE + ERROR_COST_PER_RECOVERY
+				// (subtree.h:331-337), which is 610, so C reports has-error
+				// true on the leaf. Ordinary ancestor propagation
+				// (populateParentNode, tree.go) then ORs it up through every
+				// enclosing reduce with no additional code.
+				//
+				// No shipped parser path publishes a missing record today, so
+				// this branch is unreached on every current parse; it lands
+				// with the record bit so the storage and materialization
+				// change review together.
+				if view.Missing {
+					node.setMissing(true)
+					node.setHasError(true)
+				}
 				// No markFragile here: fragile is a reduce/conflict-arm property
 				// (subtreeRecord.fragile is only ever set on reductions), so a
 				// terminal record is never fragile. The reduce branches below

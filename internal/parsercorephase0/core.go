@@ -951,17 +951,37 @@ type subtreeRecord struct {
 	// position uses one alignment byte before startByte, so the record stays
 	// 44 bytes. Normal publication computes it from child records.
 	externalProvenanceState subtreeExternalProvenanceState
-	startByte               uint32
-	endByte                 uint32
-	firstChild              uint32
-	childCount              uint32
-	firstField              uint32
-	fieldCount              uint32
-	firstAlias              uint32
-	aliasCount              uint32
-	extra                   bool
-	external                bool
-	terminal                bool
+	// missing mirrors C's ts_subtree_new_missing_leaf (subtree.c:534-546): a
+	// zero-width terminal the parser inserted during recovery because the
+	// grammar required it and the input did not supply it. C reads the bit
+	// back through ts_subtree_missing, and it is load-bearing for cost, not
+	// only for display: ts_subtree_error_cost (subtree.h:331-337) returns
+	// ERROR_COST_PER_MISSING_TREE + ERROR_COST_PER_RECOVERY (610) for a
+	// missing subtree instead of the stored error cost.
+	//
+	// The field occupies the SECOND alignment byte before startByte, which
+	// startByte's own four-byte alignment already reserved, so the record
+	// stays 44 bytes (pinned by core_test.go). Placing it anywhere after
+	// startByte would round the record up to 48 and grow every compact
+	// subtree in every parse.
+	//
+	// No live parser path sets this today. B3 stage S5 owns the mechanism
+	// that will (C's ts_parser__handle_error step 2, parser.c:2154-2230);
+	// this record bit, MissingLeaf, and the two view fields are the inert
+	// substrate that mechanism needs, landed separately so the storage and
+	// materialization change can be reviewed on its own.
+	missing    bool
+	startByte  uint32
+	endByte    uint32
+	firstChild uint32
+	childCount uint32
+	firstField uint32
+	fieldCount uint32
+	firstAlias uint32
+	aliasCount uint32
+	extra      bool
+	external   bool
+	terminal   bool
 	// fragile mirrors gotreesitter.Node's fragileLeft/fragileRight bits
 	// (tree.go), collapsed to one conservative flag here: set whenever the
 	// record was produced by a reduce/conflict-arm decision that ran under
@@ -1072,6 +1092,9 @@ type SubtreeView struct {
 	Extra             bool
 	External          bool
 	Terminal          bool
+	// Missing mirrors subtreeRecord.missing: a recovery-inserted zero-width
+	// terminal (C ts_subtree_missing).
+	Missing bool
 }
 
 // MaterializationSubtreeView is a callback-scoped borrowed view of one compact
@@ -1093,6 +1116,10 @@ type MaterializationSubtreeView struct {
 	// authenticated >=2-action conflict). Threaded to the public materializer so
 	// Lane-1 fragility metadata reaches compact-materialized public nodes.
 	Fragile bool
+	// Missing mirrors subtreeRecord.missing: a recovery-inserted zero-width
+	// terminal (C ts_subtree_missing). Threaded to the public materializer so
+	// it can set the public node's own missing and has-error bits.
+	Missing bool
 }
 
 // Stats reports physical storage separately from semantic path counts. It is
@@ -5259,6 +5286,7 @@ func (c *Core) Subtree(id SubtreeID) (SubtreeView, error) {
 	view := SubtreeView{
 		Symbol: r.symbol, ProductionID: r.productionID, DynamicPrecedence: r.dynamicPrecedence,
 		StartByte: r.startByte, EndByte: r.endByte, Extra: r.extra, External: r.external, Terminal: r.terminal,
+		Missing: r.missing,
 	}
 	view.Children = append(view.Children, c.children[r.firstChild:r.firstChild+r.childCount]...)
 	view.Fields = append(view.Fields, c.fields[r.firstField:r.firstField+r.fieldCount]...)
@@ -5398,6 +5426,7 @@ func (c *Core) MaterializationView(id SubtreeID) (MaterializationSubtreeView, er
 		External:          record.external,
 		Terminal:          record.terminal,
 		Fragile:           record.fragile,
+		Missing:           record.missing,
 	}, nil
 }
 
