@@ -437,3 +437,21 @@ func ParserPoolCheckoutForTest(pp *ParserPool) *Parser { return pp.checkout() }
 
 // ParserPoolReleaseForTest returns a parser to the pool (applying defaults).
 func ParserPoolReleaseForTest(pp *ParserPool, p *Parser) { pp.release(p) }
+
+// SetAdmissionCensusEnabledForTest forces the compact-route decline census
+// (admission_census.go) on or off for the calling test and returns a restore
+// function. The census normally latches one os.Getenv read behind a sync.Once,
+// which a test cannot influence once any earlier decline in the same process
+// has already consumed it; this helper consumes the Once itself and then sets
+// the latched value directly, so a census assertion does not depend on test
+// ordering or on the harness environment.
+//
+// Callers must not run parses in parallel across the returned restore: the
+// census flag is a plain latched bool that the decline path reads without
+// synchronization, exactly as the env-seeded value already is.
+func SetAdmissionCensusEnabledForTest(enabled bool) func() {
+	admissionCensusEnabledOnce.Do(func() {})
+	previous := admissionCensusEnabledVal
+	admissionCensusEnabledVal = enabled
+	return func() { admissionCensusEnabledVal = previous }
+}
