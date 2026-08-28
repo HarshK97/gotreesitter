@@ -91,8 +91,15 @@ func admissionCensusRecoveryShapeWitnesses() []admissionCensusRecoveryShapeWitne
 	}
 }
 
-// admissionCensusDeclineReason parses source through the compact candidate
-// route and returns the decline reason, or "" when the route admitted it.
+// admissionCensusDeclineReason drives the compact route's own accept-or-decline
+// seam and returns the decline reason, or "" when the route admitted the
+// source.
+//
+// It uses TryCompactFullParseRouteForTest rather than
+// SetAdmissionCandidateRoute plus Parse plus the counter triple. That seam
+// exists precisely to expose the decline detail without the public-Parse
+// eligibility gates, and it avoids mutating the process-global admission
+// counters that other tests in this package read.
 func admissionCensusDeclineReason(t *testing.T, language, source string) string {
 	t.Helper()
 	var entry grammars.LangEntry
@@ -114,24 +121,17 @@ func admissionCensusDeclineReason(t *testing.T, language, source string) string 
 	if lang == nil {
 		t.Fatalf("grammar %q has no loadable language", language)
 	}
-	parser := gts.NewParser(lang)
-	parser.SetAdmissionCandidateRoute(true)
-	gts.ResetAdmissionCandidateCountersForTest()
-	tree, err := parser.Parse([]byte(source))
-	if err != nil {
-		t.Fatalf("%s: parse failed: %v", language, err)
-	}
+	tree, ok, reason := gts.TryCompactFullParseRouteForTest(gts.NewParser(lang), []byte(source))
 	if tree != nil {
 		defer tree.Release()
 	}
-	routed, fallbacks := gts.AdmissionCandidateCounters()
-	if routed != 0 {
+	if ok {
 		return ""
 	}
-	if fallbacks == 0 {
-		t.Fatalf("%s: compact route neither routed nor fell back for %q", language, source)
+	if reason == "" {
+		t.Fatalf("%s: compact route declined %q with no reason", language, source)
 	}
-	return gts.AdmissionCandidateLastFallbackReason()
+	return reason
 }
 
 // TestAdmissionCensusRecoveryShapeClassification pins the C-mechanism

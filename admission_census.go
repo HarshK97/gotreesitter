@@ -406,6 +406,14 @@ func admissionCensusMissingTokenCandidates(scheduler *diagnosticParserCoreGeneri
 //
 // So this classifies exactly one detail -- the genuine no-table-action shape
 // that is C's own error-entry point -- and declines to guess on the rest.
+//
+// One modeled gap remains, recorded rather than silently carried: the Go
+// port suppresses BOTH the missing-token search and the strategy-1 election
+// for a graphql triple-quote lookahead (isGraphQLRecoveryTripleQuote). This
+// ladder does not apply that predicate, so a graphql decline on that token
+// can report missing-token-insertion or stack-summary-resume where the port
+// would go straight to absorb. No graphql row reaches this path on the
+// shipped corpus today; a census that adds one must model the predicate.
 func admissionCensusRecoveryShapeFor(scheduler *diagnosticParserCoreGenericScheduler, stop DiagnosticParserCoreGenericStop) (admissionCensusRecoveryShape, string) {
 	if scheduler == nil || scheduler.compact == nil {
 		return "", ""
