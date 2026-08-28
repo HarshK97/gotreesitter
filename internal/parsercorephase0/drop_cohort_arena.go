@@ -1200,6 +1200,27 @@ func (c *Core) dropCohortEncodeSubtree(e *dropCohortEncoder, payload SubtreeID, 
 			return 0, err
 		}
 	}
+	// record.missing is deliberately NOT encoded here, and that is a scoping
+	// decision with a cost, not an oversight.
+	//
+	// This encoder feeds a receipt digest that is LOCKED by hardcoded digest
+	// and length literals (the D6b receipt pinned in the root package's
+	// grammargen-LR frontier test). Appending a byte per subtree re-derives
+	// every such receipt, which is an evidence change that belongs to a
+	// deliberate tranche with its own review, not to a substrate change that
+	// no live path can even reach.
+	//
+	// Safe today, for one narrow reason only: no live parser path publishes a
+	// MISSING record, so this encoder cannot meet one and every digest it
+	// produces is byte-identical to before the bit existed. The sibling
+	// comparator below DOES order on the bit, because ordering feeds no
+	// digest.
+	//
+	// PRECONDITION FOR STAGE S5: the first live path that publishes a MISSING
+	// record must add the bit here AND re-derive the locked receipts in the
+	// same change. Until both happen together, a receipt over a MISSING
+	// payload would hash identically to one over the clean payload it
+	// replaced, so the receipt would stop authenticating what was dropped.
 	for _, value := range []bool{record.extra, record.external, record.terminal, record.fragile} {
 		if err := e.bool(value); err != nil {
 			return 0, err
@@ -1305,7 +1326,7 @@ func (c *Core) dropCohortCompareSubtree(left, right SubtreeID) (int, error) {
 			return result, nil
 		}
 	}
-	for _, pair := range [][2]bool{{l.extra, r.extra}, {l.external, r.external}, {l.terminal, r.terminal}, {l.fragile, r.fragile}} {
+	for _, pair := range [][2]bool{{l.extra, r.extra}, {l.external, r.external}, {l.terminal, r.terminal}, {l.fragile, r.fragile}, {l.missing, r.missing}} {
 		if pair[0] != pair[1] {
 			if !pair[0] {
 				return -1, nil

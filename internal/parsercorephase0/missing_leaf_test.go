@@ -59,10 +59,12 @@ func TestMissingLeafPublishesZeroWidthTerminal(t *testing.T) {
 	}
 }
 
-// TestMissingLeafRejectsNonTerminalSymbols proves the two symbols that can
-// never name a missing token fail closed rather than publishing a record the
-// cost model would then read as a missing subtree.
-func TestMissingLeafRejectsNonTerminalSymbols(t *testing.T) {
+// TestMissingLeafRejectsReservedSymbols proves the two RESERVED symbols that
+// can never name a missing token fail closed. It deliberately does not claim
+// more: MissingLeaf takes no StateID, so it cannot check that the grammar
+// actually demands the token, and an ordinary grammar nonterminal is accepted.
+// See MissingLeaf's own doc comment for what the caller still owes.
+func TestMissingLeafRejectsReservedSymbols(t *testing.T) {
 	for name, symbol := range map[string]Symbol{
 		"end-of-file": 0,
 		"error":       ErrorRegionSymbol,
@@ -132,5 +134,115 @@ func TestMissingLeafIsInertSubstrate(t *testing.T) {
 		if view.Missing {
 			t.Fatalf("subtree %d reported the missing bit without a MissingLeaf call", id)
 		}
+	}
+}
+
+// TestMissingLeafSurfacesThroughPostorderVisitor covers the path the driver
+// actually materializes through.
+//
+// TestMissingLeafSurfacesThroughMaterializationView above exercises the
+// RANDOM-ACCESS accessor, but public-node construction runs from
+// VisitMaterializationPostorder(WithScratch), which builds its view at a
+// different site (materialization_postorder_scratch.go). Without this test,
+// deleting the Missing field from that construction would leave every other
+// test in this file green while silently disabling the feature on the only
+// path that ships.
+func TestMissingLeafSurfacesThroughPostorderVisitor(t *testing.T) {
+	compact := newMissingLeafTestCore(t)
+	missingID, err := compact.MissingLeaf(Symbol(3), 12)
+	if err != nil {
+		t.Fatalf("MissingLeaf: %v", err)
+	}
+	ordinaryID, err := compact.ErrorRegionLeaf(Symbol(3), 12, 15, false)
+	if err != nil {
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+
+	seen := map[SubtreeID]bool{}
+	visited := 0
+	err = compact.VisitMaterializationPostorder(
+		[]SubtreeID{missingID, ordinaryID},
+		func() error { return nil },
+		func(id SubtreeID, view MaterializationSubtreeView) error {
+			seen[id] = view.Missing
+			visited++
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("VisitMaterializationPostorder: %v", err)
+	}
+	if visited != 2 {
+		t.Fatalf("visited %d subtrees, want 2", visited)
+	}
+	if !seen[missingID] {
+		t.Fatal("the postorder visitor lost the missing bit on the missing leaf")
+	}
+	if seen[ordinaryID] {
+		t.Fatal("the postorder visitor reported an ordinary terminal as missing")
+	}
+}
+
+// TestMissingLeafIsNotStructurallyEqualToCleanPayload pins the fail-closed
+// half of the duplicate-drop gate.
+//
+// subtreesStructurallyEqual authorizes DROPPING one payload as a duplicate of
+// another. A recovery-inserted MISSING leaf and a clean zero-width payload
+// with the same symbol and span agree on every other compared field, so
+// without the missing bit in that predicate the MISSING record would be
+// discarded and its error lost from the published tree.
+func TestMissingLeafIsNotStructurallyEqualToCleanPayload(t *testing.T) {
+	compact := newMissingLeafTestCore(t)
+	missingID, err := compact.MissingLeaf(Symbol(3), 12)
+	if err != nil {
+		t.Fatalf("MissingLeaf: %v", err)
+	}
+	// Same symbol, same zero-width span, published the ordinary way.
+	cleanID, err := compact.ErrorRegionLeaf(Symbol(3), 12, 12, false)
+	if err != nil {
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	equal, err := compact.subtreesStructurallyEqual(missingID, cleanID)
+	if err != nil {
+		t.Fatalf("subtreesStructurallyEqual: %v", err)
+	}
+	if equal {
+		t.Fatal("a MISSING payload compared structurally equal to a clean zero-width payload; the duplicate-drop gate would discard the error")
+	}
+	// Control: the predicate still folds two genuinely identical clean payloads.
+	otherCleanID, err := compact.ErrorRegionLeaf(Symbol(3), 12, 12, false)
+	if err != nil {
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	equal, err = compact.subtreesStructurallyEqual(cleanID, otherCleanID)
+	if err != nil {
+		t.Fatalf("subtreesStructurallyEqual: %v", err)
+	}
+	if !equal {
+		t.Fatal("two identical clean payloads stopped comparing equal; the missing bit over-separated them")
+	}
+}
+
+// TestMissingLeafDropCohortReceiptDistinguishesTheBit proves the drop-cohort
+// receipt digest and its total-order comparator both authenticate the bit.
+// Both already tracked `fragile`, the other late-added record bit, so omitting
+// `missing` would have been a missed site rather than a scoping decision: two
+// receipts over different parses would hash identically.
+func TestMissingLeafDropCohortReceiptDistinguishesTheBit(t *testing.T) {
+	compact := newMissingLeafTestCore(t)
+	missingID, err := compact.MissingLeaf(Symbol(3), 12)
+	if err != nil {
+		t.Fatalf("MissingLeaf: %v", err)
+	}
+	cleanID, err := compact.ErrorRegionLeaf(Symbol(3), 12, 12, false)
+	if err != nil {
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	order, err := compact.dropCohortCompareSubtree(missingID, cleanID)
+	if err != nil {
+		t.Fatalf("dropCohortCompareSubtree: %v", err)
+	}
+	if order == 0 {
+		t.Fatal("the drop-cohort comparator ordered a MISSING payload equal to a clean one")
 	}
 }

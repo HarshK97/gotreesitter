@@ -152,6 +152,12 @@ const (
 	selectedNodeFlagExtra
 	selectedNodeFlagExternal
 	selectedNodeFlagTerminal
+	// selectedNodeFlagMissing mirrors subtreeRecord.missing (B3 stage S5
+	// substrate). Without it the SelectedStore projection would answer
+	// differently from the postorder public tree for the same parse: the
+	// public tree sets the node's missing and has-error bits, the projection
+	// would report an ordinary zero-width token.
+	selectedNodeFlagMissing
 )
 
 // SelectedNodeRecord is one immutable logical occurrence after hidden-parent
@@ -174,6 +180,9 @@ func (r SelectedNodeRecord) Named() bool    { return r.flags&selectedNodeFlagNam
 func (r SelectedNodeRecord) Extra() bool    { return r.flags&selectedNodeFlagExtra != 0 }
 func (r SelectedNodeRecord) External() bool { return r.flags&selectedNodeFlagExternal != 0 }
 func (r SelectedNodeRecord) Terminal() bool { return r.flags&selectedNodeFlagTerminal != 0 }
+
+// Missing reports a recovery-inserted zero-width terminal (C ts_subtree_missing).
+func (r SelectedNodeRecord) Missing() bool { return r.flags&selectedNodeFlagMissing != 0 }
 
 // SelectedStore is the sealed, pointer-free selected syntax backing store.
 // IDs are occurrence identities; repeated compact SubtreeIDs remain distinct.
@@ -547,11 +556,11 @@ func (c *Core) buildSelectedStoreStaged(roots []SubtreeID, policy SelectedStoreP
 			if !child.Extra() && (rule == SelectedUnaryPass || rule == SelectedUnaryRenameLeaf && child.ChildCount == 0) {
 				if rule == SelectedUnaryRenameLeaf {
 					child.Symbol = record.symbol
-					child.flags = selectedFlags(policy.Symbols[record.symbol], child.Extra(), child.External(), child.Terminal())
+					child.flags = selectedFlags(policy.Symbols[record.symbol], child.Extra(), child.External(), child.Terminal(), child.Missing())
 				}
 				if occ.alias != 0 && !retainAliasChild {
 					child.Symbol = occ.alias
-					child.flags = selectedFlags(meta, child.Extra(), child.External(), child.Terminal())
+					child.flags = selectedFlags(meta, child.Extra(), child.External(), child.Terminal(), child.Missing())
 				}
 				child.ProductionID = record.productionID
 				delta, err := checkedSelectedPrecedence(precedenceDeltas[childID-1], int32(record.dynamicPrecedence))
@@ -582,7 +591,7 @@ func (c *Core) buildSelectedStoreStaged(roots []SubtreeID, policy SelectedStoreP
 		id := SelectedNodeID(uint64(len(store.records)) + 1)
 		first := uint32(len(store.children))
 		store.children = append(store.children, logical...)
-		flags := selectedFlags(meta, record.extra, record.external, record.terminal)
+		flags := selectedFlags(meta, record.extra, record.external, record.terminal, record.missing)
 		startByte, endByte := record.startByte, record.endByte
 		if len(logical) != 0 {
 			firstChild := store.records[logical[0]-1]
@@ -909,7 +918,7 @@ func (s *SelectedStore) normalizeCaseBoundary(current *SelectedNodeRecord, nextS
 	}
 }
 
-func selectedFlags(meta SelectedSymbolPolicy, extra, external, terminal bool) uint8 {
+func selectedFlags(meta SelectedSymbolPolicy, extra, external, terminal, missing bool) uint8 {
 	var flags uint8
 	if meta.Named {
 		flags |= selectedNodeFlagNamed
@@ -922,6 +931,9 @@ func selectedFlags(meta SelectedSymbolPolicy, extra, external, terminal bool) ui
 	}
 	if terminal {
 		flags |= selectedNodeFlagTerminal
+	}
+	if missing {
+		flags |= selectedNodeFlagMissing
 	}
 	return flags
 }
@@ -952,7 +964,7 @@ func appendSelectedRetainedAliasWrapper(
 	store.records = append(store.records, SelectedNodeRecord{
 		FirstChild: first, StartByte: child.StartByte, EndByte: child.EndByte,
 		Symbol: alias, Field: field, ProductionID: productionID, ChildCount: 1,
-		flags: selectedFlags(meta, false, false, false),
+		flags: selectedFlags(meta, false, false, false, false),
 	})
 	precedenceDeltas = append(precedenceDeltas, 0)
 	child = &store.records[childID-1]

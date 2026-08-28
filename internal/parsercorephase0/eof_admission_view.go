@@ -144,9 +144,13 @@ func (c *Core) VisitEOFAdmissionSubtree(
 		External:          record.external,
 		Terminal:          record.terminal,
 		Fragile:           record.fragile,
-		// Compact production records cannot encode a missing payload. Keep the
-		// explicit field in this audit view so a future encoding must opt in.
-		Missing:               false,
+		// B3 stage S5 substrate opted in. subtreeRecord now encodes a missing
+		// payload, so this audit view reports the stored bit rather than a
+		// hardcoded false. The live consumer is the EOF-recovery-admission
+		// gate (parsercore_phase0_driver.go), which declines a missing
+		// subtree; leaving this false would have made that decline
+		// permanently unreachable the moment a missing record could exist.
+		Missing:               record.missing,
 		MetadataAuthenticated: c.metadataConstructionAuthenticated,
 	}
 	if err := visit(view); err != nil {

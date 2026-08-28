@@ -5236,9 +5236,24 @@ func materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization(compac
 				// short-circuits on the missing bit to return
 				// ERROR_COST_PER_MISSING_TREE + ERROR_COST_PER_RECOVERY
 				// (subtree.h:331-337), which is 610, so C reports has-error
-				// true on the leaf. Ordinary ancestor propagation
-				// (populateParentNode, tree.go) then ORs it up through every
-				// enclosing reduce with no additional code.
+				// true on the leaf. For a VISIBLE missing leaf, ordinary
+				// ancestor propagation (populateParentNode, tree.go) then ORs
+				// the flag up through every enclosing reduce with no
+				// additional code.
+				//
+				// PRECONDITION FOR STAGE S5, not covered here: that
+				// propagation argument holds only while the leaf survives into
+				// its parent's children. Production's reduce path drops an
+				// invisible child that has no children of its own
+				// (appendReduceChildItemToScratch, parser_reduce.go), and
+				// production's own missing-shift path compensates with an
+				// explicit out-parameter signal (parser.go's
+				// `*trackChildErrors = true`). This branch reproduces the
+				// flags but NOT that signal, so a missing leaf on a HIDDEN
+				// terminal could be spliced out and lose its error. C reports
+				// has-error there (cost 610 > 0). Whichever live path first
+				// publishes a missing record must either restrict itself to
+				// visible terminals or reproduce the signal.
 				//
 				// No shipped parser path publishes a missing record today, so
 				// this branch is unreached on every current parse; it lands

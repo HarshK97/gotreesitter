@@ -158,11 +158,11 @@ func (c *Core) buildSelectedStoreOnePass(roots []SubtreeID, policy SelectedStore
 				if !child.Extra() && (rule == SelectedUnaryPass || rule == SelectedUnaryRenameLeaf && child.ChildCount == 0) {
 					if rule == SelectedUnaryRenameLeaf {
 						child.Symbol = record.symbol
-						child.flags = selectedFlags(policy.Symbols[record.symbol], child.Extra(), child.External(), child.Terminal())
+						child.flags = selectedFlags(policy.Symbols[record.symbol], child.Extra(), child.External(), child.Terminal(), child.Missing())
 					}
 					if alias != 0 && !retainAliasChild {
 						child.Symbol = alias
-						child.flags = selectedFlags(meta, child.Extra(), child.External(), child.Terminal())
+						child.flags = selectedFlags(meta, child.Extra(), child.External(), child.Terminal(), child.Missing())
 					}
 					child.ProductionID = record.productionID
 					delta, err := checkedSelectedPrecedence(precedenceDeltas[childID-1], int32(record.dynamicPrecedence))
@@ -203,7 +203,7 @@ func (c *Core) buildSelectedStoreOnePass(roots []SubtreeID, policy SelectedStore
 				first := uint32(len(store.children))
 				children := logical[logicalStart:]
 				store.children = append(store.children, children...)
-				flags := selectedFlags(meta, record.extra, record.external, record.terminal)
+				flags := selectedFlags(meta, record.extra, record.external, record.terminal, record.missing)
 				startByte, endByte := record.startByte, record.endByte
 				if len(children) != 0 {
 					firstChild := store.records[children[0]-1]

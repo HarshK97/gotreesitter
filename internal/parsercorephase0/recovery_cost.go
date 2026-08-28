@@ -30,10 +30,16 @@ import (
 // 8) -- reachable from nowhere except its own tests.
 //
 // Record shape note: RecoveryCostNode is a strict superset of the existing
-// SubtreeView (core.go): it adds Missing and two row fields (StartRow,
-// EndRow) that no compact subtree needs to populate today, because nothing
-// in the shipped compact core has ever produced a MISSING node or an ERROR
-// region -- compact has no error recovery yet. cNodeErrorCostLang only ever
+// SubtreeView (core.go). It adds two row fields (StartRow, EndRow) that no
+// compact subtree stores. SubtreeView now carries Missing itself, so that
+// field is no longer part of the difference.
+//
+// The stronger claim this note used to make -- that the compact core has
+// never produced a MISSING node or an ERROR region -- is now false in both
+// halves. Stage S3 publishes ERROR regions for its certified witness class,
+// and the stage S5 substrate (subtreeRecord.missing, Core.MissingLeaf) can
+// represent a MISSING payload. What still holds is narrower: no live parser
+// path publishes a MISSING record yet. cNodeErrorCostLang only ever
 // reads a node's Missing flag or row span when that node either is itself
 // missing or is an ERROR node (parser_recover_c.go:1238,1249-1268); an
 // ordinary clean node's Missing is always false and its row span is never

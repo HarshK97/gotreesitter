@@ -947,9 +947,15 @@ type subtreeRecord struct {
 	symbol            Symbol
 	productionID      uint16
 	dynamicPrecedence int16
-	// externalProvenanceState is derived metadata, not subtree identity. Its
-	// position uses one alignment byte before startByte, so the record stays
-	// 44 bytes. Normal publication computes it from child records.
+	// externalProvenanceState is derived metadata, not subtree identity. It
+	// sits in the padding before startByte, so it costs no record size.
+	// Normal publication computes it from child records.
+	//
+	// THAT PADDING IS NOW FULL. startByte needs four-byte alignment, which
+	// reserves exactly two bytes after dynamicPrecedence, and both are taken:
+	// externalProvenanceState and missing. The record measures 44 bytes and a
+	// test pins that. A third single-byte field here has nowhere free to go,
+	// so it rounds every compact subtree in every parse up to 48.
 	externalProvenanceState subtreeExternalProvenanceState
 	// missing mirrors C's ts_subtree_new_missing_leaf (subtree.c:534-546): a
 	// zero-width terminal the parser inserted during recovery because the
@@ -4445,7 +4451,14 @@ func (c *Core) subtreesStructurallyEqual(left, right SubtreeID) (bool, error) {
 	if l.symbol != r.symbol || l.productionID != r.productionID || l.dynamicPrecedence != r.dynamicPrecedence ||
 		l.startByte != r.startByte || l.endByte != r.endByte || l.childCount != r.childCount ||
 		l.fieldCount != r.fieldCount || l.aliasCount != r.aliasCount ||
-		l.extra != r.extra || l.external != r.external || l.terminal != r.terminal {
+		l.extra != r.extra || l.external != r.external || l.terminal != r.terminal ||
+		l.missing != r.missing {
+		// missing participates deliberately. This predicate authorizes a
+		// duplicate DROP, so omitting the bit would let a recovery-inserted
+		// MISSING payload be discarded in favour of a clean zero-width
+		// payload with the same symbol and span, losing the error entirely.
+		// Including it is strictly fail-closed: it can only keep two records
+		// apart that would otherwise have been folded.
 		return false, nil
 	}
 	if l.external {
@@ -4515,11 +4528,9 @@ func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowP
 	// MISSING record today (Core.MissingLeaf has no non-test caller), so the
 	// class cannot currently see one and behavior is unchanged. Before any
 	// path does start publishing one, this class MUST gain C's both-errors
-	// shortcut. Without it, a missing payload and a clean zero-width payload
-	// with the same symbol compare equal on every field here and would be
-	// folded as equivalent -- which happens to agree with C for that one pair,
-	// but silently disagrees as soon as two DIFFERENTLY-SHAPED error payloads
-	// meet, where C collapses them and this class would keep both.
+	// shortcut. Two differently shaped error payloads are the failing case.
+	// C collapses them through the shortcut. This class compares their fields
+	// instead, finds them different, and keeps both.
 	//
 	// External payloads separately require exact per-token scanner provenance
 	// or a stable language certificate.

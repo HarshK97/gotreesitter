@@ -53,8 +53,19 @@ import "errors"
 //
 // appendSubtree, not appendSubtreeRecord: like ErrorRegionLeaf, a missing
 // terminal is published outside the grammar-table-authenticated shift seam,
-// so metadataConstructionAuthenticated must clear and the record earns full
+// so metadataConstructionAuthenticated must clear and the record earns
 // materialization-time metadata validation rather than skipping it.
+//
+// WHAT THAT VALIDATION DOES NOT COVER, so the caller owes it. This function
+// rejects only the two RESERVED symbols that can never name a missing token:
+// end-of-file and ERROR. It cannot do more, because it takes no StateID and
+// so cannot ask whether the grammar actually demands the token here. C can:
+// ts_parser__handle_error only ever builds a missing leaf for a symbol the
+// current state has a shift entry for (parser.c:2154-2230). An ordinary
+// grammar nonterminal, or a symbol past the table's symbol count, is accepted
+// here and yields a record the cost model prices as a missing subtree.
+// Materialization validates reduction metadata, not this. The scheduler
+// caller must authenticate the symbol against its state before publishing.
 func (c *Core) MissingLeaf(symbol Symbol, atByte uint32) (id SubtreeID, err error) {
 	if symbol == 0 {
 		return 0, errors.New("parser-core phase zero: missing leaf requires a real terminal symbol")
