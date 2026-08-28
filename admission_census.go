@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
 
 // Compact-route decline census instrumentation.
@@ -145,7 +147,38 @@ const (
 var (
 	admissionCensusEnabledOnce sync.Once
 	admissionCensusEnabledVal  bool
+
+	admissionCensusRecoveryShapeOnce sync.Once
+	admissionCensusRecoveryShapeVal  bool
 )
+
+// admissionCensusRecoveryShapeEnabled reports whether the operator asked for
+// the recovery sub-classification on top of the ordinary census.
+//
+// It is a SEPARATE opt-in from GTS_ADMISSION_CENSUS, for two reasons.
+//
+// First, blast radius. cgo_harness/testmain_cgo_test.go sets
+// GTS_ADMISSION_CENSUS=1 process-wide for that whole package, and six tests
+// there pin the recovery decline reason by EXACT equality (for example
+// sqlC26ahCompactFallback). Appending to the census detail under the existing
+// flag silently breaks all six, and those tests are container-only -- they
+// authenticate a pinned compiler and grammar artifact, so a host run cannot
+// verify a change to them. Keeping this behind its own flag leaves that
+// harness byte-identical.
+//
+// Second, cost. The classification walks every terminal in the grammar's
+// action table for each classified decline, which is far heavier than the
+// existing census's constant-time boundary mapping. An operator who wants
+// only the coarse mechanism should not pay for the fine one.
+func admissionCensusRecoveryShapeEnabled() bool {
+	admissionCensusRecoveryShapeOnce.Do(func() {
+		switch os.Getenv("GTS_ADMISSION_CENSUS_RECOVERY_SHAPE") {
+		case "1", "true", "TRUE", "True", "on", "ON", "yes", "YES":
+			admissionCensusRecoveryShapeVal = true
+		}
+	})
+	return admissionCensusRecoveryShapeVal
+}
 
 // admissionCensusEnabled reports whether GTS_ADMISSION_CENSUS requests the
 // fine-grained decline classification. The result is cached after the first
@@ -221,6 +254,216 @@ func admissionCensusClassify(boundary DiagnosticParserCoreBoundaryKind, detail s
 	}
 }
 
+// admissionCensusRecoveryShape sub-classifies a recovery-boundary decline by
+// the C recovery mechanism that would own the input at that exact point.
+//
+// censusMechanismRecovery already tells an operator "only production
+// implements recovery here". That answer is too coarse to schedule work
+// against: the real-corpus recovery cohort is not one mechanism but four,
+// and they sit in different B3 stages with different costs
+// (spec.compact-recovery-ownership.v1 section 4). This classification splits
+// the cohort the way C's own ts_parser__handle_error / ts_parser__recover
+// split it, so the census reports which stage owns each declining row.
+//
+// Evaluation order mirrors C exactly, because C's mechanisms are tried in a
+// fixed order and the first one that applies is the one that runs:
+//
+//  1. missing-token insertion (ts_parser__handle_error step 2,
+//     parser.c:2154-2230; the Go port is cHandleError's missingTokenSearch,
+//     parser_recover_c.go);
+//  2. strategy 1, the stack-summary resume election (ts_parser__recover's
+//     summary scan, cRecoverStrategy1Election); C runs this for every
+//     non-error lookahead INCLUDING end-of-file;
+//  3. the end-of-file whole-file wrap (ts_parser__recover's recover_eof,
+//     cRecoverEOFAccept);
+//  4. strategy 2, error-region absorb (ts_parser__recover's skip_token tail,
+//     cAbsorbTokenIntoError).
+//
+// Every probe below is READ-ONLY. It reads action rows and walks recorded
+// link adjacency; it publishes no record and mutates no header. In
+// particular it deliberately does NOT run the compact analogue of C's step 1
+// (s3CloseInProgressProductions), which performs real reductions and appends
+// arena records: a diagnostic classification must not change what the parse
+// did. The consequence is stated in the shape's own name -- the scan happens
+// at the declining state, not at C's post-closure state -- so a row whose
+// missing-token opportunity only appears after closure classifies here as a
+// later mechanism. That is a floor on the missing-token cohort, never an
+// overcount.
+//
+// Read the answer as "the mechanism that owns THIS decline point", not "the
+// only mechanism this source needs". A source can require several recovery
+// mechanisms in sequence, and the compact route reports only the first point
+// at which it gave up. Measured on the shipped real corpus: widening the
+// native strategy-2 owner to four uncertified grammars opened twenty error
+// regions and still graduated no row, because each row went on to reach an
+// end-of-file wrap, a missing-token insertion, or an error-mode lex
+// disagreement that strategy 2 does not own. Use this classification to size
+// and order the stages, not to predict a per-row graduation.
+type admissionCensusRecoveryShape string
+
+const (
+	// censusRecoveryShapeMissingToken: some terminal has a genuine shift from
+	// the declining state to a different state whose leading action for the
+	// elected token is a reduce -- C's step-2 predicate
+	// (ts_language_next_state + ts_language_has_reduce_action). C would insert
+	// a zero-width MISSING leaf for that terminal and keep parsing. B3 stage
+	// S5 owns this mechanism.
+	censusRecoveryShapeMissingToken admissionCensusRecoveryShape = "missing-token-insertion"
+	// censusRecoveryShapeDeeperResume: no missing-token opportunity, but some
+	// ancestor boundary within cRecoverMaxSummaryDepth has an action for the
+	// elected token. C's strategy-1 summary election would recover to that
+	// state and wrap the skipped span in one ERROR. B3 stage S4 owns this.
+	//
+	// This bucket OVER-APPROXIMATES strategy 1, so read it as an S4 ceiling
+	// and, correspondingly, an S3 floor. AncestorStateWithActionExists is a
+	// bounded existence probe with no cost comparison and no election, while
+	// C's summary scan additionally skips entries at ERROR_STATE, skips
+	// entries whose position equals the current position, and ABORTS the whole
+	// scan when a cheaper live version exists -- even where the lookahead
+	// would have had actions. None of those three are modeled here, and every
+	// row this bucket over-reports is a row taken from the absorb bucket
+	// below. An operator sizing S3 against S4 from this census will therefore
+	// under-size S3.
+	censusRecoveryShapeDeeperResume admissionCensusRecoveryShape = "stack-summary-resume"
+	// censusRecoveryShapeEOFWrap: the elected token is authenticated
+	// end-of-file and neither earlier mechanism applies, so C reaches
+	// recover_eof and wraps the whole remaining stack in one ERROR root. B3
+	// stage S5 owns this wrap.
+	censusRecoveryShapeEOFWrap admissionCensusRecoveryShape = "recover-eof-wrap"
+	// censusRecoveryShapeAbsorb: none of the above -- C falls through to
+	// strategy 2 and absorbs the elected token into an open error region.
+	// B3 stage S3 owns this mechanism; it is native today only for the
+	// grammar-blob-keyed certified witness class
+	// (CompactStrategy2ErrorRegionCertified).
+	censusRecoveryShapeAbsorb admissionCensusRecoveryShape = "error-region-absorb"
+)
+
+// admissionCensusMissingTokenCandidates counts the terminals that satisfy C's
+// step-2 missing-token predicate at state for lookahead, and reports the
+// lowest such terminal id. C scans terminals in ascending id order and takes
+// the first that also survives do_all_potential_reductions, so the lowest id
+// is the candidate C would try first.
+//
+// The predicate is the same one s3MissingTokenOpportunityExists already
+// applies as an S3 decline guard (parsercore_phase0_driver.go), kept as a
+// separate counting variant here rather than widening that one: the S3 guard
+// answers a yes/no question on the hot decline path and must stay cheap to
+// read, while the census wants the population.
+func admissionCensusMissingTokenCandidates(scheduler *diagnosticParserCoreGenericScheduler, state StateID, lookahead Symbol) (count int, first Symbol, err error) {
+	if scheduler == nil || scheduler.compact == nil ||
+		scheduler.tokenSource == nil || scheduler.tokenSource.language == nil {
+		return 0, 0, nil
+	}
+	tokenCount := Symbol(scheduler.tokenSource.language.TokenCount)
+	for ms := Symbol(1); ms < tokenCount; ms++ {
+		row, rowErr := scheduler.compact.Actions(core.StateID(state), core.Symbol(ms))
+		if rowErr != nil {
+			return 0, 0, rowErr
+		}
+		if row.Len() == 0 {
+			continue
+		}
+		last := row.At(row.Len() - 1)
+		if last.Type != core.ActionShift {
+			continue
+		}
+		nextState := core.StateID(last.State)
+		if last.Extra {
+			nextState = core.StateID(state)
+		}
+		if nextState == 0 || nextState == core.StateID(state) {
+			continue
+		}
+		nextRow, nextErr := scheduler.compact.Actions(nextState, core.Symbol(lookahead))
+		if nextErr != nil {
+			return 0, 0, nextErr
+		}
+		if nextRow.Len() == 0 || nextRow.At(0).Type != core.ActionReduce {
+			continue
+		}
+		if count == 0 {
+			first = ms
+		}
+		count++
+	}
+	return count, first, nil
+}
+
+// admissionCensusRecoveryShapeFor classifies one recovery-boundary decline,
+// or reports an empty shape when the decline is not a classifiable recovery
+// point, in which case the caller leaves the decline text unchanged.
+//
+// DiagnosticParserCoreRecovery is a ROUTING bucket, not a proof that C is in
+// recovery. The driver publishes it with four different details, and three of
+// them are Go-side deferrals where C never enters ts_parser__handle_error at
+// all: the D2-1 ragged-relex decline, the issue-983 contextual close-angle
+// deferral (whose state DOES have an action for the elected token), and an
+// ActionRecover cell reached inside a conflict. Classifying those would
+// attribute a C mechanism to a point C never reaches. The ragged-relex case is
+// worse than merely wrong: `finish` records the SHARED election token, while
+// the decline is about a different relexed token with a different EndByte, so
+// any probe here would run against a lookahead that was never the stop point.
+//
+// So this classifies exactly one detail -- the genuine no-table-action shape
+// that is C's own error-entry point -- and declines to guess on the rest.
+//
+// One modeled gap remains, recorded rather than silently carried: the Go
+// port suppresses BOTH the missing-token search and the strategy-1 election
+// for a graphql triple-quote lookahead (isGraphQLRecoveryTripleQuote). This
+// ladder does not apply that predicate, so a graphql decline on that token
+// can report missing-token-insertion or stack-summary-resume where the port
+// would go straight to absorb. No graphql row reaches this path on the
+// shipped corpus today; a census that adds one must model the predicate.
+func admissionCensusRecoveryShapeFor(scheduler *diagnosticParserCoreGenericScheduler, stop DiagnosticParserCoreGenericStop) (admissionCensusRecoveryShape, string) {
+	if scheduler == nil || scheduler.compact == nil {
+		return "", ""
+	}
+	if stop.Detail != diagnosticParserCoreNoTableActionDetail {
+		return "", ""
+	}
+	lookahead := Symbol(stop.Token.Symbol)
+
+	// Step 2, missing-token insertion. C applies NO error-lookahead guard
+	// here: ts_parser__handle_error wraps its missingTokenSearch only in the
+	// graphql triple-quote exclusion, and the errorSymbol guard lives solely
+	// in cRecoverStrategy1Election. Probing this first, for every lookahead,
+	// is what keeps stage S5 from being under-credited.
+	missingCount, missingFirst, err := admissionCensusMissingTokenCandidates(scheduler, stop.State, lookahead)
+	if err != nil {
+		return "", ""
+	}
+	if missingCount > 0 {
+		return censusRecoveryShapeMissingToken, fmt.Sprintf("candidates=%d first=%d", missingCount, missingFirst)
+	}
+
+	// Strategy 1, the stack-summary resume election. C skips it for an
+	// error-subtree lookahead and for a WIDE symbol-0 token, which is this
+	// engine's unlexable run (cRecoverStrategy1Election's own guards). Both
+	// fall straight through to strategy 2.
+	wideUnlexable := lookahead == 0 && stop.Token.StartByte != stop.Token.EndByte
+	if lookahead != errorSymbol && !wideUnlexable {
+		if stop.HeaderIndex < 0 || stop.HeaderIndex >= len(scheduler.headers) {
+			return "", ""
+		}
+		deeper, deeperErr := scheduler.compact.AncestorStateWithActionExists(
+			scheduler.headers[stop.HeaderIndex].head, core.Symbol(lookahead), cRecoverMaxSummaryDepth)
+		if deeperErr != nil {
+			// The strategy-1 question was never answered. Emitting the last
+			// bucket in the ladder here would publish a confident S3 verdict
+			// on an unrun probe, so report no classification instead.
+			return "", ""
+		}
+		if deeper {
+			return censusRecoveryShapeDeeperResume, ""
+		}
+	}
+
+	if lookahead == 0 && stop.Token.StartByte == stop.Token.EndByte {
+		return censusRecoveryShapeEOFWrap, ""
+	}
+	return censusRecoveryShapeAbsorb, ""
+}
+
 // Synthetic boundary kinds for the strict-acceptance decompositions that have
 // no natural DiagnosticParserCoreBoundaryKind of their own: the scheduler DID
 // accept, so none of the scheduler's own mid-run unsupported-construct
@@ -248,9 +491,29 @@ func admissionCensusStopDecline(scheduler *diagnosticParserCoreGenericScheduler)
 		}
 	}
 	stop := scheduler.receipt.Stop
+	detail := "did not accept EOF: " + stop.Detail
+	// A recovery-boundary decline is the largest real-corpus fallback cohort
+	// and the only one whose members sit in different B3 stages. Sub-classify
+	// it by the C mechanism that owns the input (admissionCensusRecoveryShape)
+	// so the census reports a schedulable cohort instead of one undivided
+	// "recovery" bucket.
+	//
+	// Behind its own opt-in: with GTS_ADMISSION_CENSUS alone every decline
+	// text, recovery included, stays byte-identical to before this tranche.
+	// See admissionCensusRecoveryShapeEnabled for why that separation is
+	// load-bearing rather than tidy.
+	if stop.Boundary == DiagnosticParserCoreRecovery && admissionCensusRecoveryShapeEnabled() {
+		if shape, extra := admissionCensusRecoveryShapeFor(scheduler, stop); shape != "" {
+			detail += " [c-mechanism=" + string(shape)
+			if extra != "" {
+				detail += " " + extra
+			}
+			detail += "]"
+		}
+	}
 	return &diagnosticParserCoreDecline{
 		boundary: stop.Boundary,
-		detail:   "did not accept EOF: " + stop.Detail,
+		detail:   detail,
 	}
 }
 
