@@ -508,3 +508,62 @@ func (p *Parser) lookupGoto(state StateID, sym Symbol) StateID {
 	}
 	return 0
 }
+
+// languageDenseLimit is the dense parse-table cutoff a Parser uses for this
+// Language. It exists as one function because two call sites need the SAME
+// answer: NewParser, which sets Parser.denseLimit, and
+// acquireParserDerivedTables, which must reproduce that field exactly on the
+// scratch parser it hands to buildEagerDefaultReduceActions. Deriving it twice
+// invites the two copies to drift, and a drifted denseLimit would silently
+// produce a different eager-default-reduce table for every Parser of this
+// Language.
+func languageDenseLimit(l *Language) int {
+	if l.LargeStateCount > 0 {
+		return int(l.LargeStateCount)
+	}
+	return len(l.ParseTable)
+}
+
+// parserDerivedTables holds the per-language derived parser tables that are
+// pure functions of the decoded grammar tables. NewParser previously rebuilt
+// them on every call; they are now built once per *Language and shared,
+// read-only, by every Parser of that Language.
+type parserDerivedTables struct {
+	smallTokenLookup             [][]uint16
+	smallLookup                  [][]smallActionPair
+	classifiedActions            []classifiedParseAction
+	eagerDefaultReduces          []eagerDefaultReduceAction
+	keepSameNamedAnonChildSymbol []bool
+	sharedAnonymousTokenSymbol   []bool
+}
+
+// acquireParserDerivedTables builds the derived parser tables exactly once per
+// Language, even under concurrent first use, and returns the shared instance.
+// Inputs are immutable after decode (see cRecoveryGateCacheKey): the only
+// supported post-load mutations (external scanner attach, recovery
+// certification flags) touch none of the fields these builders read.
+func (l *Language) acquireParserDerivedTables() *parserDerivedTables {
+	l.parserDerivedOnce.Do(func() {
+		t := &parserDerivedTables{}
+		if len(l.SmallParseTableMap) > 0 && len(l.SmallParseTable) > 0 {
+			t.smallTokenLookup = buildSmallTokenLookup(l)
+			t.smallLookup = buildSmallLookup(l, t.smallTokenLookup)
+		}
+		t.classifiedActions = buildClassifiedParseActions(l)
+		t.keepSameNamedAnonChildSymbol = buildKeepSameNamedAnonChildSymbols(l)
+		t.sharedAnonymousTokenSymbol = buildSharedAnonymousTokenSymbols(l)
+		// buildEagerDefaultReduceActions reads only these parser fields, all of
+		// which NewParser derives deterministically from the Language before the
+		// original call site. Replicate them on a scratch parser to avoid
+		// recursion into NewParser.
+		scratch := &Parser{language: l}
+		scratch.denseLimit = languageDenseLimit(l)
+		scratch.smallBase = int(l.LargeStateCount)
+		scratch.smallTokenLookup = t.smallTokenLookup
+		scratch.smallLookup = t.smallLookup
+		scratch.classifiedActions = t.classifiedActions
+		t.eagerDefaultReduces = buildEagerDefaultReduceActions(scratch)
+		l.parserDerived = t
+	})
+	return l.parserDerived
+}

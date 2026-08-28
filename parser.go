@@ -1626,31 +1626,26 @@ func NewParser(lang *Language) *Parser {
 				p.forceRawSpanTable[i] = true
 			}
 		}
-		if lang.LargeStateCount > 0 {
-			p.denseLimit = int(lang.LargeStateCount)
-		} else {
-			p.denseLimit = len(lang.ParseTable)
-		}
+		p.denseLimit = languageDenseLimit(lang)
 		// Bind the cached action-lookup closure eagerly at language-config
 		// time so lookupActionIndexFunc's lazy fallback never races, even in
 		// the (unsupported) shared-Parser case.
 		p.lookupActionIndexFn = p.lookupActionIndex
 		p.smallBase = int(lang.LargeStateCount)
-		if len(lang.SmallParseTableMap) > 0 && len(lang.SmallParseTable) > 0 {
-			p.smallTokenLookup = buildSmallTokenLookup(lang)
-			p.smallLookup = buildSmallLookup(lang, p.smallTokenLookup)
-		}
+		derived := lang.acquireParserDerivedTables()
+		p.smallTokenLookup = derived.smallTokenLookup
+		p.smallLookup = derived.smallLookup
 		p.externalValidByState = p.buildExternalValidByState()
 		p.externalValidMaskByState = buildExternalValidMaskByState(p.externalValidByState, len(lang.ExternalSymbols))
 		p.hasExtraChainActions = languageHasExtraChainActions(lang)
-		p.classifiedActions = buildClassifiedParseActions(lang)
-		p.eagerDefaultReduces = buildEagerDefaultReduceActions(p)
+		p.classifiedActions = derived.classifiedActions
+		p.eagerDefaultReduces = derived.eagerDefaultReduces
 		p.reduceChainHints = buildReduceChainHints(lang)
 		p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)
 		p.reduceAliasSeq = buildReduceAliasSequences(lang)
 		p.aliasTargetSymbol = buildAliasTargetSymbols(lang)
-		p.keepSameNamedAnonChildSymbol = buildKeepSameNamedAnonChildSymbols(lang)
-		p.sharedAnonymousTokenSymbol = buildSharedAnonymousTokenSymbols(lang)
+		p.keepSameNamedAnonChildSymbol = derived.keepSameNamedAnonChildSymbol
+		p.sharedAnonymousTokenSymbol = derived.sharedAnonymousTokenSymbol
 		p.reduceHasFields = buildReduceFieldPresence(lang)
 		p.reduceFieldPlans = buildReduceFieldPlans(lang)
 		p.recoverByState, p.hasRecoverState, p.hasRecoverSymbol = buildRecoverActionsByState(lang)
