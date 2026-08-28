@@ -1190,6 +1190,10 @@ func phase0AHashCompactRecord(h hash.Hash, record subtreeRecord, fields []FieldM
 	if record.terminal {
 		flags |= 4
 	}
+	if record.missing {
+		// A new bit, not a new byte: existing records keep their digest.
+		flags |= 8
+	}
 	_, _ = h.Write([]byte{flags})
 	for _, field := range fields {
 		binary.LittleEndian.PutUint16(buf[:2], uint16(field.FieldID))

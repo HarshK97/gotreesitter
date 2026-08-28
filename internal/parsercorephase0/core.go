@@ -947,21 +947,47 @@ type subtreeRecord struct {
 	symbol            Symbol
 	productionID      uint16
 	dynamicPrecedence int16
-	// externalProvenanceState is derived metadata, not subtree identity. Its
-	// position uses one alignment byte before startByte, so the record stays
-	// 44 bytes. Normal publication computes it from child records.
+	// externalProvenanceState is derived metadata, not subtree identity. It
+	// sits in the padding before startByte, so it costs no record size.
+	// Normal publication computes it from child records.
+	//
+	// THAT PADDING IS NOW FULL. startByte needs four-byte alignment, which
+	// reserves exactly two bytes after dynamicPrecedence, and both are taken:
+	// externalProvenanceState and missing. The record measures 44 bytes and a
+	// test pins that. A third single-byte field here has nowhere free to go,
+	// so it rounds every compact subtree in every parse up to 48.
 	externalProvenanceState subtreeExternalProvenanceState
-	startByte               uint32
-	endByte                 uint32
-	firstChild              uint32
-	childCount              uint32
-	firstField              uint32
-	fieldCount              uint32
-	firstAlias              uint32
-	aliasCount              uint32
-	extra                   bool
-	external                bool
-	terminal                bool
+	// missing mirrors C's ts_subtree_new_missing_leaf (subtree.c:534-546): a
+	// zero-width terminal the parser inserted during recovery because the
+	// grammar required it and the input did not supply it. C reads the bit
+	// back through ts_subtree_missing, and it is load-bearing for cost, not
+	// only for display: ts_subtree_error_cost (subtree.h:331-337) returns
+	// ERROR_COST_PER_MISSING_TREE + ERROR_COST_PER_RECOVERY (610) for a
+	// missing subtree instead of the stored error cost.
+	//
+	// The field occupies the SECOND alignment byte before startByte, which
+	// startByte's own four-byte alignment already reserved, so the record
+	// stays 44 bytes (pinned by core_test.go). Placing it anywhere after
+	// startByte would round the record up to 48 and grow every compact
+	// subtree in every parse.
+	//
+	// No live parser path sets this today. B3 stage S5 owns the mechanism
+	// that will (C's ts_parser__handle_error step 2, parser.c:2154-2230);
+	// this record bit, MissingLeaf, and the two view fields are the inert
+	// substrate that mechanism needs, landed separately so the storage and
+	// materialization change can be reviewed on its own.
+	missing    bool
+	startByte  uint32
+	endByte    uint32
+	firstChild uint32
+	childCount uint32
+	firstField uint32
+	fieldCount uint32
+	firstAlias uint32
+	aliasCount uint32
+	extra      bool
+	external   bool
+	terminal   bool
 	// fragile mirrors gotreesitter.Node's fragileLeft/fragileRight bits
 	// (tree.go), collapsed to one conservative flag here: set whenever the
 	// record was produced by a reduce/conflict-arm decision that ran under
@@ -1072,6 +1098,9 @@ type SubtreeView struct {
 	Extra             bool
 	External          bool
 	Terminal          bool
+	// Missing mirrors subtreeRecord.missing: a recovery-inserted zero-width
+	// terminal (C ts_subtree_missing).
+	Missing bool
 }
 
 // MaterializationSubtreeView is a callback-scoped borrowed view of one compact
@@ -1093,6 +1122,10 @@ type MaterializationSubtreeView struct {
 	// authenticated >=2-action conflict). Threaded to the public materializer so
 	// Lane-1 fragility metadata reaches compact-materialized public nodes.
 	Fragile bool
+	// Missing mirrors subtreeRecord.missing: a recovery-inserted zero-width
+	// terminal (C ts_subtree_missing). Threaded to the public materializer so
+	// it can set the public node's own missing and has-error bits.
+	Missing bool
 }
 
 // Stats reports physical storage separately from semantic path counts. It is
@@ -4418,7 +4451,14 @@ func (c *Core) subtreesStructurallyEqual(left, right SubtreeID) (bool, error) {
 	if l.symbol != r.symbol || l.productionID != r.productionID || l.dynamicPrecedence != r.dynamicPrecedence ||
 		l.startByte != r.startByte || l.endByte != r.endByte || l.childCount != r.childCount ||
 		l.fieldCount != r.fieldCount || l.aliasCount != r.aliasCount ||
-		l.extra != r.extra || l.external != r.external || l.terminal != r.terminal {
+		l.extra != r.extra || l.external != r.external || l.terminal != r.terminal ||
+		l.missing != r.missing {
+		// missing participates deliberately. This predicate authorizes a
+		// duplicate DROP, so omitting the bit would let a recovery-inserted
+		// MISSING payload be discarded in favour of a clean zero-width
+		// payload with the same symbol and span, losing the error entirely.
+		// Including it is strictly fail-closed: it can only keep two records
+		// apart that would otherwise have been folded.
 		return false, nil
 	}
 	if l.external {
@@ -4465,10 +4505,35 @@ func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowP
 	if err != nil {
 		return shallowPayloadClass{}, false, err
 	}
-	// The compact phase-zero core cannot represent recovery/error subtrees yet,
-	// so every resident non-external payload is clean by construction. External
-	// payloads require exact per-token scanner provenance or a stable language
-	// certificate.
+	// This class is the compact port of C's stack__subtree_is_equivalent
+	// (stack.c:181-197), MINUS one clause. C tests, in order: same pointer;
+	// equal symbol; a BOTH-HAVE-ERRORS shortcut ("if both have errors, don't
+	// bother keeping both", stack.c:189, taken when ts_subtree_error_cost is
+	// positive on both sides); and only then the field comparison this class
+	// represents (padding, size, child count, extra, external scanner state).
+	// The shortcut is deliberately not ported -- see
+	// spec.derivation-set-equivalence.v1, which scopes it out until error-path
+	// equivalence lands.
+	//
+	// STALE-INVARIANT WARNING. That omission used to be justified by a
+	// stronger statement: the compact core could not represent an error or
+	// recovery subtree at all, so no resident payload could ever have a
+	// positive error cost and the shortcut could never apply. B3 stage S3
+	// (ERROR regions) and the stage S5 substrate (subtreeRecord.missing,
+	// Core.MissingLeaf) have both weakened that. A MISSING payload carries
+	// error cost ERROR_COST_PER_MISSING_TREE + ERROR_COST_PER_RECOVERY
+	// (subtree.h:331-337), so it is exactly the shape the shortcut exists for.
+	//
+	// What still holds, and what does not: no live parser path publishes a
+	// MISSING record today (Core.MissingLeaf has no non-test caller), so the
+	// class cannot currently see one and behavior is unchanged. Before any
+	// path does start publishing one, this class MUST gain C's both-errors
+	// shortcut. Two differently shaped error payloads are the failing case.
+	// C collapses them through the shortcut. This class compares their fields
+	// instead, finds them different, and keeps both.
+	//
+	// External payloads separately require exact per-token scanner provenance
+	// or a stable language certificate.
 	if payload.external && !c.externalPayloadsQuiescent {
 		_, exact, err := c.subtreeExternalProvenance(payloadID)
 		if err != nil || !exact {
@@ -5259,6 +5324,7 @@ func (c *Core) Subtree(id SubtreeID) (SubtreeView, error) {
 	view := SubtreeView{
 		Symbol: r.symbol, ProductionID: r.productionID, DynamicPrecedence: r.dynamicPrecedence,
 		StartByte: r.startByte, EndByte: r.endByte, Extra: r.extra, External: r.external, Terminal: r.terminal,
+		Missing: r.missing,
 	}
 	view.Children = append(view.Children, c.children[r.firstChild:r.firstChild+r.childCount]...)
 	view.Fields = append(view.Fields, c.fields[r.firstField:r.firstField+r.fieldCount]...)
@@ -5398,6 +5464,7 @@ func (c *Core) MaterializationView(id SubtreeID) (MaterializationSubtreeView, er
 		External:          record.external,
 		Terminal:          record.terminal,
 		Fragile:           record.fragile,
+		Missing:           record.missing,
 	}, nil
 }
 
