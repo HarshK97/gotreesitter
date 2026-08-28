@@ -21,6 +21,29 @@ import (
 // gate silently skips and reports ok on a checkout that never staged the
 // corpus; these witnesses cannot skip.
 
+// enableAdmissionCensus turns the decline census on for the calling test,
+// using the pattern the existing census tests already established
+// (admission_switch_kotlin_certification_test.go): set the environment
+// variable, then clear the sync.Once that caches it so the new value takes
+// effect regardless of what an earlier test in this binary already read.
+// t.Setenv restores the variable, and the cleanup clears the cache again so
+// later tests re-read rather than inherit this test's value.
+func enableAdmissionCensus(t *testing.T) {
+	t.Helper()
+	t.Setenv("GTS_ADMISSION_CENSUS", "1")
+	gts.ResetAdmissionCensusEnabledForTest()
+	t.Cleanup(gts.ResetAdmissionCensusEnabledForTest)
+}
+
+// disableAdmissionCensus is enableAdmissionCensus's counterpart, proving the
+// census-off path rather than assuming it.
+func disableAdmissionCensus(t *testing.T) {
+	t.Helper()
+	t.Setenv("GTS_ADMISSION_CENSUS", "0")
+	gts.ResetAdmissionCensusEnabledForTest()
+	t.Cleanup(gts.ResetAdmissionCensusEnabledForTest)
+}
+
 // admissionCensusRecoveryShapeWitness is one pinned (source, mechanism) pair.
 type admissionCensusRecoveryShapeWitness struct {
 	language string
@@ -108,8 +131,7 @@ func admissionCensusDeclineReason(t *testing.T, language, source string) string 
 // TestAdmissionCensusRecoveryShapeClassification pins the C-mechanism
 // sub-class the census reports for each recovery-boundary decline.
 func TestAdmissionCensusRecoveryShapeClassification(t *testing.T) {
-	restore := gts.SetAdmissionCensusEnabledForTest(true)
-	defer restore()
+	enableAdmissionCensus(t)
 
 	for _, witness := range admissionCensusRecoveryShapeWitnesses() {
 		t.Run(witness.language+"/"+witness.mechanism, func(t *testing.T) {
@@ -138,9 +160,10 @@ func TestAdmissionCensusRecoveryShapeClassification(t *testing.T) {
 func TestAdmissionCensusRecoveryShapeIsDiagnosticOnly(t *testing.T) {
 	for _, witness := range admissionCensusRecoveryShapeWitnesses() {
 		t.Run(witness.language, func(t *testing.T) {
-			restoreOff := gts.SetAdmissionCensusEnabledForTest(false)
-			off := admissionCensusDeclineReason(t, witness.language, witness.source)
-			restoreOff()
+			off := func() string {
+				disableAdmissionCensus(t)
+				return admissionCensusDeclineReason(t, witness.language, witness.source)
+			}()
 			if off == "" {
 				t.Fatalf("compact route admitted %q with the census disabled", witness.source)
 			}
@@ -148,9 +171,8 @@ func TestAdmissionCensusRecoveryShapeIsDiagnosticOnly(t *testing.T) {
 				t.Fatalf("census-disabled decline reason leaked a classification: %q", off)
 			}
 
-			restoreOn := gts.SetAdmissionCensusEnabledForTest(true)
+			enableAdmissionCensus(t)
 			on := admissionCensusDeclineReason(t, witness.language, witness.source)
-			restoreOn()
 			if on == "" {
 				t.Fatalf("compact route admitted %q with the census enabled", witness.source)
 			}
@@ -168,8 +190,7 @@ func TestAdmissionCensusRecoveryShapeIsDiagnosticOnly(t *testing.T) {
 // census can emit comes from the closed, documented set. A new mechanism must
 // be added here deliberately, not leak out as free text.
 func TestAdmissionCensusRecoveryShapeVocabulary(t *testing.T) {
-	restore := gts.SetAdmissionCensusEnabledForTest(true)
-	defer restore()
+	enableAdmissionCensus(t)
 
 	known := map[string]bool{
 		"missing-token-insertion": true,

@@ -308,7 +308,8 @@ const (
 // answers a yes/no question on the hot decline path and must stay cheap to
 // read, while the census wants the population.
 func admissionCensusMissingTokenCandidates(scheduler *diagnosticParserCoreGenericScheduler, state StateID, lookahead Symbol) (count int, first Symbol, err error) {
-	if scheduler == nil || scheduler.tokenSource == nil || scheduler.tokenSource.language == nil {
+	if scheduler == nil || scheduler.compact == nil ||
+		scheduler.tokenSource == nil || scheduler.tokenSource.language == nil {
 		return 0, 0, nil
 	}
 	tokenCount := Symbol(scheduler.tokenSource.language.TokenCount)
