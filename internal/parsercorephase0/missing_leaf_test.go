@@ -108,11 +108,18 @@ func TestMissingLeafSurfacesThroughMaterializationView(t *testing.T) {
 	}
 }
 
-// TestMissingLeafIsInertSubstrate states the stage boundary as an executable
-// claim: publishing a missing leaf is the ONLY way a missing record can enter
-// a compact arena today, so every record any other Core operation publishes
-// reports Missing false. The scheduler mechanism that will call MissingLeaf is
-// B3 stage S5 and does not exist yet.
+// TestMissingLeafIsInertSubstrate checks the stage boundary over the publish
+// paths reachable from a bare Core: seed, diagnostic payload, error-region
+// leaf, and error-region resume all report Missing false.
+//
+// Read the scope honestly. Go zero-values the field and MissingLeaf is the
+// only site that sets it, so this assertion cannot fail for any code that
+// merely forgets to propagate the bit -- it is a boundary marker, not a trap.
+// It also does not reach the shift paths (scheduler_owned.go) or Reduce,
+// which need a table with real actions rather than the inert fixture here.
+// The load-bearing inertness evidence is elsewhere: MissingLeaf has exactly
+// one non-test occurrence in the tree, its own definition, and the real-corpus
+// admission matrix is unchanged at 88/0/46/12 with this substrate present.
 func TestMissingLeafIsInertSubstrate(t *testing.T) {
 	compact := newMissingLeafTestCore(t)
 	seed, err := compact.Seed(StateID(1), 0)
@@ -123,8 +130,12 @@ func TestMissingLeafIsInertSubstrate(t *testing.T) {
 		Token{Symbol: 5, StartByte: 0, EndByte: 2}, pathMeta{}); err != nil {
 		t.Fatalf("appendDiagnosticPayload: %v", err)
 	}
-	if _, err := compact.ErrorRegionLeaf(Symbol(6), 2, 4, false); err != nil {
+	regionChild, err := compact.ErrorRegionLeaf(Symbol(6), 2, 4, false)
+	if err != nil {
 		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	if _, err := compact.ErrorRegionResume(seed, StateID(1), 2, 4, []SubtreeID{regionChild}); err != nil {
+		t.Fatalf("ErrorRegionResume: %v", err)
 	}
 	for id := SubtreeID(1); uint64(id) <= uint64(len(compact.subtrees)); id++ {
 		view, err := compact.Subtree(id)
