@@ -4492,10 +4492,37 @@ func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowP
 	if err != nil {
 		return shallowPayloadClass{}, false, err
 	}
-	// The compact phase-zero core cannot represent recovery/error subtrees yet,
-	// so every resident non-external payload is clean by construction. External
-	// payloads require exact per-token scanner provenance or a stable language
-	// certificate.
+	// This class is the compact port of C's stack__subtree_is_equivalent
+	// (stack.c:181-197), MINUS one clause. C tests, in order: same pointer;
+	// equal symbol; a BOTH-HAVE-ERRORS shortcut ("if both have errors, don't
+	// bother keeping both", stack.c:189, taken when ts_subtree_error_cost is
+	// positive on both sides); and only then the field comparison this class
+	// represents (padding, size, child count, extra, external scanner state).
+	// The shortcut is deliberately not ported -- see
+	// spec.derivation-set-equivalence.v1, which scopes it out until error-path
+	// equivalence lands.
+	//
+	// STALE-INVARIANT WARNING. That omission used to be justified by a
+	// stronger statement: the compact core could not represent an error or
+	// recovery subtree at all, so no resident payload could ever have a
+	// positive error cost and the shortcut could never apply. B3 stage S3
+	// (ERROR regions) and the stage S5 substrate (subtreeRecord.missing,
+	// Core.MissingLeaf) have both weakened that. A MISSING payload carries
+	// error cost ERROR_COST_PER_MISSING_TREE + ERROR_COST_PER_RECOVERY
+	// (subtree.h:331-337), so it is exactly the shape the shortcut exists for.
+	//
+	// What still holds, and what does not: no live parser path publishes a
+	// MISSING record today (Core.MissingLeaf has no non-test caller), so the
+	// class cannot currently see one and behavior is unchanged. Before any
+	// path does start publishing one, this class MUST gain C's both-errors
+	// shortcut. Without it, a missing payload and a clean zero-width payload
+	// with the same symbol compare equal on every field here and would be
+	// folded as equivalent -- which happens to agree with C for that one pair,
+	// but silently disagrees as soon as two DIFFERENTLY-SHAPED error payloads
+	// meet, where C collapses them and this class would keep both.
+	//
+	// External payloads separately require exact per-token scanner provenance
+	// or a stable language certificate.
 	if payload.external && !c.externalPayloadsQuiescent {
 		_, exact, err := c.subtreeExternalProvenance(payloadID)
 		if err != nil || !exact {
