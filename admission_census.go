@@ -147,7 +147,38 @@ const (
 var (
 	admissionCensusEnabledOnce sync.Once
 	admissionCensusEnabledVal  bool
+
+	admissionCensusRecoveryShapeOnce sync.Once
+	admissionCensusRecoveryShapeVal  bool
 )
+
+// admissionCensusRecoveryShapeEnabled reports whether the operator asked for
+// the recovery sub-classification on top of the ordinary census.
+//
+// It is a SEPARATE opt-in from GTS_ADMISSION_CENSUS, for two reasons.
+//
+// First, blast radius. cgo_harness/testmain_cgo_test.go sets
+// GTS_ADMISSION_CENSUS=1 process-wide for that whole package, and six tests
+// there pin the recovery decline reason by EXACT equality (for example
+// sqlC26ahCompactFallback). Appending to the census detail under the existing
+// flag silently breaks all six, and those tests are container-only -- they
+// authenticate a pinned compiler and grammar artifact, so a host run cannot
+// verify a change to them. Keeping this behind its own flag leaves that
+// harness byte-identical.
+//
+// Second, cost. The classification walks every terminal in the grammar's
+// action table for each classified decline, which is far heavier than the
+// existing census's constant-time boundary mapping. An operator who wants
+// only the coarse mechanism should not pay for the fine one.
+func admissionCensusRecoveryShapeEnabled() bool {
+	admissionCensusRecoveryShapeOnce.Do(func() {
+		switch os.Getenv("GTS_ADMISSION_CENSUS_RECOVERY_SHAPE") {
+		case "1", "true", "TRUE", "True", "on", "ON", "yes", "YES":
+			admissionCensusRecoveryShapeVal = true
+		}
+	})
+	return admissionCensusRecoveryShapeVal
+}
 
 // admissionCensusEnabled reports whether GTS_ADMISSION_CENSUS requests the
 // fine-grained decline classification. The result is cached after the first
@@ -282,6 +313,17 @@ const (
 	// ancestor boundary within cRecoverMaxSummaryDepth has an action for the
 	// elected token. C's strategy-1 summary election would recover to that
 	// state and wrap the skipped span in one ERROR. B3 stage S4 owns this.
+	//
+	// This bucket OVER-APPROXIMATES strategy 1, so read it as an S4 ceiling
+	// and, correspondingly, an S3 floor. AncestorStateWithActionExists is a
+	// bounded existence probe with no cost comparison and no election, while
+	// C's summary scan additionally skips entries at ERROR_STATE, skips
+	// entries whose position equals the current position, and ABORTS the whole
+	// scan when a cheaper live version exists -- even where the lookahead
+	// would have had actions. None of those three are modeled here, and every
+	// row this bucket over-reports is a row taken from the absorb bucket
+	// below. An operator sizing S3 against S4 from this census will therefore
+	// under-size S3.
 	censusRecoveryShapeDeeperResume admissionCensusRecoveryShape = "stack-summary-resume"
 	// censusRecoveryShapeEOFWrap: the elected token is authenticated
 	// end-of-file and neither earlier mechanism applies, so C reaches
@@ -347,21 +389,37 @@ func admissionCensusMissingTokenCandidates(scheduler *diagnosticParserCoreGeneri
 	return count, first, nil
 }
 
-// admissionCensusRecoveryShapeFor classifies one recovery-boundary decline.
-// It returns an empty shape when the stop receipt does not describe a
-// classifiable recovery point, in which case the caller leaves the decline
-// text unchanged.
+// admissionCensusRecoveryShapeFor classifies one recovery-boundary decline,
+// or reports an empty shape when the decline is not a classifiable recovery
+// point, in which case the caller leaves the decline text unchanged.
+//
+// DiagnosticParserCoreRecovery is a ROUTING bucket, not a proof that C is in
+// recovery. The driver publishes it with four different details, and three of
+// them are Go-side deferrals where C never enters ts_parser__handle_error at
+// all: the D2-1 ragged-relex decline, the issue-983 contextual close-angle
+// deferral (whose state DOES have an action for the elected token), and an
+// ActionRecover cell reached inside a conflict. Classifying those would
+// attribute a C mechanism to a point C never reaches. The ragged-relex case is
+// worse than merely wrong: `finish` records the SHARED election token, while
+// the decline is about a different relexed token with a different EndByte, so
+// any probe here would run against a lookahead that was never the stop point.
+//
+// So this classifies exactly one detail -- the genuine no-table-action shape
+// that is C's own error-entry point -- and declines to guess on the rest.
 func admissionCensusRecoveryShapeFor(scheduler *diagnosticParserCoreGenericScheduler, stop DiagnosticParserCoreGenericStop) (admissionCensusRecoveryShape, string) {
 	if scheduler == nil || scheduler.compact == nil {
 		return "", ""
 	}
-	lookahead := Symbol(stop.Token.Symbol)
-	// An unlexable-run lookahead is C's error subtree: C skips strategy 1 for
-	// it entirely (cRecoverStrategy1Election's own guard) and absorbs. Leave
-	// it to the absorb class without probing.
-	if lookahead == errorSymbol {
-		return censusRecoveryShapeAbsorb, ""
+	if stop.Detail != diagnosticParserCoreNoTableActionDetail {
+		return "", ""
 	}
+	lookahead := Symbol(stop.Token.Symbol)
+
+	// Step 2, missing-token insertion. C applies NO error-lookahead guard
+	// here: ts_parser__handle_error wraps its missingTokenSearch only in the
+	// graphql triple-quote exclusion, and the errorSymbol guard lives solely
+	// in cRecoverStrategy1Election. Probing this first, for every lookahead,
+	// is what keeps stage S5 from being under-credited.
 	missingCount, missingFirst, err := admissionCensusMissingTokenCandidates(scheduler, stop.State, lookahead)
 	if err != nil {
 		return "", ""
@@ -369,13 +427,29 @@ func admissionCensusRecoveryShapeFor(scheduler *diagnosticParserCoreGenericSched
 	if missingCount > 0 {
 		return censusRecoveryShapeMissingToken, fmt.Sprintf("candidates=%d first=%d", missingCount, missingFirst)
 	}
-	if stop.HeaderIndex >= 0 && stop.HeaderIndex < len(scheduler.headers) {
+
+	// Strategy 1, the stack-summary resume election. C skips it for an
+	// error-subtree lookahead and for a WIDE symbol-0 token, which is this
+	// engine's unlexable run (cRecoverStrategy1Election's own guards). Both
+	// fall straight through to strategy 2.
+	wideUnlexable := lookahead == 0 && stop.Token.StartByte != stop.Token.EndByte
+	if lookahead != errorSymbol && !wideUnlexable {
+		if stop.HeaderIndex < 0 || stop.HeaderIndex >= len(scheduler.headers) {
+			return "", ""
+		}
 		deeper, deeperErr := scheduler.compact.AncestorStateWithActionExists(
 			scheduler.headers[stop.HeaderIndex].head, core.Symbol(lookahead), cRecoverMaxSummaryDepth)
-		if deeperErr == nil && deeper {
+		if deeperErr != nil {
+			// The strategy-1 question was never answered. Emitting the last
+			// bucket in the ladder here would publish a confident S3 verdict
+			// on an unrun probe, so report no classification instead.
+			return "", ""
+		}
+		if deeper {
 			return censusRecoveryShapeDeeperResume, ""
 		}
 	}
+
 	if lookahead == 0 && stop.Token.StartByte == stop.Token.EndByte {
 		return censusRecoveryShapeEOFWrap, ""
 	}
@@ -414,8 +488,13 @@ func admissionCensusStopDecline(scheduler *diagnosticParserCoreGenericScheduler)
 	// and the only one whose members sit in different B3 stages. Sub-classify
 	// it by the C mechanism that owns the input (admissionCensusRecoveryShape)
 	// so the census reports a schedulable cohort instead of one undivided
-	// "recovery" bucket. Every other boundary keeps its text byte-identical.
-	if stop.Boundary == DiagnosticParserCoreRecovery {
+	// "recovery" bucket.
+	//
+	// Behind its own opt-in: with GTS_ADMISSION_CENSUS alone every decline
+	// text, recovery included, stays byte-identical to before this tranche.
+	// See admissionCensusRecoveryShapeEnabled for why that separation is
+	// load-bearing rather than tidy.
+	if stop.Boundary == DiagnosticParserCoreRecovery && admissionCensusRecoveryShapeEnabled() {
 		if shape, extra := admissionCensusRecoveryShapeFor(scheduler, stop); shape != "" {
 			detail += " [c-mechanism=" + string(shape)
 			if extra != "" {

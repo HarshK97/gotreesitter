@@ -76,4 +76,18 @@ func TestAdmissionCensusClassifiesMaterialAcceptanceElection(t *testing.T) {
 func ResetAdmissionCensusEnabledForTest() {
 	admissionCensusEnabledOnce = sync.Once{}
 	admissionCensusEnabledVal = false
+	admissionCensusRecoveryShapeOnce = sync.Once{}
+	admissionCensusRecoveryShapeVal = false
+}
+
+// AdmissionCensusRecoveryShapesForTest returns the closed vocabulary of
+// recovery sub-classifications the decline census can emit, so a test can
+// assert against the shipped constants instead of retyping their literals.
+func AdmissionCensusRecoveryShapesForTest() []string {
+	return []string{
+		string(censusRecoveryShapeMissingToken),
+		string(censusRecoveryShapeDeeperResume),
+		string(censusRecoveryShapeEOFWrap),
+		string(censusRecoveryShapeAbsorb),
+	}
 }

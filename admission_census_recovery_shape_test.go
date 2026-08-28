@@ -31,6 +31,7 @@ import (
 func enableAdmissionCensus(t *testing.T) {
 	t.Helper()
 	t.Setenv("GTS_ADMISSION_CENSUS", "1")
+	t.Setenv("GTS_ADMISSION_CENSUS_RECOVERY_SHAPE", "1")
 	gts.ResetAdmissionCensusEnabledForTest()
 	t.Cleanup(gts.ResetAdmissionCensusEnabledForTest)
 }
@@ -40,6 +41,7 @@ func enableAdmissionCensus(t *testing.T) {
 func disableAdmissionCensus(t *testing.T) {
 	t.Helper()
 	t.Setenv("GTS_ADMISSION_CENSUS", "0")
+	t.Setenv("GTS_ADMISSION_CENSUS_RECOVERY_SHAPE", "0")
 	gts.ResetAdmissionCensusEnabledForTest()
 	t.Cleanup(gts.ResetAdmissionCensusEnabledForTest)
 }
@@ -102,11 +104,15 @@ func admissionCensusDeclineReason(t *testing.T, language, source string) string 
 		}
 	}
 	if !found {
-		t.Skipf("grammar %q is not registered in this build", language)
+		// Deliberately fatal, not a skip. The whole point of using embedded
+		// grammars instead of the gitignored corpus was that a corpus gate
+		// silently skips and reports ok; skipping here would reproduce that
+		// exact failure mode on a build with a trimmed registry.
+		t.Fatalf("grammar %q is not registered in this build", language)
 	}
 	lang := entry.Language()
 	if lang == nil {
-		t.Skipf("grammar %q has no loadable language", language)
+		t.Fatalf("grammar %q has no loadable language", language)
 	}
 	parser := gts.NewParser(lang)
 	parser.SetAdmissionCandidateRoute(true)
@@ -176,11 +182,31 @@ func TestAdmissionCensusRecoveryShapeIsDiagnosticOnly(t *testing.T) {
 			if on == "" {
 				t.Fatalf("compact route admitted %q with the census enabled", witness.source)
 			}
-			// The census-enabled text is the census-disabled classification
-			// plus the appended tag; the routing outcome (a decline) is
-			// identical either way.
-			if !strings.Contains(on, "[c-mechanism=") {
+			// State the relationship precisely. The census does NOT append to
+			// the census-off text: with the census disabled the runner reports
+			// its FOLDED message ("did not accept EOF"), and enabling the
+			// census replaces that with the scheduler's own fine-grained
+			// boundary and detail. That replacement is pre-existing behavior.
+			// What this tranche adds is only the trailing tag, so the property
+			// to prove is that stripping the tag leaves the census detail the
+			// census already produced, intact.
+			tagIndex := strings.Index(on, " [c-mechanism=")
+			if tagIndex < 0 {
 				t.Fatalf("census-enabled decline reason carries no classification: %q", on)
+			}
+			base, tag := on[:tagIndex], on[tagIndex:]
+			if !strings.HasSuffix(tag, "]") || strings.Count(tag, "[c-mechanism=") != 1 {
+				t.Fatalf("census-enabled reason appended %q, want exactly one [c-mechanism=...] tag", tag)
+			}
+			// The untagged remainder must still be the census's own
+			// classification of this decline, unaltered.
+			if !strings.Contains(base, "mechanism=recovery-entered") ||
+				!strings.Contains(base, gts.DiagnosticParserCoreNoTableActionDetailForTest()) {
+				t.Fatalf("the tag displaced part of the census detail; remainder = %q", base)
+			}
+			// And the routing outcome is identical either way: both declined.
+			if off == "" || on == "" {
+				t.Fatalf("census toggling changed the routing outcome")
 			}
 		})
 	}
@@ -192,11 +218,14 @@ func TestAdmissionCensusRecoveryShapeIsDiagnosticOnly(t *testing.T) {
 func TestAdmissionCensusRecoveryShapeVocabulary(t *testing.T) {
 	enableAdmissionCensus(t)
 
-	known := map[string]bool{
-		"missing-token-insertion": true,
-		"stack-summary-resume":    true,
-		"recover-eof-wrap":        true,
-		"error-region-absorb":     true,
+	// Derived from the shipped constants, not retyped: renaming a constant
+	// must not leave this test asserting the old vocabulary.
+	known := map[string]bool{}
+	for _, shape := range gts.AdmissionCensusRecoveryShapesForTest() {
+		known[shape] = true
+	}
+	if len(known) != 4 {
+		t.Fatalf("census exposes %d recovery shapes, want the 4 documented ones", len(known))
 	}
 	for _, witness := range admissionCensusRecoveryShapeWitnesses() {
 		if !known[witness.mechanism] {
@@ -205,7 +234,7 @@ func TestAdmissionCensusRecoveryShapeVocabulary(t *testing.T) {
 		reason := admissionCensusDeclineReason(t, witness.language, witness.source)
 		index := strings.Index(reason, "[c-mechanism=")
 		if index < 0 {
-			continue
+			t.Fatalf("witness %q emitted no classification tag: %q", witness.source, reason)
 		}
 		tail := reason[index+len("[c-mechanism="):]
 		end := strings.IndexAny(tail, " ]")
@@ -214,6 +243,36 @@ func TestAdmissionCensusRecoveryShapeVocabulary(t *testing.T) {
 		}
 		if !known[tail[:end]] {
 			t.Fatalf("census reported mechanism %q outside the documented vocabulary (%q)", tail[:end], reason)
+		}
+	}
+}
+
+// TestAdmissionCensusRecoveryShapeNeedsItsOwnOptIn proves the separation that
+// keeps cgo_harness byte-identical: with the ordinary census enabled but the
+// recovery sub-classification NOT requested, no decline carries the tag.
+//
+// cgo_harness/testmain_cgo_test.go sets GTS_ADMISSION_CENSUS=1 for its whole
+// package, and six tests there pin the recovery decline reason by exact
+// equality. Those tests are container-only, so a regression here would not
+// surface on a host run; this gate stands in for them.
+func TestAdmissionCensusRecoveryShapeNeedsItsOwnOptIn(t *testing.T) {
+	t.Setenv("GTS_ADMISSION_CENSUS", "1")
+	t.Setenv("GTS_ADMISSION_CENSUS_RECOVERY_SHAPE", "")
+	gts.ResetAdmissionCensusEnabledForTest()
+	t.Cleanup(gts.ResetAdmissionCensusEnabledForTest)
+
+	for _, witness := range admissionCensusRecoveryShapeWitnesses() {
+		reason := admissionCensusDeclineReason(t, witness.language, witness.source)
+		if reason == "" {
+			t.Fatalf("compact route admitted %q", witness.source)
+		}
+		if strings.Contains(reason, "c-mechanism") {
+			t.Fatalf("the ordinary census leaked a recovery sub-classification: %q", reason)
+		}
+		// The census's own coarse classification must still be present, so
+		// this proves a narrower gate, not a disabled census.
+		if !strings.Contains(reason, "mechanism=") {
+			t.Fatalf("the ordinary census stopped classifying entirely: %q", reason)
 		}
 	}
 }
