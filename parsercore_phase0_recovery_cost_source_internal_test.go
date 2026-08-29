@@ -146,42 +146,64 @@ func TestRecoveryCostSourceRowsTrackNewlines(t *testing.T) {
 }
 
 // TestRecoveryLineageErrorCostSumsPayloads proves lineage pricing is C's
-// ts_stack_error_cost: the sum over the version's stack nodes.
+// ts_stack_error_cost: the SUM over the version's stack nodes, not the cost of
+// the last one. The fixture puts two ERROR regions on one lineage and requires
+// the total to be both regions added together.
 func TestRecoveryLineageErrorCostSumsPayloads(t *testing.T) {
-	compact, src := newRecoveryCostFixture(t, "abcdef")
+	compact, src := newRecoveryCostFixture(t, "ab\ncd\nef")
 	seed, err := compact.Seed(core.StateID(1), 0)
 	if err != nil {
 		t.Fatalf("Seed: %v", err)
 	}
-	head, err := compact.ShiftMissingLeaf(seed, core.StateID(2), core.Symbol(3), 0)
+	firstChild, err := compact.ErrorRegionLeaf(core.Symbol(5), 0, 2, false)
 	if err != nil {
-		t.Fatalf("ShiftMissingLeaf: %v", err)
+		t.Fatalf("ErrorRegionLeaf: %v", err)
 	}
-	head, err = compact.ShiftMissingLeaf(head, core.StateID(3), core.Symbol(4), 0)
+	head, err := compact.ErrorRegionResume(seed, core.StateID(1), 0, 2, []core.SubtreeID{firstChild})
 	if err != nil {
-		t.Fatalf("ShiftMissingLeaf: %v", err)
+		t.Fatalf("ErrorRegionResume: %v", err)
 	}
+	secondChild, err := compact.ErrorRegionLeaf(core.Symbol(6), 2, 7, false)
+	if err != nil {
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	head, err = compact.ErrorRegionResume(head, core.StateID(2), 2, 7, []core.SubtreeID{secondChild})
+	if err != nil {
+		t.Fatalf("ErrorRegionResume: %v", err)
+	}
+
 	cost, err := diagnosticParserCoreLineageErrorCost(compact, head, visibleSymbols(8), src, nil)
 	if err != nil {
 		t.Fatalf("lineage cost: %v", err)
 	}
-	const want = 2 * (core.RecoveryCostPerMissingTree + core.RecoveryCostPerRecovery)
-	if cost != want {
-		t.Fatalf("lineage cost = %d, want %d (two missing insertions)", cost, want)
+	// First region: span 0..2 = 2 bytes, 0 rows, one visible child.
+	// Second region: span 2..7 = 5 bytes, 2 rows, one visible child.
+	const firstRegion = core.RecoveryCostPerRecovery +
+		core.RecoveryCostPerSkippedChar*2 + core.RecoveryCostPerSkippedTree
+	const secondRegion = core.RecoveryCostPerRecovery +
+		core.RecoveryCostPerSkippedChar*5 + core.RecoveryCostPerSkippedLine*2 +
+		core.RecoveryCostPerSkippedTree
+	if cost != firstRegion+secondRegion {
+		t.Fatalf("lineage cost = %d, want %d (%d + %d): pricing did not sum the payloads",
+			cost, firstRegion+secondRegion, firstRegion, secondRegion)
 	}
 }
 
 // TestRecoveryLineageErrorCostMemoAgrees proves the memoized and unmemoized
 // walks agree, since arbitration will run the memoized one.
 func TestRecoveryLineageErrorCostMemoAgrees(t *testing.T) {
-	compact, src := newRecoveryCostFixture(t, "abcdef")
+	compact, src := newRecoveryCostFixture(t, "ab\ncd\nef")
 	seed, err := compact.Seed(core.StateID(1), 0)
 	if err != nil {
 		t.Fatalf("Seed: %v", err)
 	}
-	head, err := compact.ShiftMissingLeaf(seed, core.StateID(2), core.Symbol(3), 0)
+	child, err := compact.ErrorRegionLeaf(core.Symbol(5), 0, 7, false)
 	if err != nil {
-		t.Fatalf("ShiftMissingLeaf: %v", err)
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	head, err := compact.ErrorRegionResume(seed, core.StateID(1), 0, 7, []core.SubtreeID{child})
+	if err != nil {
+		t.Fatalf("ErrorRegionResume: %v", err)
 	}
 	plain, err := diagnosticParserCoreLineageErrorCost(compact, head, visibleSymbols(8), src, nil)
 	if err != nil {
@@ -194,6 +216,9 @@ func TestRecoveryLineageErrorCostMemoAgrees(t *testing.T) {
 	}
 	if plain != memoized {
 		t.Fatalf("memoized cost %d disagrees with unmemoized %d", memoized, plain)
+	}
+	if plain == 0 {
+		t.Fatal("fixture priced at zero; it proves nothing about agreement")
 	}
 }
 
@@ -212,14 +237,22 @@ func TestRecoveryLineageErrorCostDeclinesAmbiguousHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Seed: %v", err)
 	}
-	if _, err := compact.ShiftMissingLeaf(seedA, core.StateID(9), core.Symbol(3), 0); err != nil {
-		t.Fatalf("ShiftMissingLeaf: %v", err)
-	}
-	// Two distinct predecessors attaching at the same (state, byte offset)
-	// boundary leave the resulting head carrying two root-to-head paths.
-	ambiguous, err := compact.ShiftMissingLeaf(seedB, core.StateID(9), core.Symbol(4), 0)
+	childA, err := compact.ErrorRegionLeaf(core.Symbol(5), 0, 3, false)
 	if err != nil {
-		t.Fatalf("ShiftMissingLeaf: %v", err)
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	childB, err := compact.ErrorRegionLeaf(core.Symbol(6), 0, 3, false)
+	if err != nil {
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	if _, err := compact.ErrorRegionResume(seedA, core.StateID(9), 0, 3, []core.SubtreeID{childA}); err != nil {
+		t.Fatalf("ErrorRegionResume: %v", err)
+	}
+	// A second predecessor attaching at the same (state, byte offset) boundary
+	// leaves the resulting head carrying two root-to-head paths.
+	ambiguous, err := compact.ErrorRegionResume(seedB, core.StateID(9), 0, 3, []core.SubtreeID{childB})
+	if err != nil {
+		t.Fatalf("ErrorRegionResume: %v", err)
 	}
 	derivations, err := compact.Derivations(ambiguous)
 	if err != nil {
@@ -230,5 +263,181 @@ func TestRecoveryLineageErrorCostDeclinesAmbiguousHead(t *testing.T) {
 	}
 	if _, err := diagnosticParserCoreLineageErrorCost(compact, ambiguous, visibleSymbols(8), src, nil); !errors.Is(err, diagnosticParserCoreLineageCostUnavailable) {
 		t.Fatalf("ambiguous head priced without refusing: %v", err)
+	}
+}
+
+// The selection ladder is the compact port of ts_parser__select_tree
+// (parser.c:836-878). Each test below pins one rung, in C's own order.
+
+func lineage(cost uint32, score int64) diagnosticParserCoreLineage {
+	return diagnosticParserCoreLineage{Cost: cost, Score: score}
+}
+
+// TestSelectRecoveryLineagePrefersLowerCost pins rung 1, the rung the whole
+// arbitration exists for: a missing insertion costs a flat 610 and an absorbed
+// span costs 500 plus its length, so the cheaper tree is the one C publishes.
+func TestSelectRecoveryLineagePrefersLowerCost(t *testing.T) {
+	// 609 is the measured cost of absorbing the nine bytes of php "namespace"
+	// (500 recovery + 9 chars + 100 for one visible child); 610 is a single
+	// missing insertion. C publishes the ERROR tree, and so must this.
+	winner, err := diagnosticParserCoreSelectRecoveryLineage([]diagnosticParserCoreLineage{
+		lineage(610, 0), lineage(609, 0),
+	})
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if winner != 1 {
+		t.Fatalf("winner=%d, want 1 (the 609 absorb beats the 610 insertion)", winner)
+	}
+	// And the same pair in the opposite order must give the same answer.
+	winner, err = diagnosticParserCoreSelectRecoveryLineage([]diagnosticParserCoreLineage{
+		lineage(609, 0), lineage(610, 0),
+	})
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if winner != 0 {
+		t.Fatalf("winner=%d, want 0; the ladder is order-sensitive on cost", winner)
+	}
+}
+
+// TestSelectRecoveryLineagePrefersHigherPrecedenceOnCostTie pins rung 2.
+func TestSelectRecoveryLineagePrefersHigherPrecedenceOnCostTie(t *testing.T) {
+	winner, err := diagnosticParserCoreSelectRecoveryLineage([]diagnosticParserCoreLineage{
+		lineage(700, 3), lineage(700, 9),
+	})
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if winner != 1 {
+		t.Fatalf("winner=%d, want 1 (higher dynamic precedence on a cost tie)", winner)
+	}
+	winner, err = diagnosticParserCoreSelectRecoveryLineage([]diagnosticParserCoreLineage{
+		lineage(700, 9), lineage(700, 3),
+	})
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if winner != 0 {
+		t.Fatalf("winner=%d, want 0", winner)
+	}
+}
+
+// TestSelectRecoveryLineageTakesTheLaterErroredCandidateOnFullTie pins rung 3,
+// the rung easiest to get backwards. C returns TRUE at parser.c:864 -- when
+// cost and precedence both tie and the incumbent carries error content, the
+// LATER candidate replaces it. Keeping the incumbent instead would look like a
+// harmless stability choice and would silently diverge from C.
+func TestSelectRecoveryLineageTakesTheLaterErroredCandidateOnFullTie(t *testing.T) {
+	winner, err := diagnosticParserCoreSelectRecoveryLineage([]diagnosticParserCoreLineage{
+		lineage(610, 0), lineage(610, 0), lineage(610, 0),
+	})
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if winner != 2 {
+		t.Fatalf("winner=%d, want 2: C takes the later candidate when both sides are errored and tied", winner)
+	}
+}
+
+// TestSelectRecoveryLineageRefusesACleanTie pins rung 4 as OUT OF SCOPE. C
+// falls back to a structural tree comparison, which this port does not model,
+// and it can only be reached when both candidates are clean -- which no
+// recovery lineage is. Declining beats guessing.
+func TestSelectRecoveryLineageRefusesACleanTie(t *testing.T) {
+	_, err := diagnosticParserCoreSelectRecoveryLineage([]diagnosticParserCoreLineage{
+		lineage(0, 0), lineage(0, 0),
+	})
+	if !errors.Is(err, ErrDiagnosticParserCoreLineageTie) {
+		t.Fatalf("clean tie returned %v, want ErrDiagnosticParserCoreLineageTie", err)
+	}
+}
+
+// TestSelectRecoveryLineageSingletonAndEmpty covers the degenerate inputs.
+func TestSelectRecoveryLineageSingletonAndEmpty(t *testing.T) {
+	winner, err := diagnosticParserCoreSelectRecoveryLineage([]diagnosticParserCoreLineage{lineage(610, 0)})
+	if err != nil || winner != 0 {
+		t.Fatalf("singleton select = (%d, %v), want (0, nil)", winner, err)
+	}
+	if _, err := diagnosticParserCoreSelectRecoveryLineage(nil); err == nil {
+		t.Fatal("selecting among no lineages returned no error")
+	}
+}
+
+// TestPriceLineagesRefusesAmbiguousHead proves pricing carries the
+// single-lineage requirement through to the selection entry point, rather than
+// silently pricing one arbitrary path of an ambiguous head.
+func TestPriceLineagesRefusesAmbiguousHead(t *testing.T) {
+	compact, src := newRecoveryCostFixture(t, "abcdef")
+	seedA, err := compact.Seed(core.StateID(1), 0)
+	if err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	seedB, err := compact.Seed(core.StateID(2), 0)
+	if err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	childA, err := compact.ErrorRegionLeaf(core.Symbol(5), 0, 3, false)
+	if err != nil {
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	childB, err := compact.ErrorRegionLeaf(core.Symbol(6), 0, 3, false)
+	if err != nil {
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	if _, err := compact.ErrorRegionResume(seedA, core.StateID(9), 0, 3, []core.SubtreeID{childA}); err != nil {
+		t.Fatalf("ErrorRegionResume: %v", err)
+	}
+	ambiguous, err := compact.ErrorRegionResume(seedB, core.StateID(9), 0, 3, []core.SubtreeID{childB})
+	if err != nil {
+		t.Fatalf("ErrorRegionResume: %v", err)
+	}
+	if _, err := diagnosticParserCorePriceLineages(compact, []core.Head{ambiguous}, visibleSymbols(8), src, nil); !errors.Is(err, diagnosticParserCoreLineageCostUnavailable) {
+		t.Fatalf("pricing an ambiguous head returned %v, want a refusal", err)
+	}
+}
+
+// TestPriceLineagesPricesEachHeadIndependently proves pricing walks each head
+// rather than reusing one answer, and that the prices it produces are the ones
+// the ladder then orders.
+func TestPriceLineagesPricesEachHeadIndependently(t *testing.T) {
+	compact, src := newRecoveryCostFixture(t, "ab\ncd\nef")
+	seed, err := compact.Seed(core.StateID(1), 0)
+	if err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	narrowChild, err := compact.ErrorRegionLeaf(core.Symbol(5), 0, 2, false)
+	if err != nil {
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	narrow, err := compact.ErrorRegionResume(seed, core.StateID(3), 0, 2, []core.SubtreeID{narrowChild})
+	if err != nil {
+		t.Fatalf("ErrorRegionResume: %v", err)
+	}
+	wideChild, err := compact.ErrorRegionLeaf(core.Symbol(6), 0, 7, false)
+	if err != nil {
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	wide, err := compact.ErrorRegionResume(seed, core.StateID(4), 0, 7, []core.SubtreeID{wideChild})
+	if err != nil {
+		t.Fatalf("ErrorRegionResume: %v", err)
+	}
+
+	priced, err := diagnosticParserCorePriceLineages(compact, []core.Head{wide, narrow}, visibleSymbols(8), src, nil)
+	if err != nil {
+		t.Fatalf("price: %v", err)
+	}
+	if len(priced) != 2 {
+		t.Fatalf("priced %d lineages, want 2", len(priced))
+	}
+	if priced[0].Cost <= priced[1].Cost {
+		t.Fatalf("the wider absorbed span priced at %d, not above the narrower %d", priced[0].Cost, priced[1].Cost)
+	}
+	winner, err := diagnosticParserCoreSelectRecoveryLineage(priced)
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if winner != 1 {
+		t.Fatalf("winner=%d, want 1: the cheaper, narrower region", winner)
 	}
 }

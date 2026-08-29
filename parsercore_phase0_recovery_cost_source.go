@@ -165,3 +165,122 @@ func diagnosticParserCoreLineageErrorCost(
 	}
 	return total, nil
 }
+
+// diagnosticParserCoreLineage is one competing recovery lineage at an
+// accepting frontier, together with the price the selection ladder reads.
+type diagnosticParserCoreLineage struct {
+	Head core.Head
+	// Cost is the lineage's total error cost, C's ts_stack_error_cost.
+	Cost uint32
+	// Score is the summed dynamic precedence of the lineage's sole
+	// derivation, C's ts_subtree_dynamic_precedence.
+	Score int64
+}
+
+// ErrDiagnosticParserCoreLineageTie reports that the selection ladder ran out
+// of C-defined tiebreaks. C's last resort is ts_subtree_compare, a structural
+// comparison it reaches only when BOTH candidates are clean
+// (ts_parser__select_tree returns early for a positive error cost). Every
+// lineage this selection exists to arbitrate carries recovery content, so
+// reaching that clause means the caller handed in a shape this port does not
+// model, and the honest answer is to decline rather than pick one.
+var ErrDiagnosticParserCoreLineageTie = errors.New("parser-core phase zero: competing recovery lineages tie beyond the modeled selection ladder")
+
+// diagnosticParserCorePriceLineages prices each candidate head so the
+// selection ladder can order them. It refuses any head that does not carry
+// exactly one derivation, for the reason diagnosticParserCoreLineageErrorCost
+// already states: the comparison is defined on one lineage.
+func diagnosticParserCorePriceLineages(
+	compact *core.Core,
+	heads []core.Head,
+	symbols []core.SelectedSymbolPolicy,
+	src *diagnosticParserCoreRecoveryCostSource,
+	memo *core.RecoveryCostMemo,
+) ([]diagnosticParserCoreLineage, error) {
+	if compact == nil || src == nil {
+		return nil, errors.New("parser-core phase zero: lineage pricing requires a compact core and source")
+	}
+	out := make([]diagnosticParserCoreLineage, 0, len(heads))
+	for _, head := range heads {
+		cost, err := diagnosticParserCoreLineageErrorCost(compact, head, symbols, src, memo)
+		if err != nil {
+			return nil, err
+		}
+		derivations, err := compact.Derivations(head)
+		if err != nil {
+			return nil, err
+		}
+		if len(derivations) != 1 {
+			return nil, diagnosticParserCoreLineageCostUnavailable
+		}
+		out = append(out, diagnosticParserCoreLineage{
+			Head: head, Cost: cost, Score: derivations[0].Score,
+		})
+	}
+	return out, nil
+}
+
+// diagnosticParserCoreSelectRecoveryLineage returns the index of the lineage C
+// would publish, porting ts_parser__select_tree's ordering (parser.c:836-878).
+//
+// C folds every accepted root into one winner pairwise, asking for each new
+// candidate whether it should REPLACE the incumbent. Its ladder, in order:
+//
+//  1. lower error cost wins;
+//  2. then higher dynamic precedence wins;
+//  3. then, when the incumbent's error cost is positive, the LATER candidate
+//     wins (parser.c:864, `if (ts_subtree_error_cost(left) > 0) return true`);
+//  4. otherwise C compares the trees structurally (ts_subtree_compare).
+//
+// Clause 3 is not a coin flip and must not be "simplified" to keeping the
+// incumbent: it is what lets a later, equally priced recovery displace an
+// earlier one. Clause 4 is unreachable here, because it requires BOTH sides to
+// be clean, and a lineage with zero error cost is not a recovery lineage at
+// all; this port returns ErrDiagnosticParserCoreLineageTie instead of guessing.
+//
+// The order of lineages is therefore load-bearing. Callers must pass them in
+// the scheduler's own publication order, which is the compact analogue of C's
+// version index order.
+func diagnosticParserCoreSelectRecoveryLineage(lineages []diagnosticParserCoreLineage) (int, error) {
+	if len(lineages) == 0 {
+		return 0, errors.New("parser-core phase zero: no recovery lineage to select")
+	}
+	winner := 0
+	for candidate := 1; candidate < len(lineages); candidate++ {
+		replace, err := diagnosticParserCoreLineageReplaces(lineages[winner], lineages[candidate])
+		if err != nil {
+			return 0, err
+		}
+		if replace {
+			winner = candidate
+		}
+	}
+	return winner, nil
+}
+
+// diagnosticParserCoreLineageReplaces reports whether candidate should replace
+// incumbent, mirroring ts_parser__select_tree's return value exactly (true
+// means "take the right-hand side").
+func diagnosticParserCoreLineageReplaces(incumbent, candidate diagnosticParserCoreLineage) (bool, error) {
+	if candidate.Cost < incumbent.Cost {
+		return true, nil
+	}
+	if incumbent.Cost < candidate.Cost {
+		return false, nil
+	}
+	if candidate.Score > incumbent.Score {
+		return true, nil
+	}
+	if incumbent.Score > candidate.Score {
+		return false, nil
+	}
+	if incumbent.Cost > 0 {
+		// C parser.c:864. Equal cost, equal precedence, and the incumbent
+		// carries error content: the later candidate wins.
+		return true, nil
+	}
+	// Both sides are clean and tied. C would compare the trees structurally;
+	// this port does not model that, and a recovery arbitration should never
+	// reach it.
+	return false, ErrDiagnosticParserCoreLineageTie
+}
