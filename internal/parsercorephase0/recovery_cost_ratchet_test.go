@@ -30,6 +30,14 @@ import (
 // unexported helper functions/constant. A later stage that wires this file
 // in (S3 onward) will make this ratchet fail on purpose -- that failure is
 // the signal to update or retire it alongside the real call site landing.
+//
+// SCOPE CORRECTION. This ratchet reads only THIS package's files, and
+// recovery_cost.go's API is exported, so a caller in another package never
+// trips it. Such a caller now exists: the root package's
+// parsercore_phase0_recovery_cost_source.go implements RecoveryCostSource and
+// prices recovery lineages with this model. Read the guarantee as "no caller
+// inside the compact core", which is still worth holding, and not as "no
+// caller anywhere", which is no longer true.
 func TestRecoveryCostNoOutsideCallSitesRatchet(t *testing.T) {
 	const homeFile = "recovery_cost.go"
 

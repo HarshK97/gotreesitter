@@ -83,3 +83,38 @@ func (c *Core) MissingLeaf(symbol Symbol, atByte uint32) (id SubtreeID, err erro
 		missing:   true,
 	}, nil, nil, nil)
 }
+
+// ShiftMissingLeaf publishes one missing terminal and attaches it to head at
+// targetState, the compact equivalent of C pushing the missing subtree onto a
+// copied stack version (ts_parser__handle_error, parser.c:2154-2230:
+// ts_stack_push(stack, version_with_missing_tree, missing_tree, false,
+// state_after_missing_symbol)).
+//
+// The boundary is keyed as a SHIFT boundary (shiftedBoundaryKey), matching
+// every other terminal attachment onto a head (shiftClassifiedUncheckpointed)
+// rather than a reduction replacing children. The byte offset does not move:
+// the leaf is zero width, so the resulting head sits at the same atByte the
+// caller's head already occupied, which is exactly what C's own
+// length_zero() size produces.
+//
+// targetState must be the state C's ts_language_next_state returns for
+// symbol at the head's own state. This function does not re-derive it,
+// because the caller has already read the action row to find it and to run
+// C's reduce-action test on the result.
+func (c *Core) ShiftMissingLeaf(head Head, targetState StateID, symbol Symbol, atByte uint32) (out Head, err error) {
+	if targetState == 0 {
+		return Head{}, errors.New("parser-core phase zero: missing leaf shift requires a real target state")
+	}
+	mark := c.mark()
+	defer c.completeTransaction(mark, &err)
+	if _, err := c.node(head.Node); err != nil {
+		return Head{}, err
+	}
+	payload, err := c.MissingLeaf(symbol, atByte)
+	if err != nil {
+		return Head{}, err
+	}
+	return c.condense(c.shiftedBoundaryKey(targetState, atByte), linkInput{
+		prev: head.Node, payload: payload,
+	})
+}
