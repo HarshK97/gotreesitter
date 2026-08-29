@@ -372,11 +372,7 @@ func newCorridorTables(lang *Language) (*corridorTables, error) {
 		reduceChainEnabled: corridorReduceChainEnabled(),
 		reduceShiftEnabled: corridorReduceShiftEnabled(),
 	}
-	if lang.LargeStateCount > 0 {
-		t.denseLimit = int(lang.LargeStateCount)
-	} else {
-		t.denseLimit = len(lang.ParseTable)
-	}
+	t.denseLimit = languageDenseLimit(lang)
 	t.smallBase = int(lang.LargeStateCount)
 	states := int(lang.StateCount)
 	if states == 0 {
