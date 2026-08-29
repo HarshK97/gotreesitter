@@ -539,9 +539,34 @@ type parserDerivedTables struct {
 
 // acquireParserDerivedTables builds the derived parser tables exactly once per
 // Language, even under concurrent first use, and returns the shared instance.
-// Inputs are immutable after decode (see cRecoveryGateCacheKey): the only
-// supported post-load mutations (external scanner attach, recovery
-// certification flags) touch none of the fields these builders read.
+//
+// The exact read set, enumerated from the six builders and from
+// forEachActionIndexInState, which buildEagerDefaultReduceActions calls:
+//
+//	GeneratedByGrammargen, LargeStateCount, Name, ParseActions, ParseTable,
+//	SmallParseTable, SmallParseTableMap, SymbolMetadata, SymbolNames, TokenCount
+//
+// Every write to one of those fields happens before the Language escapes to a
+// caller: inside LoadLanguage, inside decodeLanguageBlobData's repair passes,
+// in grammargen assembly, or in ts2go generation. The supported POST-load
+// mutations -- external scanner attach, ExternalLexStates attach, and the
+// runtime-profile certification flags -- write none of them, and the embedded
+// loader performs all of its attaching inside the cache entry's own sync.Once
+// before returning the Language at all.
+//
+// TWO STALENESS PRECONDITIONS, both inherited rather than introduced:
+//
+//  1. Whole-slice ordering. AdaptScannerForLanguage is exported and assigns
+//     Language.Name when it is empty, and buildSmallTokenLookup branches on
+//     that name. A caller that constructs a Language with no name, calls
+//     NewParser on it, and only THEN attaches will keep the tables built under
+//     the pre-attach name. Attach before the first NewParser; the embedded
+//     loader already does.
+//  2. In-place pokes. Mutating a cell of ParseTable, SmallParseTable, or a
+//     ParseActionEntry's Actions in place between NewParser calls leaves this
+//     memo serving tables built from the old contents. Whole-swap the slice or
+//     build a fresh Language instead. This is the same footgun the recovery
+//     gate memo already documents (cRecoveryGateCacheKey).
 func (l *Language) acquireParserDerivedTables() *parserDerivedTables {
 	l.parserDerivedOnce.Do(func() {
 		t := &parserDerivedTables{}
