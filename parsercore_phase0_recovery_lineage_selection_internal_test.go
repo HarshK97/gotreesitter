@@ -4,6 +4,7 @@ package gotreesitter
 
 import (
 	"testing"
+	"unsafe"
 
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
@@ -64,9 +65,7 @@ func newLineageSelectionScheduler(t *testing.T, armed bool) *diagnosticParserCor
 	scheduler.headers[0].head = missingHead
 	scheduler.headers[1].head = absorbHead
 	for index := range scheduler.headers {
-		if err := scheduler.headers[index].markRecoveryLineage(0); err != nil {
-			t.Fatalf("markRecoveryLineage: %v", err)
-		}
+		scheduler.headers[index].markRecoveryLineage()
 	}
 	return scheduler
 }
@@ -106,7 +105,7 @@ func TestSelectCompetingRecoveryLineageDeclinesUnarmed(t *testing.T) {
 // pricing one would silently substitute a different decision procedure.
 func TestSelectCompetingRecoveryLineageDeclinesNonRecoveryHead(t *testing.T) {
 	scheduler := newLineageSelectionScheduler(t, true)
-	scheduler.headers[1].recoveryCompetition = 0
+	scheduler.headers[1].clearRecoveryLineage()
 	_, resolved, err := scheduler.selectCompetingRecoveryLineage()
 	if err != nil {
 		t.Fatalf("select: %v", err)
@@ -122,9 +121,9 @@ func TestSelectCompetingRecoveryLineageDeclinesNonRecoveryHead(t *testing.T) {
 // margin between them is a single point.
 func TestSelectCompetingRecoveryLineageChargesOpenSegments(t *testing.T) {
 	scheduler := newLineageSelectionScheduler(t, true)
-	if err := scheduler.headers[1].markRecoveryLineage(1); err != nil {
-		t.Fatalf("markRecoveryLineage: %v", err)
-	}
+	// A paused head carries one open-recovery segment, derived rather than
+	// stored, so pricing charges it RecoveryCostPerRecovery.
+	scheduler.headers[1].paused = true
 
 	winner, resolved, err := scheduler.selectCompetingRecoveryLineage()
 	if err != nil {
@@ -168,35 +167,86 @@ func TestSelectCompetingRecoveryLineageDeclinesSingleHead(t *testing.T) {
 	}
 }
 
-// TestRecoveryLineageMarkerPacksIntoOneByte pins the encoding, because it is
-// the reason the header did not grow. Two plain fields would push s3Region
-// past its alignment and take the header from 224 to 232 bytes, which two
-// separate size ratchets pin.
-func TestRecoveryLineageMarkerPacksIntoOneByte(t *testing.T) {
+// TestRecoveryLineageMarkerDoesNotGrowTheHeader pins the reason the marker is
+// a single field placed before s3Region. Two fields, or one placed after the
+// pointer, take the header from 224 to 232 bytes -- measured -- and two
+// separate size ratchets pin 224. Asserting it here means a reader who splits
+// the field finds out from this test rather than from an unrelated ratchet.
+func TestRecoveryLineageMarkerDoesNotGrowTheHeader(t *testing.T) {
+	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 224 {
+		t.Fatalf("scheduler header is %d bytes, want 224", got)
+	}
 	var header diagnosticParserCoreHeader
 	if header.isRecoveryLineage() {
 		t.Fatal("a zero header reported itself as a recovery lineage")
 	}
+	header.markRecoveryLineage()
+	if !header.isRecoveryLineage() {
+		t.Fatal("marking did not take")
+	}
+	header.clearRecoveryLineage()
+	if header.isRecoveryLineage() {
+		t.Fatal("clearing did not demote the header")
+	}
+}
+
+// TestRecoveryOpenSegmentsDerivesFromLiveState proves the open-recovery term
+// tracks the header fields the ordinary reduce and pause paths mutate, rather
+// than a stored copy those paths would leave stale. A stale count mis-prices a
+// lineage by 500, ten times the margin this arbitration turns on.
+func TestRecoveryOpenSegmentsDerivesFromLiveState(t *testing.T) {
+	var header diagnosticParserCoreHeader
 	if got := header.recoveryOpenSegments(); got != 0 {
-		t.Fatalf("zero header reported %d open segments", got)
+		t.Fatalf("a clean header reported %d open segments", got)
 	}
-	for _, segments := range []int{0, 1, 7, diagnosticParserCoreMaxRecoveryOpenSegments} {
-		if err := header.markRecoveryLineage(segments); err != nil {
-			t.Fatalf("markRecoveryLineage(%d): %v", segments, err)
-		}
-		if !header.isRecoveryLineage() {
-			t.Fatalf("marking with %d segments lost the lineage bit", segments)
-		}
-		if got := header.recoveryOpenSegments(); got != segments {
-			t.Fatalf("stored %d segments, read back %d", segments, got)
-		}
+
+	// C: `s.cPaused || (s.cRec != nil && s.cRec.openErr == nil)`.
+	header.paused = true
+	if got := header.recoveryOpenSegments(); got != 1 {
+		t.Fatalf("a paused header reported %d open segments, want 1", got)
 	}
-	// Fail closed rather than truncate: a silently smaller count under-prices
-	// the lineage by 500 per lost segment.
-	if err := header.markRecoveryLineage(diagnosticParserCoreMaxRecoveryOpenSegments + 1); err == nil {
-		t.Fatal("an out-of-range segment count was accepted")
+	header.paused = false
+
+	header.s3Region = &diagnosticParserCoreS3Region{}
+	if got := header.recoveryOpenSegments(); got != 1 {
+		t.Fatalf("an opened-but-empty error region reported %d open segments, want 1", got)
 	}
-	if err := header.markRecoveryLineage(-1); err == nil {
-		t.Fatal("a negative segment count was accepted")
+	// Once the region holds absorbed content, its cost lives in the published
+	// subtrees and the open term must stop applying.
+	header.s3Region = &diagnosticParserCoreS3Region{children: []core.SubtreeID{1}}
+	if got := header.recoveryOpenSegments(); got != 0 {
+		t.Fatalf("a region with absorbed content reported %d open segments, want 0", got)
+	}
+}
+
+// TestCollapseToRecoveryWinnerSeatsTheWinnerAndClearsLosers covers the one
+// line that actually changes acceptance behaviour. A transposed index or a
+// wrong-slot write here would publish the loser's tree, and no other test in
+// this package would notice.
+func TestCollapseToRecoveryWinnerSeatsTheWinnerAndClearsLosers(t *testing.T) {
+	scheduler := newLineageSelectionScheduler(t, true)
+	scheduler.headers = append(scheduler.headers, diagnosticParserCoreHeader{})
+	scheduler.headers[2].markRecoveryLineage()
+	scheduler.headers[2].s3Region = &diagnosticParserCoreS3Region{}
+	want := scheduler.headers[1]
+
+	scheduler.collapseToRecoveryWinner(1)
+
+	if len(scheduler.headers) != 1 {
+		t.Fatalf("frontier has %d headers after collapse, want 1", len(scheduler.headers))
+	}
+	if scheduler.headers[0].head != want.head {
+		t.Fatal("collapse seated a head other than the winner at index 0")
+	}
+	if scheduler.work.RecoveryLineageSelections != 1 {
+		t.Fatalf("collapse recorded %d selections, want 1", scheduler.work.RecoveryLineageSelections)
+	}
+	// The losers must not stay live in the backing array: each retains an open
+	// error region for the scheduler's lifetime otherwise.
+	tail := scheduler.headers[:cap(scheduler.headers)][1:3]
+	for index := range tail {
+		if tail[index].s3Region != nil || tail[index].isRecoveryLineage() {
+			t.Fatalf("dropped header %d is still live in the backing array", index+1)
+		}
 	}
 }

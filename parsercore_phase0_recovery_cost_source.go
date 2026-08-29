@@ -376,18 +376,33 @@ func diagnosticParserCoreLineageReplaces(incumbent, candidate diagnosticParserCo
 // diagnosticParserCoreRecoverySymbolPolicy projects the visibility signal the
 // cost model reads out of a Language's own symbol metadata.
 //
-// RecoverySymbolVisible consumes SelectedStorePolicy.Symbols, and that slice
-// is built from exactly this field (see buildParserCoreSelectedStorePolicy).
-// Projecting it directly keeps lineage pricing from depending on the whole
-// selected-store policy, which an accepting scheduler has no other reason to
-// construct.
+// It reproduces buildParserCoreSelectedStorePolicy's width and default rule
+// EXACTLY, and both halves are load-bearing:
+//
+//   - Width is max(len(SymbolMetadata), len(SymbolNames), SymbolCount), not
+//     len(SymbolMetadata). SymbolMetadata can be shorter than the symbol space
+//     -- the embedded loader pads it up to len(SymbolNames) precisely because
+//     some blobs arrive short.
+//   - Symbols past the metadata end default to VISIBLE. RecoverySymbolVisible
+//     answers false for an out-of-range index, so a short slice would price
+//     every such child invisible.
+//
+// Getting either wrong drops RecoveryCostPerSkippedTree (100) per absorbed
+// visible child. The measured php arbitration turns on a single point, so an
+// under-counted child inverts it and the route publishes a tree C would not.
 func diagnosticParserCoreRecoverySymbolPolicy(lang *Language) []core.SelectedSymbolPolicy {
 	if lang == nil {
 		return nil
 	}
-	out := make([]core.SelectedSymbolPolicy, len(lang.SymbolMetadata))
-	for index, meta := range lang.SymbolMetadata {
-		out[index] = core.SelectedSymbolPolicy{Visible: meta.Visible, Named: meta.Named}
+	width := max(len(lang.SymbolMetadata), len(lang.SymbolNames), int(lang.SymbolCount))
+	out := make([]core.SelectedSymbolPolicy, width)
+	for index := range out {
+		visible, named := true, false
+		if index < len(lang.SymbolMetadata) {
+			visible = lang.SymbolMetadata[index].Visible
+			named = lang.SymbolMetadata[index].Named
+		}
+		out[index] = core.SelectedSymbolPolicy{Visible: visible, Named: named}
 	}
 	return out
 }
