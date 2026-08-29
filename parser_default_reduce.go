@@ -29,29 +29,29 @@ func parseEagerDefaultReduceDebugEnabled() bool {
 	return parseEagerDefaultDebug
 }
 
-func buildEagerDefaultReduceActions(p *Parser) []eagerDefaultReduceAction {
-	if p == nil || p.language == nil || len(p.language.ParseActions) == 0 {
+func buildEagerDefaultReduceActions(v parserActionTableView) []eagerDefaultReduceAction {
+	if v.language == nil || len(v.language.ParseActions) == 0 {
 		return nil
 	}
-	stateCount := parserRuntimeStateCount(p)
+	stateCount := parserRuntimeStateCount(v)
 	if stateCount == 0 {
 		return nil
 	}
 	out := make([]eagerDefaultReduceAction, stateCount)
-	tokenCount := Symbol(p.language.TokenCount)
+	tokenCount := Symbol(v.language.TokenCount)
 	for state := 0; state < stateCount; state++ {
 		var candidate ParseAction
 		found := false
 		invalid := false
-		p.forEachActionIndexInState(StateID(state), func(sym Symbol, idx uint16) bool {
+		v.forEachActionIndexInState(StateID(state), func(sym Symbol, idx uint16) bool {
 			if sym >= tokenCount {
 				return true
 			}
-			if int(idx) >= len(p.classifiedActions) {
+			if int(idx) >= len(v.classifiedActions) {
 				invalid = true
 				return false
 			}
-			classified := p.classifiedActions[idx]
+			classified := v.classifiedActions[idx]
 			if classified.class == classifiedParseActionSingleShift &&
 				(classified.action.Extra || classified.action.ExtraChain) {
 				return true
@@ -91,19 +91,19 @@ func (p *Parser) isExternalToken(sym Symbol) bool {
 	return false
 }
 
-func parserRuntimeStateCount(p *Parser) int {
-	if p == nil || p.language == nil {
+func parserRuntimeStateCount(v parserActionTableView) int {
+	if v.language == nil {
 		return 0
 	}
-	stateCount := int(p.language.StateCount)
+	stateCount := int(v.language.StateCount)
 	if stateCount == 0 {
-		stateCount = len(p.language.ParseTable)
+		stateCount = len(v.language.ParseTable)
 	}
-	if smallStates := p.smallBase + len(p.language.SmallParseTableMap); smallStates > stateCount {
+	if smallStates := v.smallBase + len(v.language.SmallParseTableMap); smallStates > stateCount {
 		stateCount = smallStates
 	}
-	if len(p.language.LexModes) > stateCount {
-		stateCount = len(p.language.LexModes)
+	if len(v.language.LexModes) > stateCount {
+		stateCount = len(v.language.LexModes)
 	}
 	return stateCount
 }

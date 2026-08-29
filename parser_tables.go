@@ -312,15 +312,56 @@ func buildExternalValidMaskByState(rows [][]uint16, externalSymbolCount int) []u
 	return masks
 }
 
+// parserActionTableView is the EXACT input set the action-table walk and the
+// eager-default-reduce builder read from a Parser. It exists so those two can
+// be driven without a Parser at all.
+//
+// Before this type they took a *Parser, and the per-language memo below had to
+// hand-replicate five Parser fields onto a scratch Parser to call them. That
+// replication was invisible to the compiler: the day either function started
+// reading a sixth field, the memo would have silently produced a different
+// table for every Parser of that Language. Naming the inputs turns that class
+// of bug into a compile error.
+type parserActionTableView struct {
+	language          *Language
+	denseLimit        int
+	smallBase         int
+	smallTokenLookup  [][]uint16
+	smallLookup       [][]smallActionPair
+	classifiedActions []classifiedParseAction
+}
+
+// actionTableView projects the fields a built Parser already holds.
+func (p *Parser) actionTableView() parserActionTableView {
+	if p == nil {
+		return parserActionTableView{}
+	}
+	return parserActionTableView{
+		language:          p.language,
+		denseLimit:        p.denseLimit,
+		smallBase:         p.smallBase,
+		smallTokenLookup:  p.smallTokenLookup,
+		smallLookup:       p.smallLookup,
+		classifiedActions: p.classifiedActions,
+	}
+}
+
 func (p *Parser) forEachActionIndexInState(state StateID, visit func(sym Symbol, idx uint16) bool) {
-	if p == nil || p.language == nil || visit == nil {
+	if p == nil {
 		return
 	}
-	if int(state) < p.denseLimit {
-		if int(state) >= len(p.language.ParseTable) {
+	p.actionTableView().forEachActionIndexInState(state, visit)
+}
+
+func (v parserActionTableView) forEachActionIndexInState(state StateID, visit func(sym Symbol, idx uint16) bool) {
+	if v.language == nil || visit == nil {
+		return
+	}
+	if int(state) < v.denseLimit {
+		if int(state) >= len(v.language.ParseTable) {
 			return
 		}
-		row := p.language.ParseTable[state]
+		row := v.language.ParseTable[state]
 		for sym, idx := range row {
 			if idx == 0 {
 				continue
@@ -332,12 +373,12 @@ func (p *Parser) forEachActionIndexInState(state StateID, visit func(sym Symbol,
 		return
 	}
 
-	smallIdx := int(state) - p.smallBase
-	if smallIdx < 0 || smallIdx >= len(p.language.SmallParseTableMap) {
+	smallIdx := int(state) - v.smallBase
+	if smallIdx < 0 || smallIdx >= len(v.language.SmallParseTableMap) {
 		return
 	}
-	hasDenseRow := smallIdx < len(p.smallTokenLookup) && len(p.smallTokenLookup[smallIdx]) > 0
-	hasOverflow := smallIdx < len(p.smallLookup) && len(p.smallLookup[smallIdx]) > 0
+	hasDenseRow := smallIdx < len(v.smallTokenLookup) && len(v.smallTokenLookup[smallIdx]) > 0
+	hasOverflow := smallIdx < len(v.smallLookup) && len(v.smallLookup[smallIdx]) > 0
 	if hasDenseRow || hasOverflow {
 		// A small state can carry a dense smallTokenLookup row and a
 		// smallLookup overflow slice at the same time (dense covers the
@@ -346,7 +387,7 @@ func (p *Parser) forEachActionIndexInState(state StateID, visit func(sym Symbol,
 		// overflow, so the two sets are always disjoint and both must be
 		// visited to enumerate the state completely.
 		if hasDenseRow {
-			for sym, idx := range p.smallTokenLookup[smallIdx] {
+			for sym, idx := range v.smallTokenLookup[smallIdx] {
 				if idx == 0 {
 					continue
 				}
@@ -356,7 +397,7 @@ func (p *Parser) forEachActionIndexInState(state StateID, visit func(sym Symbol,
 			}
 		}
 		if hasOverflow {
-			for _, pair := range p.smallLookup[smallIdx] {
+			for _, pair := range v.smallLookup[smallIdx] {
 				if !visit(Symbol(pair.sym), pair.val) {
 					return
 				}
@@ -365,8 +406,8 @@ func (p *Parser) forEachActionIndexInState(state StateID, visit func(sym Symbol,
 		return
 	}
 
-	offset := p.language.SmallParseTableMap[smallIdx]
-	table := p.language.SmallParseTable
+	offset := v.language.SmallParseTableMap[smallIdx]
+	table := v.language.SmallParseTable
 	if int(offset) >= len(table) {
 		return
 	}
@@ -507,4 +548,110 @@ func (p *Parser) lookupGoto(state StateID, sym Symbol) StateID {
 		}
 	}
 	return 0
+}
+
+// languageDenseLimit returns the dense parse-table cutoff for this Language.
+//
+// Do not derive this cutoff again anywhere else. Several call sites need the
+// same answer, and two copies can drift. A drifted cutoff changes the
+// eager-default-reduce table for every Parser of the Language.
+func languageDenseLimit(l *Language) int {
+	if l.LargeStateCount > 0 {
+		return int(l.LargeStateCount)
+	}
+	return len(l.ParseTable)
+}
+
+// parserDerivedTables holds the per-language derived parser tables that are
+// pure functions of the decoded grammar tables. NewParser previously rebuilt
+// them on every call; they are now built once per *Language and shared,
+// read-only, by every Parser of that Language.
+type parserDerivedTables struct {
+	smallTokenLookup             [][]uint16
+	smallLookup                  [][]smallActionPair
+	classifiedActions            []classifiedParseAction
+	eagerDefaultReduces          []eagerDefaultReduceAction
+	keepSameNamedAnonChildSymbol []bool
+	sharedAnonymousTokenSymbol   []bool
+}
+
+// acquireParserDerivedTables builds the derived parser tables exactly once per
+// Language, even under concurrent first use, and returns the shared instance.
+//
+// The read set, traced through every builder AND through the two helpers they
+// call, parserRuntimeStateCount and smallDenseLookupSymbolLimit:
+//
+//	GeneratedByGrammargen, LargeStateCount, LexModes, Name, ParseActions,
+//	ParseTable, SmallParseTable, SmallParseTableMap, StateCount, SymbolCount,
+//	SymbolMetadata, SymbolNames, TokenCount
+//
+// Every write to one of those fields runs before the Language reaches a
+// caller: inside LoadLanguage, inside decodeLanguageBlobData's repair passes,
+// in grammargen assembly, or in ts2go generation. The embedded loader also
+// performs its scanner, lex-state, and runtime-profile attaching inside the
+// cache entry's own sync.Once, before it returns the Language.
+//
+// The supported POST-load mutations write none of those fields. They write
+// ExternalScanner, ExternalLexStates, and the runtime-profile flags.
+//
+// TWO STALENESS HAZARDS THAT THIS MEMO INTRODUCES. Before it, NewParser
+// rebuilt these tables on every call, so a later call observed any change.
+// Now the first call freezes them.
+//
+//  1. Attach before the first NewParser. AttachLanguageSupport assigns
+//     Language.Name when it is empty, and buildSmallTokenLookup branches on
+//     that name. Build a parser first and the tables keep the pre-attach name.
+//     The embedded loader already attaches inside its own sync.Once.
+//  2. Do not poke table cells in place. Writing into ParseTable,
+//     SmallParseTable, or a ParseActionEntry's Actions leaves this memo
+//     serving tables built from the old contents. Swap the whole slice, or
+//     build a fresh Language. The recovery-gate memo documents the same
+//     hazard for its own inputs (cRecoveryGateCacheKey).
+func (l *Language) acquireParserDerivedTables() *parserDerivedTables {
+	if l == nil {
+		return &parserDerivedTables{}
+	}
+	l.parserDerivedOnce.Do(func() {
+		l.parserDerived = buildParserDerivedTables(l)
+	})
+	if derived := l.parserDerived; derived != nil {
+		return derived
+	}
+	// sync.Once records completion even when its function PANICS, so a builder
+	// that panicked on first use would otherwise leave parserDerived nil and
+	// make every later NewParser nil-dereference far from the original cause.
+	// Rebuild unmemoized instead: the caller still gets correct tables, and the
+	// only cost is that a Language whose first build panicked stops being
+	// cached.
+	return buildParserDerivedTables(l)
+}
+
+// buildParserDerivedTables computes the derived tables from a Language alone.
+// It takes no Parser: the eager-default-reduce builder consumes an explicit
+// parserActionTableView, so there is no scratch Parser to hand-replicate and
+// no field-drift hazard to audit.
+//
+// INVARIANT: nothing reachable from here may call acquireParserDerivedTables.
+// It runs inside that function's sync.Once, and Once.Do is not re-entrant, so
+// a re-entering call blocks on the in-progress build ON THE SAME GOROUTINE and
+// never returns. The failure is a silent hang with no panic and no stack, so
+// keep this function to the builders and the view above.
+func buildParserDerivedTables(l *Language) *parserDerivedTables {
+	t := &parserDerivedTables{}
+	if len(l.SmallParseTableMap) > 0 && len(l.SmallParseTable) > 0 {
+		t.smallTokenLookup = buildSmallTokenLookup(l)
+		t.smallLookup = buildSmallLookup(l, t.smallTokenLookup)
+	}
+	t.classifiedActions = buildClassifiedParseActions(l)
+	t.keepSameNamedAnonChildSymbol = buildKeepSameNamedAnonChildSymbols(l)
+	t.sharedAnonymousTokenSymbol = buildSharedAnonymousTokenSymbols(l)
+	t.eagerDefaultReduces = buildEagerDefaultReduceActions(parserActionTableView{
+		language:          l,
+		denseLimit:        languageDenseLimit(l),
+		smallBase:         int(l.LargeStateCount),
+		smallTokenLookup:  t.smallTokenLookup,
+		smallLookup:       t.smallLookup,
+		classifiedActions: t.classifiedActions,
+	})
+	return t
 }

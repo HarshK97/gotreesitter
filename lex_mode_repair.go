@@ -77,10 +77,7 @@ func lookupRepairActionIndex(lang *Language, state StateID, sym Symbol) uint16 {
 		return 0
 	}
 
-	denseLimit := int(lang.LargeStateCount)
-	if denseLimit == 0 {
-		denseLimit = len(lang.ParseTable)
-	}
+	denseLimit := languageDenseLimit(lang)
 	if int(state) < denseLimit {
 		if int(state) >= len(lang.ParseTable) {
 			return 0

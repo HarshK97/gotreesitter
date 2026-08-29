@@ -461,10 +461,7 @@ func buildKeepSameNamedAnonChildSymbols(lang *Language) []bool {
 		return nil
 	}
 
-	denseLimit := int(lang.LargeStateCount)
-	if denseLimit == 0 {
-		denseLimit = len(lang.ParseTable)
-	}
+	denseLimit := languageDenseLimit(lang)
 	smallBase := int(lang.LargeStateCount)
 	forEachStateAction(lang, denseLimit, smallBase, func(state, sym int, act ParseAction) {
 		if act.Type != ParseActionShift {
@@ -508,10 +505,7 @@ func buildSharedAnonymousTokenSymbols(lang *Language) []bool {
 		return nil
 	}
 
-	denseLimit := int(lang.LargeStateCount)
-	if denseLimit == 0 {
-		denseLimit = len(lang.ParseTable)
-	}
+	denseLimit := languageDenseLimit(lang)
 	smallBase := int(lang.LargeStateCount)
 	forEachStateAction(lang, denseLimit, smallBase, func(state, sym int, act ParseAction) {
 		if act.Type != ParseActionShift || sym >= tokenCount {

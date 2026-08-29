@@ -677,6 +677,14 @@ type Language struct {
 	corridorProgram     any   // *ParserCoreCorridorProgram under the default build
 	corridorProgramErr  error // the compile error, memoized alongside corridorProgram
 
+	// parserDerivedOnce memoizes the per-language derived parser tables that
+	// NewParser previously rebuilt on every call. The tables are pure functions
+	// of the decoded grammar tables (ParseTable, SmallParseTable, ParseActions,
+	// SymbolMetadata), which are immutable after decode. The cache lives on the
+	// Language for the same retention reason as compactTables above.
+	parserDerivedOnce sync.Once
+	parserDerived     *parserDerivedTables
+
 	// NonTerminalAliasMap mirrors tree-sitter C's ts_non_terminal_alias_map.
 	// Rows are indexed by nonterminal symbol and contain aliases that require
 	// preserving the wrapper during alias-bearing reductions. This is cold
