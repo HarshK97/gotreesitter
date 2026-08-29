@@ -348,8 +348,8 @@ func TestSelectRecoveryLineageRefusesACleanTie(t *testing.T) {
 	_, err := diagnosticParserCoreSelectRecoveryLineage([]diagnosticParserCoreLineage{
 		lineage(0, 0), lineage(0, 0),
 	})
-	if !errors.Is(err, ErrDiagnosticParserCoreLineageTie) {
-		t.Fatalf("clean tie returned %v, want ErrDiagnosticParserCoreLineageTie", err)
+	if !errors.Is(err, errDiagnosticParserCoreLineageTie) {
+		t.Fatalf("clean tie returned %v, want errDiagnosticParserCoreLineageTie", err)
 	}
 }
 

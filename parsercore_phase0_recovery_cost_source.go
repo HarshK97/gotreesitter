@@ -152,8 +152,21 @@ func diagnosticParserCoreLineageErrorCost(
 	if len(derivations) != 1 {
 		return 0, diagnosticParserCoreLineageCostUnavailable
 	}
+	return diagnosticParserCoreDerivationErrorCost(symbols, src, memo, derivations[0])
+}
+
+// diagnosticParserCoreDerivationErrorCost prices one already-resolved
+// derivation. It exists so a caller that has to read Derivations anyway --
+// pricing needs the payload list, ordering needs the Score -- does not resolve
+// the same head twice.
+func diagnosticParserCoreDerivationErrorCost(
+	symbols []core.SelectedSymbolPolicy,
+	src *diagnosticParserCoreRecoveryCostSource,
+	memo *core.RecoveryCostMemo,
+	derivation core.Derivation,
+) (uint32, error) {
 	var total uint32
-	for _, payload := range derivations[0].Payloads {
+	for _, payload := range derivation.Payloads {
 		if payload == 0 {
 			continue
 		}
@@ -177,14 +190,14 @@ type diagnosticParserCoreLineage struct {
 	Score int64
 }
 
-// ErrDiagnosticParserCoreLineageTie reports that the selection ladder ran out
+// errDiagnosticParserCoreLineageTie reports that the selection ladder ran out
 // of C-defined tiebreaks. C's last resort is ts_subtree_compare, a structural
 // comparison it reaches only when BOTH candidates are clean
 // (ts_parser__select_tree returns early for a positive error cost). Every
 // lineage this selection exists to arbitrate carries recovery content, so
 // reaching that clause means the caller handed in a shape this port does not
 // model, and the honest answer is to decline rather than pick one.
-var ErrDiagnosticParserCoreLineageTie = errors.New("parser-core phase zero: competing recovery lineages tie beyond the modeled selection ladder")
+var errDiagnosticParserCoreLineageTie = errors.New("parser-core phase zero: competing recovery lineages tie beyond the modeled selection ladder")
 
 // diagnosticParserCorePriceLineages prices each candidate head so the
 // selection ladder can order them. It refuses any head that does not carry
@@ -202,16 +215,16 @@ func diagnosticParserCorePriceLineages(
 	}
 	out := make([]diagnosticParserCoreLineage, 0, len(heads))
 	for _, head := range heads {
-		cost, err := diagnosticParserCoreLineageErrorCost(compact, head, symbols, src, memo)
-		if err != nil {
-			return nil, err
-		}
 		derivations, err := compact.Derivations(head)
 		if err != nil {
 			return nil, err
 		}
 		if len(derivations) != 1 {
 			return nil, diagnosticParserCoreLineageCostUnavailable
+		}
+		cost, err := diagnosticParserCoreDerivationErrorCost(symbols, src, memo, derivations[0])
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, diagnosticParserCoreLineage{
 			Head: head, Cost: cost, Score: derivations[0].Score,
@@ -236,7 +249,7 @@ func diagnosticParserCorePriceLineages(
 // incumbent: it is what lets a later, equally priced recovery displace an
 // earlier one. Clause 4 is unreachable here, because it requires BOTH sides to
 // be clean, and a lineage with zero error cost is not a recovery lineage at
-// all; this port returns ErrDiagnosticParserCoreLineageTie instead of guessing.
+// all; this port returns errDiagnosticParserCoreLineageTie instead of guessing.
 //
 // The order of lineages is therefore load-bearing. Callers must pass them in
 // the scheduler's own publication order, which is the compact analogue of C's
@@ -282,5 +295,5 @@ func diagnosticParserCoreLineageReplaces(incumbent, candidate diagnosticParserCo
 	// Both sides are clean and tied. C would compare the trees structurally;
 	// this port does not model that, and a recovery arbitration should never
 	// reach it.
-	return false, ErrDiagnosticParserCoreLineageTie
+	return false, errDiagnosticParserCoreLineageTie
 }
