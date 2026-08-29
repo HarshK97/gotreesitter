@@ -95,8 +95,21 @@ type DiagnosticParserCorePrefixOptions struct {
 	// name-keyed -- design section 7). Recovery must also be true: this
 	// option alone does not admit the fresh-full runner's recovery guard.
 	allowCompactStrategy2ErrorRegion bool
-	noLookaheadRootSymbol            Symbol
-	hasNoLookaheadRootSymbol         bool
+	// allowCompactRecoveryLineageSelection permits completeAcceptance to
+	// resolve MORE THAN ONE accepted head by pricing the competing recovery
+	// lineages and publishing the cheaper tree, instead of declining.
+	//
+	// This is the acceptance half of C's version competition. C does not pick
+	// between a missing-token insertion and an error-region absorb where they
+	// diverge; it carries both versions to the end and keeps the cheaper tree
+	// (ts_parser__select_tree). A compact route that requires a sole accepted
+	// head cannot express that outcome at all.
+	//
+	// Unset by default and set from nothing today, so the multi-head path
+	// stays unreachable and every parse declines exactly where it did before.
+	allowCompactRecoveryLineageSelection bool
+	noLookaheadRootSymbol                Symbol
+	hasNoLookaheadRootSymbol             bool
 	// stopControlParser, when non-nil, arms the scheduler's stop-control poll
 	// (spec.campaign.v7 tranche B8): once per dispatch-pass-loop iteration,
 	// diagnosticParserCoreGenericScheduler.run checks this Parser's deadline
@@ -1145,6 +1158,27 @@ type diagnosticParserCoreHeader struct {
 	// witness (section 5).
 	blended              bool
 	lastPersistedBlended bool
+	// recoveryCompetition packs the two facts acceptance-time lineage
+	// selection needs, in ONE byte, placed before s3Region so it lands in the
+	// single padding byte the header already had (offset 215). Two separate
+	// fields would push the pointer past its alignment and grow every header
+	// from 224 to 232 bytes, which two size ratchets pin deliberately.
+	//
+	// Bit 7 marks the header as a recovery lineage: a head some native
+	// recovery mechanism created or advanced, and therefore one that may
+	// compete at acceptance. A frontier that merely forked on ordinary grammar
+	// ambiguity must NOT be marked; error cost answers "which recovery is
+	// cheaper", which is not the question that frontier asks.
+	//
+	// Bits 0..6 count open-recovery segments, the compact analogue of
+	// cStackOpenRecoveryCost's inputs (parser_recover_c.go:2475-2489): one for
+	// a paused head or an opened-but-empty error region, plus one per extra
+	// error_repeat segment. Pricing charges RecoveryCostPerRecovery each.
+	// Omitting them under-prices a paused lineage by 500 on an arbitration
+	// decided by single digits.
+	//
+	// Read and write it through the accessors below, never directly.
+	recoveryCompetition uint8
 	// s3Region marks a header carrying an open native strategy-2 recovery
 	// region (campaign v7 tranche B3 stage S3: error-region absorb and
 	// condense-resume). nil for every header outside recovery, mirroring
@@ -1156,6 +1190,41 @@ type diagnosticParserCoreHeader struct {
 	// (a plain by-value struct copy) restores a correct, independent region
 	// state on rollback without aliasing the live one.
 	s3Region *diagnosticParserCoreS3Region
+}
+
+const (
+	// diagnosticParserCoreRecoveryLineageBit marks a header as a recovery
+	// lineage; the remaining bits hold the open-recovery segment count.
+	diagnosticParserCoreRecoveryLineageBit uint8 = 1 << 7
+	// diagnosticParserCoreMaxRecoveryOpenSegments is what the seven remaining
+	// bits hold. C's own recovery bounds sit far below it, so a count that
+	// reaches this ceiling is a defect, not a deep parse.
+	diagnosticParserCoreMaxRecoveryOpenSegments = int(^diagnosticParserCoreRecoveryLineageBit)
+)
+
+// isRecoveryLineage reports whether this header may compete at acceptance.
+func (h *diagnosticParserCoreHeader) isRecoveryLineage() bool {
+	return h.recoveryCompetition&diagnosticParserCoreRecoveryLineageBit != 0
+}
+
+// recoveryOpenSegments returns the open-recovery segment count pricing charges
+// for. It is meaningful only on a header marked as a recovery lineage.
+func (h *diagnosticParserCoreHeader) recoveryOpenSegments() int {
+	return int(h.recoveryCompetition &^ diagnosticParserCoreRecoveryLineageBit)
+}
+
+// markRecoveryLineage marks this header as a competing recovery lineage
+// carrying segments open-recovery segments. It fails closed rather than
+// truncating: a count that does not fit means the caller's own bookkeeping is
+// wrong, and silently storing a smaller number would under-price the lineage
+// by 500 per lost segment.
+func (h *diagnosticParserCoreHeader) markRecoveryLineage(segments int) error {
+	if segments < 0 || segments > diagnosticParserCoreMaxRecoveryOpenSegments {
+		return fmt.Errorf("parser-core phase zero: open-recovery segment count %d is outside 0..%d",
+			segments, diagnosticParserCoreMaxRecoveryOpenSegments)
+	}
+	h.recoveryCompetition = diagnosticParserCoreRecoveryLineageBit | uint8(segments)
+	return nil
 }
 
 // diagnosticParserCoreS3Region is the open ERROR container a native S3
@@ -7102,6 +7171,74 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericAcceptOwned(owner cor
 	return nil
 }
 
+// selectCompetingRecoveryLineage resolves an accepting frontier that carries
+// more than one head, by pricing every competitor and returning the index C
+// would publish.
+//
+// resolved is false whenever this route must decline instead, and every one of
+// those conditions is a deliberate fail-closed gate rather than an oversight:
+//
+//   - the capability is not armed;
+//   - any competitor is NOT a recovery lineage, so the frontier is ordinary
+//     grammar ambiguity and error cost is the wrong question to ask of it;
+//   - the language or source needed to price a lineage is unavailable;
+//   - pricing refuses a head (an ambiguous head, or one past the derivation
+//     enumeration cap);
+//   - the selection ladder cannot order the winner against some competitor,
+//     which is C's structural comparison and out of this port's scope.
+//
+// A returned error means something is wrong with the compact state itself; a
+// false resolved means the shape is simply not ours to decide.
+func (s *diagnosticParserCoreGenericScheduler) selectCompetingRecoveryLineage() (int, bool, error) {
+	if s == nil || !s.options.allowCompactRecoveryLineageSelection {
+		return 0, false, nil
+	}
+	if len(s.headers) < 2 {
+		return 0, false, nil
+	}
+	for index := range s.headers {
+		if !s.headers[index].isRecoveryLineage() {
+			return 0, false, nil
+		}
+	}
+	if s.tokenSource == nil || s.tokenSource.language == nil {
+		return 0, false, nil
+	}
+	source := s.options.materializationSource
+	if source == nil {
+		return 0, false, nil
+	}
+	costSource, err := newDiagnosticParserCoreRecoveryCostSource(s.compact, source)
+	if err != nil {
+		return 0, false, err
+	}
+	inputs := make([]diagnosticParserCoreLineageInput, 0, len(s.headers))
+	for index := range s.headers {
+		inputs = append(inputs, diagnosticParserCoreLineageInput{
+			Head:                 s.headers[index].head,
+			OpenRecoverySegments: s.headers[index].recoveryOpenSegments(),
+		})
+	}
+	var memo core.RecoveryCostMemo
+	priced, err := diagnosticParserCorePriceLineages(
+		inputs, diagnosticParserCoreRecoverySymbolPolicy(s.tokenSource.language), costSource, &memo,
+	)
+	if err != nil {
+		if errors.Is(err, diagnosticParserCoreLineageCostUnavailable) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	winner, err := diagnosticParserCoreSelectRecoveryLineage(priced)
+	if err != nil {
+		if errors.Is(err, errDiagnosticParserCoreLineageTie) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	return winner, true, nil
+}
+
 func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() (err error) {
 	metadataAdmission := s != nil && s.eofRecoveryAdmission.active &&
 		s.eofRecoveryAdmission.valid &&
@@ -7118,7 +7255,20 @@ func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() (err error) 
 		return s.finish(DiagnosticParserCoreAccept, "generic scheduler accept is not authenticated EOF", 0)
 	}
 	if len(s.headers) != 1 {
-		return s.finish(DiagnosticParserCoreAccept, "generic scheduler requires one accepted compact head", 0)
+		// More than one head accepted. C would already have folded these into
+		// one winner by error cost; the compact route can only do that when
+		// every competitor is a recovery lineage it knows how to price.
+		winner, resolved, selectErr := s.selectCompetingRecoveryLineage()
+		if selectErr != nil {
+			return selectErr
+		}
+		if !resolved {
+			return s.finish(DiagnosticParserCoreAccept, "generic scheduler requires one accepted compact head", 0)
+		}
+		// Keep only the winner. C drops the losing versions at the same point
+		// (ts_parser__select_tree keeps one finished_tree), and every step
+		// below reads headers[0].
+		s.headers = append(s.headers[:0], s.headers[winner])
 	}
 	if metadataAdmission {
 		if err := s.validateCompactEOFRecoveryAdmission(

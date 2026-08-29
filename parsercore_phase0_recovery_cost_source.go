@@ -372,3 +372,22 @@ func diagnosticParserCoreLineageReplaces(incumbent, candidate diagnosticParserCo
 	// Both sides are clean and tied. C would compare the trees structurally.
 	return false, false
 }
+
+// diagnosticParserCoreRecoverySymbolPolicy projects the visibility signal the
+// cost model reads out of a Language's own symbol metadata.
+//
+// RecoverySymbolVisible consumes SelectedStorePolicy.Symbols, and that slice
+// is built from exactly this field (see buildParserCoreSelectedStorePolicy).
+// Projecting it directly keeps lineage pricing from depending on the whole
+// selected-store policy, which an accepting scheduler has no other reason to
+// construct.
+func diagnosticParserCoreRecoverySymbolPolicy(lang *Language) []core.SelectedSymbolPolicy {
+	if lang == nil {
+		return nil
+	}
+	out := make([]core.SelectedSymbolPolicy, len(lang.SymbolMetadata))
+	for index, meta := range lang.SymbolMetadata {
+		out[index] = core.SelectedSymbolPolicy{Visible: meta.Visible, Named: meta.Named}
+	}
+	return out
+}
