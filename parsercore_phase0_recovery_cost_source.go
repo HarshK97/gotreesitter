@@ -21,9 +21,11 @@ import (
 // onto the original anyway, so both versions parse forward, and the winner is
 // settled later by error cost (ts_parser__select_tree,
 // ts_parser__better_version_exists). Measured on php "<?php namespace ; ?>",
-// the missing version costs 610 and the absorbing version about 509, so C
-// publishes an ERROR tree even though its own missing-token search accepted
-// the insertion. Pricing a lineage is therefore the prerequisite for either
+// the missing version costs 610 and the absorbing version 609
+// (500 recovery + 9 skipped chars + 100 for one visible child), so C publishes
+// an ERROR tree even though its own missing-token search accepted the
+// insertion. The margin is ONE point: every term of this model has to be
+// present, or the arbitration inverts. Pricing a lineage is therefore the prerequisite for either
 // recovery stage to be correct, not an optimization.
 //
 // Stage S2 deliberately shipped its cost model with no caller
@@ -54,17 +56,45 @@ import (
 type diagnosticParserCoreRecoveryCostSource struct {
 	compact *core.Core
 	source  []byte
-	// newlines holds the byte offset of every '\n' in source, ascending. A
-	// nil slice with newlinesBuilt false means "not computed yet"; a source
-	// with no newline at all builds an empty non-nil slice, so the flag, not
-	// the length, records whether the scan ran.
+	// newlines holds the byte offset of every '\n' in source, ascending.
+	// newlinesBuilt, not the slice length, records whether the scan has run: a
+	// source with no newline leaves the slice empty, which is indistinguishable
+	// from "not scanned yet" by length alone.
+	//
+	// Neither field is reset. Bind one source per cost source and build a new
+	// one for the next parse; reassigning `source` in place would keep
+	// answering row queries from the previous text.
 	newlines      []uint32
 	newlinesBuilt bool
 }
 
-// rowAt returns the zero-based row containing byteOffset, matching how the
-// public tree numbers points: the row is the count of newlines strictly
-// before the offset.
+// newDiagnosticParserCoreRecoveryCostSource binds a cost source to one Core
+// and one source text.
+//
+// It is the only supported way to build one. Constructing the struct by
+// literal makes `source` look optional, and an absent or short source is not a
+// harmless default: rowAt would answer 0 for every offset, silently dropping
+// RecoveryCostPerSkippedLine (30 per line) from every ERROR region. A
+// twenty-line region would then be under-priced by 600, which is more than an
+// entire missing insertion costs, and the arbitration inverts.
+func newDiagnosticParserCoreRecoveryCostSource(compact *core.Core, source []byte) (*diagnosticParserCoreRecoveryCostSource, error) {
+	if compact == nil {
+		return nil, errors.New("parser-core phase zero: recovery cost source requires a compact core")
+	}
+	if uint64(len(source)) > uint64(^uint32(0)) {
+		return nil, errors.New("parser-core phase zero: recovery cost source exceeds uint32 offsets")
+	}
+	return &diagnosticParserCoreRecoveryCostSource{compact: compact, source: source}, nil
+}
+
+// rowAt returns the zero-based row containing byteOffset: the count of
+// newlines strictly before the offset.
+//
+// It does NOT reuse diagnosticParserCorePointIndex (parsercore_phase0_driver.go),
+// which answers the same question with a cancellation poll and a reusable
+// buffer. That helper is built per materialization against a runner scratch;
+// this source is built per arbitration and may outlive no scratch at all.
+// The scan is bounded by the source length and runs once per source.
 func (s *diagnosticParserCoreRecoveryCostSource) rowAt(byteOffset uint32) uint32 {
 	if !s.newlinesBuilt {
 		s.newlines = s.newlines[:0]
@@ -75,9 +105,8 @@ func (s *diagnosticParserCoreRecoveryCostSource) rowAt(byteOffset uint32) uint32
 		}
 		s.newlinesBuilt = true
 	}
-	if len(s.newlines) == 0 {
-		return 0
-	}
+	// sort.Search over an empty slice already returns 0 without calling the
+	// predicate, so no length guard is needed here.
 	return uint32(sort.Search(len(s.newlines), func(i int) bool {
 		return s.newlines[i] >= byteOffset
 	}))
@@ -183,11 +212,30 @@ func diagnosticParserCoreDerivationErrorCost(
 // accepting frontier, together with the price the selection ladder reads.
 type diagnosticParserCoreLineage struct {
 	Head core.Head
-	// Cost is the lineage's total error cost, C's ts_stack_error_cost.
+	// Cost is the lineage's total error cost: C's ts_stack_error_cost, which
+	// is the sum over published subtrees PLUS the open-recovery term below.
 	Cost uint32
 	// Score is the summed dynamic precedence of the lineage's sole
 	// derivation, C's ts_subtree_dynamic_precedence.
 	Score int64
+}
+
+// diagnosticParserCoreLineageInput names one candidate head together with the
+// live recovery state that pricing cannot read off the published subtrees.
+//
+// OpenRecoverySegments is the compact analogue of cStackOpenRecoveryCost
+// (parser_recover_c.go:2475-2489), which is the half of C's
+// ts_stack_error_cost that does NOT come from the arena. C charges
+// ERROR_COST_PER_RECOVERY once for a version that is paused or sitting at
+// ERROR_STATE with no open error node yet, and once more for each extra
+// error_repeat segment an unlexable-run re-pause opened. Count both here.
+//
+// Omitting this term is not a rounding error. A head paused with an empty
+// open region prices at 0 instead of 500, and the arbitration this module
+// exists for turns on a margin of one point.
+type diagnosticParserCoreLineageInput struct {
+	Head                 core.Head
+	OpenRecoverySegments int
 }
 
 // errDiagnosticParserCoreLineageTie reports that the selection ladder ran out
@@ -204,19 +252,27 @@ var errDiagnosticParserCoreLineageTie = errors.New("parser-core phase zero: comp
 // exactly one derivation, for the reason diagnosticParserCoreLineageErrorCost
 // already states: the comparison is defined on one lineage.
 func diagnosticParserCorePriceLineages(
-	compact *core.Core,
-	heads []core.Head,
+	inputs []diagnosticParserCoreLineageInput,
 	symbols []core.SelectedSymbolPolicy,
 	src *diagnosticParserCoreRecoveryCostSource,
 	memo *core.RecoveryCostMemo,
 ) ([]diagnosticParserCoreLineage, error) {
-	if compact == nil || src == nil {
-		return nil, errors.New("parser-core phase zero: lineage pricing requires a compact core and source")
+	if src == nil || src.compact == nil {
+		return nil, errors.New("parser-core phase zero: lineage pricing requires a bound cost source")
 	}
-	out := make([]diagnosticParserCoreLineage, 0, len(heads))
-	for _, head := range heads {
-		derivations, err := compact.Derivations(head)
+	out := make([]diagnosticParserCoreLineage, 0, len(inputs))
+	for _, in := range inputs {
+		// One Derivations call per head: pricing needs the payloads and
+		// ordering needs the Score. The Core comes from src, so the
+		// derivations and the arena they are priced against cannot disagree.
+		derivations, err := src.compact.Derivations(in.Head)
 		if err != nil {
+			if errors.Is(err, core.ErrDerivationEnumerationCap) {
+				// A head with more paths than the enumeration cap is the most
+				// ambiguous shape there is. Report it as the same decline every
+				// other ambiguous head gets, not as a hard failure.
+				return nil, diagnosticParserCoreLineageCostUnavailable
+			}
 			return nil, err
 		}
 		if len(derivations) != 1 {
@@ -226,8 +282,12 @@ func diagnosticParserCorePriceLineages(
 		if err != nil {
 			return nil, err
 		}
+		if in.OpenRecoverySegments < 0 {
+			return nil, errors.New("parser-core phase zero: negative open-recovery segment count")
+		}
+		cost += uint32(core.RecoveryCostPerRecovery) * uint32(in.OpenRecoverySegments)
 		out = append(out, diagnosticParserCoreLineage{
-			Head: head, Cost: cost, Score: derivations[0].Score,
+			Head: in.Head, Cost: cost, Score: derivations[0].Score,
 		})
 	}
 	return out, nil
@@ -258,14 +318,26 @@ func diagnosticParserCoreSelectRecoveryLineage(lineages []diagnosticParserCoreLi
 	if len(lineages) == 0 {
 		return 0, errors.New("parser-core phase zero: no recovery lineage to select")
 	}
+	// Fold left to right, keeping the incumbent when a pair is unresolvable.
+	// An unresolvable PAIR is not an unresolvable RESULT: C folds the same way
+	// and a later candidate can dominate both sides of an earlier tie on cost
+	// or precedence. Declining at the pair would refuse inputs C decides.
 	winner := 0
 	for candidate := 1; candidate < len(lineages); candidate++ {
-		replace, err := diagnosticParserCoreLineageReplaces(lineages[winner], lineages[candidate])
-		if err != nil {
-			return 0, err
-		}
-		if replace {
+		replace, resolved := diagnosticParserCoreLineageReplaces(lineages[winner], lineages[candidate])
+		if resolved && replace {
 			winner = candidate
+		}
+	}
+	// Only the FINAL winner has to be decided. If any other lineage still ties
+	// with it unresolvably, the answer genuinely depends on the structural
+	// comparison this port does not model, so decline rather than guess.
+	for other := range lineages {
+		if other == winner {
+			continue
+		}
+		if _, resolved := diagnosticParserCoreLineageReplaces(lineages[winner], lineages[other]); !resolved {
+			return 0, errDiagnosticParserCoreLineageTie
 		}
 	}
 	return winner, nil
@@ -274,26 +346,29 @@ func diagnosticParserCoreSelectRecoveryLineage(lineages []diagnosticParserCoreLi
 // diagnosticParserCoreLineageReplaces reports whether candidate should replace
 // incumbent, mirroring ts_parser__select_tree's return value exactly (true
 // means "take the right-hand side").
-func diagnosticParserCoreLineageReplaces(incumbent, candidate diagnosticParserCoreLineage) (bool, error) {
+//
+// resolved is false only for C's final clause, the structural
+// ts_subtree_compare, which this port does not model. That clause is reachable
+// only when BOTH sides are clean, because parser.c:864 returns early for a
+// positive error cost.
+func diagnosticParserCoreLineageReplaces(incumbent, candidate diagnosticParserCoreLineage) (replace, resolved bool) {
 	if candidate.Cost < incumbent.Cost {
-		return true, nil
+		return true, true
 	}
 	if incumbent.Cost < candidate.Cost {
-		return false, nil
+		return false, true
 	}
 	if candidate.Score > incumbent.Score {
-		return true, nil
+		return true, true
 	}
 	if incumbent.Score > candidate.Score {
-		return false, nil
+		return false, true
 	}
 	if incumbent.Cost > 0 {
 		// C parser.c:864. Equal cost, equal precedence, and the incumbent
 		// carries error content: the later candidate wins.
-		return true, nil
+		return true, true
 	}
-	// Both sides are clean and tied. C would compare the trees structurally;
-	// this port does not model that, and a recovery arbitration should never
-	// reach it.
-	return false, errDiagnosticParserCoreLineageTie
+	// Both sides are clean and tied. C would compare the trees structurally.
+	return false, false
 }

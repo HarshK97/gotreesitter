@@ -30,7 +30,11 @@ func newRecoveryCostFixture(t *testing.T, source string) (*core.Core, *diagnosti
 	if err != nil {
 		t.Fatal(err)
 	}
-	return compact, &diagnosticParserCoreRecoveryCostSource{compact: compact, source: []byte(source)}
+	src, err := newDiagnosticParserCoreRecoveryCostSource(compact, []byte(source))
+	if err != nil {
+		t.Fatalf("new cost source: %v", err)
+	}
+	return compact, src
 }
 
 // visibleSymbols marks every symbol below the given ceiling visible, which is
@@ -120,10 +124,13 @@ func TestRecoveryCostSourcePricesErrorRegionSpanAndRows(t *testing.T) {
 	if cost != want {
 		t.Fatalf("error region cost = %d, want %d", cost, want)
 	}
-	// The measured php arbitration turns on exactly this comparison: an
-	// absorbed span must beat a missing insertion's flat 610 to win.
-	if want >= core.RecoveryCostPerMissingTree+core.RecoveryCostPerRecovery {
-		t.Logf("note: this fixture's absorb cost %d does not beat a missing insertion (610)", want)
+	// This fixture spans two rows, so it prices ABOVE a missing insertion
+	// (667 against 610). That direction is itself worth pinning: the row term
+	// is what pushes a multi-line absorb past an insertion, and dropping it
+	// would silently flip this fixture to the other side.
+	if want <= core.RecoveryCostPerMissingTree+core.RecoveryCostPerRecovery {
+		t.Fatalf("multi-row absorb priced at %d, expected above a missing insertion's %d",
+			want, core.RecoveryCostPerMissingTree+core.RecoveryCostPerRecovery)
 	}
 }
 
@@ -392,7 +399,7 @@ func TestPriceLineagesRefusesAmbiguousHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ErrorRegionResume: %v", err)
 	}
-	if _, err := diagnosticParserCorePriceLineages(compact, []core.Head{ambiguous}, visibleSymbols(8), src, nil); !errors.Is(err, diagnosticParserCoreLineageCostUnavailable) {
+	if _, err := diagnosticParserCorePriceLineages([]diagnosticParserCoreLineageInput{{Head: ambiguous}}, visibleSymbols(8), src, nil); !errors.Is(err, diagnosticParserCoreLineageCostUnavailable) {
 		t.Fatalf("pricing an ambiguous head returned %v, want a refusal", err)
 	}
 }
@@ -423,7 +430,7 @@ func TestPriceLineagesPricesEachHeadIndependently(t *testing.T) {
 		t.Fatalf("ErrorRegionResume: %v", err)
 	}
 
-	priced, err := diagnosticParserCorePriceLineages(compact, []core.Head{wide, narrow}, visibleSymbols(8), src, nil)
+	priced, err := diagnosticParserCorePriceLineages([]diagnosticParserCoreLineageInput{{Head: wide}, {Head: narrow}}, visibleSymbols(8), src, nil)
 	if err != nil {
 		t.Fatalf("price: %v", err)
 	}
@@ -439,5 +446,137 @@ func TestPriceLineagesPricesEachHeadIndependently(t *testing.T) {
 	}
 	if winner != 1 {
 		t.Fatalf("winner=%d, want 1: the cheaper, narrower region", winner)
+	}
+}
+
+// TestSelectArbitratesMissingInsertionAgainstErrorAbsorb is the end-to-end
+// claim this whole module exists to make correct, driven through real heads
+// rather than hand-written costs.
+//
+// It reconstructs the measured php witness "<?php namespace ; ?>": one lineage
+// inserts a single MISSING leaf, the other absorbs the nine bytes of
+// "namespace" into an ERROR region with one visible child. C publishes the
+// ERROR tree, because 500 + 9 + 100 = 609 beats a missing insertion's flat
+// 610. The margin is one point, so this exercises every term of the model at
+// once -- a dropped skipped-tree charge, a dropped row term, or a missing
+// short circuit on the missing bit all flip the answer.
+func TestSelectArbitratesMissingInsertionAgainstErrorAbsorb(t *testing.T) {
+	const source = "<?php namespace ; ?>"
+	compact, src := newRecoveryCostFixture(t, source)
+	seed, err := compact.Seed(core.StateID(1), 0)
+	if err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+
+	// Lineage A: insert one zero-width MISSING leaf.
+	missingHead, err := compact.ShiftMissingLeaf(seed, core.StateID(2), core.Symbol(3), 16)
+	if err != nil {
+		t.Fatalf("ShiftMissingLeaf: %v", err)
+	}
+
+	// Lineage B: absorb "namespace" (bytes 6..15, nine characters, one
+	// visible child, no newline) into an ERROR region.
+	absorbed, err := compact.ErrorRegionLeaf(core.Symbol(4), 6, 15, false)
+	if err != nil {
+		t.Fatalf("ErrorRegionLeaf: %v", err)
+	}
+	absorbHead, err := compact.ErrorRegionResume(seed, core.StateID(3), 6, 15, []core.SubtreeID{absorbed})
+	if err != nil {
+		t.Fatalf("ErrorRegionResume: %v", err)
+	}
+
+	priced, err := diagnosticParserCorePriceLineages([]diagnosticParserCoreLineageInput{
+		{Head: missingHead}, {Head: absorbHead},
+	}, visibleSymbols(8), src, nil)
+	if err != nil {
+		t.Fatalf("price: %v", err)
+	}
+
+	const wantMissing = core.RecoveryCostPerMissingTree + core.RecoveryCostPerRecovery // 610
+	const wantAbsorb = core.RecoveryCostPerRecovery +
+		core.RecoveryCostPerSkippedChar*9 + core.RecoveryCostPerSkippedTree // 609
+	if priced[0].Cost != wantMissing {
+		t.Fatalf("missing lineage priced %d, want %d", priced[0].Cost, wantMissing)
+	}
+	if priced[1].Cost != wantAbsorb {
+		t.Fatalf("absorb lineage priced %d, want %d", priced[1].Cost, wantAbsorb)
+	}
+	if wantAbsorb >= wantMissing {
+		t.Fatalf("fixture lost the one-point margin: absorb %d, missing %d", wantAbsorb, wantMissing)
+	}
+
+	winner, err := diagnosticParserCoreSelectRecoveryLineage(priced)
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if winner != 1 {
+		t.Fatalf("winner=%d, want 1: C publishes the ERROR tree for this witness", winner)
+	}
+}
+
+// TestPriceLineagesChargesOpenRecoverySegments pins C's non-subtree stack
+// cost, cStackOpenRecoveryCost (parser_recover_c.go:2475-2489). A head paused
+// with no open error node yet carries 500 that no published subtree accounts
+// for, and each extra error_repeat segment adds another 500.
+func TestPriceLineagesChargesOpenRecoverySegments(t *testing.T) {
+	compact, src := newRecoveryCostFixture(t, "abcdef")
+	seed, err := compact.Seed(core.StateID(1), 0)
+	if err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	head, err := compact.ShiftMissingLeaf(seed, core.StateID(2), core.Symbol(3), 0)
+	if err != nil {
+		t.Fatalf("ShiftMissingLeaf: %v", err)
+	}
+
+	priced, err := diagnosticParserCorePriceLineages([]diagnosticParserCoreLineageInput{
+		{Head: head, OpenRecoverySegments: 0},
+		{Head: head, OpenRecoverySegments: 1},
+		{Head: head, OpenRecoverySegments: 3},
+	}, visibleSymbols(8), src, nil)
+	if err != nil {
+		t.Fatalf("price: %v", err)
+	}
+	base := priced[0].Cost
+	if priced[1].Cost != base+core.RecoveryCostPerRecovery {
+		t.Fatalf("one open-recovery segment added %d, want %d",
+			priced[1].Cost-base, core.RecoveryCostPerRecovery)
+	}
+	if priced[2].Cost != base+3*core.RecoveryCostPerRecovery {
+		t.Fatalf("three open-recovery segments added %d, want %d",
+			priced[2].Cost-base, 3*core.RecoveryCostPerRecovery)
+	}
+	// The term is large enough to invert the arbitration on its own: an
+	// otherwise-cheaper absorb loses once it is charged for a paused segment.
+	if base+core.RecoveryCostPerRecovery <= base {
+		t.Fatal("open-recovery term did not raise the price at all")
+	}
+}
+
+// TestSelectRecoveryLineageResolvesWhenALaterCandidateDominates proves the
+// fold declines only when the FINAL winner is undetermined, not whenever some
+// pair along the way is.
+//
+// C folds pairwise too, and a later candidate can dominate both sides of an
+// earlier unresolvable tie. Aborting at the pair would refuse an input C
+// decides unambiguously.
+func TestSelectRecoveryLineageResolvesWhenALaterCandidateDominates(t *testing.T) {
+	// Two clean, tied lineages that this port cannot order against each
+	// other, followed by one that beats both on cost.
+	winner, err := diagnosticParserCoreSelectRecoveryLineage([]diagnosticParserCoreLineage{
+		lineage(0, 0), lineage(0, 0), lineage(0, 5),
+	})
+	if err != nil {
+		t.Fatalf("select declined an input with a dominating candidate: %v", err)
+	}
+	if winner != 2 {
+		t.Fatalf("winner=%d, want 2 (higher precedence beats both tied lineages)", winner)
+	}
+
+	// But an unresolvable tie involving the eventual winner still declines.
+	if _, err := diagnosticParserCoreSelectRecoveryLineage([]diagnosticParserCoreLineage{
+		lineage(0, 5), lineage(0, 5),
+	}); !errors.Is(err, errDiagnosticParserCoreLineageTie) {
+		t.Fatalf("a tie with the winner returned %v, want errDiagnosticParserCoreLineageTie", err)
 	}
 }
