@@ -98,6 +98,9 @@ func TestS5MissingInsertionForkPublishesBothRecoveryLineages(t *testing.T) {
 	if scheduler.s5MissingInsertions != 1 {
 		t.Fatalf("missing insertion count=%d, want 1", scheduler.s5MissingInsertions)
 	}
+	if !scheduler.s3RegionOpened {
+		t.Fatal("the S5 absorb lineage did not record its S3 region")
+	}
 
 	derivations, err := scheduler.compact.Derivations(scheduler.headers[1].head)
 	if err != nil {
@@ -124,6 +127,54 @@ func TestS5MissingInsertionForkPublishesBothRecoveryLineages(t *testing.T) {
 	}
 	if absorbed.Symbol != 4 || absorbed.StartByte != 1 || absorbed.EndByte != 2 {
 		t.Fatalf("absorbed payload=%+v, want symbol 4 over bytes 1..2", absorbed)
+	}
+}
+
+func TestS3SecondIndependentErrorRegionDeclines(t *testing.T) {
+	scheduler := newRecoveryLineageForkScheduler(t, true)
+	scheduler.s3RegionOpened = true
+	original := scheduler.headers[0]
+
+	handled, err := scheduler.s3TryOpenErrorRegionWithMissingFork(0, true)
+	if err != nil {
+		t.Fatalf("s3TryOpenErrorRegionWithMissingFork: %v", err)
+	}
+	if handled || scheduler.headers[0] != original {
+		t.Fatalf("second region changed the frontier: handled=%t header=%+v", handled, scheduler.headers[0])
+	}
+	if !scheduler.s3RegionOpened {
+		t.Fatal("the second-region decline cleared the first-region marker")
+	}
+}
+
+func TestS3RegionMarkerAllowsClosureOnlyRedispatch(t *testing.T) {
+	scheduler := newRecoveryLineageForkScheduler(t, true)
+	shifted, err := scheduler.compact.Shift(
+		scheduler.headers[0].head,
+		core.Symbol(2),
+		0,
+		core.Token{Symbol: 2, StartByte: 1, EndByte: 1},
+		core.ForkOrder{},
+	)
+	if err != nil {
+		t.Fatalf("shift closure input: %v", err)
+	}
+	scheduler.headers[0].head = shifted
+	scheduler.s3RegionOpened = true
+
+	handled, err := scheduler.s3TryOpenErrorRegion(0)
+	if err != nil {
+		t.Fatalf("s3TryOpenErrorRegion: %v", err)
+	}
+	if !handled || scheduler.headers[0].s3Region != nil {
+		t.Fatalf("closure-only redispatch handled=%t region=%+v", handled, scheduler.headers[0].s3Region)
+	}
+	state, _, err := scheduler.compact.Boundary(scheduler.headers[0].head)
+	if err != nil {
+		t.Fatalf("closed boundary: %v", err)
+	}
+	if state != 3 || !scheduler.s3RegionOpened {
+		t.Fatalf("closure-only state=%d marker=%t, want 3/true", state, scheduler.s3RegionOpened)
 	}
 }
 

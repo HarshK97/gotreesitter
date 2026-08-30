@@ -50,9 +50,9 @@ func TestCompactGraduationGrantDenominatorAfterEOFRetirement(t *testing.T) {
 	if len(eofSiblingGrants) != 0 {
 		t.Errorf("EOF sibling grants remain: %v", eofSiblingGrants)
 	}
-	if activeFlags != 16 || len(activeGrammars) != 12 {
+	if activeFlags != 18 || len(activeGrammars) != 12 {
 		t.Errorf(
-			"compact profile denominator is %d flags across %d grammars, want 16 across 12",
+			"compact profile denominator is %d flags across %d grammars, want 18 across 12",
 			activeFlags,
 			len(activeGrammars),
 		)

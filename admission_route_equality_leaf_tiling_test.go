@@ -149,7 +149,7 @@ func TestCompactRouteAcceptedHiddenDoctypeLeafTiles(t *testing.T) {
 	}
 }
 
-// TestCompactRouteDeclinesAdjudicatedFalseCleanWitnesses pulls a focused
+// TestCompactRouteAdjudicatesFalseCleanWitnesses pulls a focused
 // subset (3 html, 3 javascript) from the 20-witness committed manifest (10
 // html, 8 javascript, 2 swift). Each entry was, before the B1 tiling gate,
 // accepted by the compact route with HasError()==false while production and
@@ -165,9 +165,9 @@ func TestCompactRouteAcceptedHiddenDoctypeLeafTiles(t *testing.T) {
 // same root HasError as production (exact structural C-oracle parity is
 // asserted separately, under cgo, by
 // cgo_harness/compact_t3_oracle_adjudication_test.go's
-// compactT3RecoveryCertifiedWitnesses). The 3 javascript entries are outside B3's
-// witness classes staged so far and still decline at the tiling gate exactly
-// as B1 left them.
+// compactT3RecoveryCertifiedWitnesses). The certified JavaScript artifact now
+// routes js_log_1 and js_log_2 with exact C parity. js_log_3 still fails closed
+// when the accepted root leaves expose its unaccounted byte range.
 //
 // Scope note: the manifest's 2 swift entries (swift_log_1, swift_log_2) are
 // NOT in this list. Root-cause (verified by direct tree inspection):
@@ -193,7 +193,7 @@ func TestCompactRouteAcceptedHiddenDoctypeLeafTiles(t *testing.T) {
 // out-of-scope finding for a follow-up tranche rather than folded into this
 // fix (campaign v7 delegation protocol: scope changes route back through
 // the specification, not through an ad hoc widening of one tranche's check).
-func TestCompactRouteDeclinesAdjudicatedFalseCleanWitnesses(t *testing.T) {
+func TestCompactRouteAdjudicatesFalseCleanWitnesses(t *testing.T) {
 	// html and javascript are not otherwise loaded by the always-on (untagged)
 	// suite; purge the process-wide embedded cache afterward so this test does
 	// not inflate heap for later whole-process tests (matches
@@ -250,23 +250,23 @@ func TestCompactRouteDeclinesAdjudicatedFalseCleanWitnesses(t *testing.T) {
 			defer tree.Release()
 
 			routed, fallback := gts.AdmissionCandidateCounters()
-			if witness.Language == "html" {
-				// B3 stage S3: html_erroneous_end_tag now routes natively.
+			nativeRecovery := witness.Language == "html" || id == "js_log_1" || id == "js_log_2"
+			if nativeRecovery {
 				if routed != 1 || fallback != 0 {
-					t.Fatalf("witness %q: route counters routed=%d fallback=%d, want routed=1 fallback=0 (B3 stage S3: compact now handles this witness natively)", id, routed, fallback)
+					t.Fatalf("witness %q: route counters routed=%d fallback=%d, want routed=1 fallback=0", id, routed, fallback)
 				}
 			} else {
 				if routed != 0 || fallback != 1 {
 					t.Fatalf("witness %q: route counters routed=%d fallback=%d, want routed=0 fallback=1 (compact must decline)", id, routed, fallback)
 				}
 				reason := gts.AdmissionCandidateLastFallbackReason()
-				if !strings.Contains(reason, "accepted-leaf-tiling-gap") {
-					t.Fatalf("witness %q: fallback reason=%q, want it to cite accepted-leaf-tiling-gap", id, reason)
+				if !strings.Contains(reason, "accepted compact root leaves do not tile the accepted span") {
+					t.Fatalf("witness %q: fallback reason=%q, want an accepted-root leaf-tiling gap", id, reason)
 				}
 			}
 
 			if got := tree.RootNode().HasError(); got != *witness.Expected.ProductionHasError {
-				t.Fatalf("witness %q: production-served HasError=%t, want %t (manifest production_has_error, C-adjudicated)",
+				t.Fatalf("witness %q: served HasError=%t, want %t (manifest production_has_error, C-adjudicated)",
 					id, got, *witness.Expected.ProductionHasError)
 			}
 		})

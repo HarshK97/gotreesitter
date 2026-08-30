@@ -98,10 +98,16 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	// from the production fallback. The exact locked corpus retained identical
 	// trees and outcomes across all files while cutting aggregate allocations;
 	// explicit forest parsing and non-certified languages keep the full budget.
+	//
+	// The same exact artifact certifies the current compact recovery frontier.
+	// Three pinned witnesses route with exact C parity. Five stop at
+	// typed fail-closed boundaries and remain production-owned.
 	"javascript": {
 		blobSHA256:                     mustRuntimeProfileSHA256("6706f93890f24d8ea90d6a140df5dde29c02ec8a3213bae16e8cc4df37e33ee0"),
 		automaticForestMemoryAllowance: javascriptAutomaticForestMemoryAllowance,
 		compactConvergedSplitDrops:     true,
+		compactStrategy2ErrorRegion:    true,
+		compactMissingTokenInsertion:   true,
 	},
 	// These scanner-backed grammars have certified the first retry ladder's
 	// selected accepted-error tree as authoritative. Repeating the whole ladder

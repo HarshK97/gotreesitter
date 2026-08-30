@@ -66,6 +66,19 @@ func TestHTMLProfileCertifiesCompleteCompactRecovery(t *testing.T) {
 	}
 }
 
+func TestJavaScriptProfileCertifiesCompactRecoveryFrontier(t *testing.T) {
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+	lang := JavascriptLanguage()
+	if !lang.CompactStrategy2ErrorRegionCertified || !lang.CompactMissingTokenInsertionCertified {
+		t.Fatal("the JavaScript profile did not attach both compact recovery capabilities")
+	}
+	uncertified := &gotreesitter.Language{}
+	if attachBuiltinLanguageRuntimeProfile("javascript", sha256.Sum256([]byte("wrong javascript blob")), uncertified) ||
+		uncertified.CompactStrategy2ErrorRegionCertified || uncertified.CompactMissingTokenInsertionCertified {
+		t.Fatal("a mismatched JavaScript blob received compact recovery certification")
+	}
+}
+
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// 42 = the prior 41 plus the F# unary-wrapper materialization profile.
 	// Bash, Haskell, and JavaScript reuse their existing exact profiles.

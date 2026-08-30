@@ -2302,6 +2302,9 @@ type diagnosticParserCoreGenericScheduler struct {
 	// recoveryIsolation becomes true only after S5 publishes its two versions.
 	// Clean parses retain the canonical scheduler fast path.
 	recoveryIsolation bool
+	// s3RegionOpened records one S3 recovery episode across this parse. A later
+	// episode starts a new C recovery election that this route cannot model.
+	s3RegionOpened bool
 	// s5MissingInsertions counts recovery forks created by S5. The counter
 	// bounds zero-width progress across one parse.
 	s5MissingInsertions        uint32
@@ -7307,6 +7310,9 @@ func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegionWithMissingFo
 		// ordinary dispatch loop redispatch this pass against the closed head.
 		return true, nil
 	}
+	if s.s3RegionOpened {
+		return false, nil
+	}
 	// EOF at the very first no-action point, nothing absorbed yet:
 	// cRecoverEOFAccept's whole-file wrap is out of S3 scope. No committed
 	// html_erroneous_end_tag witness needs it (verified against the pinned C
@@ -7358,6 +7364,7 @@ func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegionWithMissingFo
 		endByte:   s.token.EndByte,
 		children:  []core.SubtreeID{leafID},
 	}
+	s.s3RegionOpened = true
 	header.shifted = true
 	return true, nil
 }
