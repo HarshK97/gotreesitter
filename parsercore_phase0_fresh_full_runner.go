@@ -301,6 +301,24 @@ func (r *parserCoreFreshFullRunner) s3AllowErrorRoot() bool {
 	return r != nil && r.options.Recovery && r.options.allowCompactStrategy2ErrorRegion
 }
 
+func (r *parserCoreFreshFullRunner) compactRecoveryTerminalAliasSymbol(
+	scheduler *diagnosticParserCoreGenericScheduler,
+) (Symbol, bool) {
+	if r == nil || r.lang == nil || scheduler == nil ||
+		!scheduler.s3RegionOpened || scheduler.s3ResumeCount != 1 ||
+		scheduler.s5MissingInsertions != 0 ||
+		scheduler.work.RecoveryLineageSelections != 0 ||
+		scheduler.work.NoActionDrops != 1 {
+		return 0, false
+	}
+	for _, rule := range r.lang.CompactRecoveryTerminalAliasRules {
+		if rule.ResumeState == scheduler.s3ResumeState && rule.ResumeSymbol == scheduler.s3ResumeSymbol {
+			return rule.AliasSymbol, true
+		}
+	}
+	return 0, false
+}
+
 func (r *parserCoreFreshFullRunner) materialize(source []byte, compact *core.Core, head core.Head) (*Tree, error) {
 	if r == nil {
 		return nil, errors.New("parser-core fresh-full runner is nil")
@@ -319,6 +337,8 @@ func (r *parserCoreFreshFullRunner) materializeSelection(source []byte, compact 
 	if err != nil {
 		return nil, err
 	}
+	r.scratch.recoveryTerminalAliasSymbol, r.scratch.recoveryTerminalAliasCertified =
+		r.compactRecoveryTerminalAliasSymbol(scheduler)
 	tree, err := materializeDiagnosticParserCoreAcceptedSelection(
 		compact,
 		scheduler.acceptedHead,

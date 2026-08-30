@@ -93,9 +93,10 @@ func TestDiagnosticParserCoreAcceptedLeafCoverageScratchResetsAndReuses(t *testi
 	if err := coverage.append(1, core.MaterializationSubtreeView{StartByte: 0, EndByte: 1, Terminal: true}, 2, false); err != nil {
 		t.Fatal(err)
 	}
+	coverage.authenticatedAliases = append(coverage.authenticatedAliases, &Node{})
 	coverage.reset()
-	if len(coverage.spans) != 0 {
-		t.Fatalf("reset retained %d spans", len(coverage.spans))
+	if len(coverage.spans) != 0 || len(coverage.authenticatedAliases) != 0 {
+		t.Fatalf("reset retained %d spans and %d aliases", len(coverage.spans), len(coverage.authenticatedAliases))
 	}
 	if err := coverage.append(2, core.MaterializationSubtreeView{StartByte: 1, EndByte: 2, Terminal: true}, 2, false); err != nil {
 		t.Fatalf("reuse append: %v", err)
@@ -147,6 +148,57 @@ func TestDiagnosticParserCoreAcceptedLeafCoverageRejectsUnrelatedVisibleTerminal
 	nodesByID[1] = unrelated
 	if _, _, gapped, err := diagnosticParserCoreAcceptedTreeLeafCoverageGap(root, []byte("x"), 0, 1, 100, &coverage, nodesByID, nil); err != nil || !gapped {
 		t.Fatalf("unrelated terminal audit err=%v gapped=%t, want gapped", err, gapped)
+	}
+}
+
+func TestDiagnosticParserCoreAcceptedLeafCoverageAcceptsAuthenticatedTerminalAlias(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	raw := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	parser := &Parser{
+		language:       &Language{TokenCount: 100, SymbolMetadata: make([]SymbolMetadata, 102)},
+		reduceAliasSeq: [][]Symbol{nil, {101}},
+	}
+	root := parser.aliasedNodeInArena(arena, raw, Symbol(101))
+	var coverage diagnosticParserCoreAcceptedLeafCoverageScratch
+	if err := coverage.append(1, core.MaterializationSubtreeView{
+		Symbol: 1, StartByte: 0, EndByte: 1, Terminal: true,
+	}, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	nodesByID := make([]*Node, 2)
+	nodesByID[1] = raw
+	coverage.authenticateDirectTerminalAliases(
+		parser, []stackEntry{newStackEntryNode(0, raw)}, []*Node{root}, 1, Symbol(101), nodesByID,
+	)
+	if _, _, gapped, err := diagnosticParserCoreAcceptedTreeLeafCoverageGap(root, []byte("x"), 0, 1, 100, &coverage, nodesByID, nil); err != nil || gapped {
+		t.Fatalf("terminal alias audit err=%v gapped=%t, want complete", err, gapped)
+	}
+}
+
+func TestDiagnosticParserCoreAcceptedLeafCoverageRejectsUnrelatedTerminalAlias(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	raw := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	parser := &Parser{
+		language:       &Language{TokenCount: 100, SymbolMetadata: make([]SymbolMetadata, 102)},
+		reduceAliasSeq: [][]Symbol{nil, {101}},
+	}
+	authenticated := parser.aliasedNodeInArena(arena, raw, Symbol(101))
+	unrelated := parser.aliasedNodeInArena(arena, raw, Symbol(101))
+	var coverage diagnosticParserCoreAcceptedLeafCoverageScratch
+	if err := coverage.append(1, core.MaterializationSubtreeView{
+		Symbol: 1, StartByte: 0, EndByte: 1, Terminal: true,
+	}, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	nodesByID := make([]*Node, 2)
+	nodesByID[1] = raw
+	coverage.authenticateDirectTerminalAliases(
+		parser, []stackEntry{newStackEntryNode(0, raw)}, []*Node{authenticated}, 1, Symbol(101), nodesByID,
+	)
+	if _, _, gapped, err := diagnosticParserCoreAcceptedTreeLeafCoverageGap(unrelated, []byte("x"), 0, 1, 100, &coverage, nodesByID, nil); err != nil || !gapped {
+		t.Fatalf("unrelated terminal alias audit err=%v gapped=%t, want gapped", err, gapped)
 	}
 }
 

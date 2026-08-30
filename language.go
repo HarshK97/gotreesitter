@@ -351,6 +351,18 @@ type ConflictPolicy struct {
 	ReduceSymbols []Symbol
 }
 
+// CompactRecoveryTerminalAliasRule certifies one terminal alias that can
+// survive compact strategy-2 recovery. ResumeState and ResumeSymbol identify
+// the exact recovery resume. AliasSymbol identifies the published leaf.
+//
+// Exact built-in profiles bind these values to one grammar blob. Languages
+// without a rule keep the accepted-root leaf audit fail-closed.
+type CompactRecoveryTerminalAliasRule struct {
+	ResumeState  StateID
+	ResumeSymbol Symbol
+	AliasSymbol  Symbol
+}
+
 // ConflictPolicyAnyState and ConflictPolicyAnyLookahead are sentinel State/
 // Lookahead values matching every state or every lookahead symbol instead of
 // one exact table row. They support policies scoped by state and/or reduce
@@ -788,6 +800,13 @@ type Language struct {
 	// the result. Exact built-in profiles must certify the complete competition.
 	// Custom and adapted languages retain the false default.
 	CompactMissingTokenInsertionCertified bool
+
+	// CompactRecoveryTerminalAliasRules permits the accepted-root leaf audit to
+	// authenticate a materialized terminal alias after one certified recovery
+	// resume. The materializer must also prove the exact raw terminal and alias
+	// node relationship. Exact built-in profiles bind each rule to one grammar
+	// blob. Custom, adapted, and stale artifacts retain an empty rule set.
+	CompactRecoveryTerminalAliasRules []CompactRecoveryTerminalAliasRule
 
 	// CompactRecoveryPlainFirstCertified preserves the ordinary compact lexer
 	// for the first attempt. After a fail-closed decline, the route retries with

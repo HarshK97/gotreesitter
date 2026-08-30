@@ -2305,6 +2305,11 @@ type diagnosticParserCoreGenericScheduler struct {
 	// s3RegionOpened records one S3 recovery episode across this parse. A later
 	// episode starts a new C recovery election that this route cannot model.
 	s3RegionOpened bool
+	// s3ResumeState and s3ResumeSymbol record the sole strategy-2 resume. The
+	// accepted-tree audit uses them only with an exact artifact rule.
+	s3ResumeState  StateID
+	s3ResumeSymbol Symbol
+	s3ResumeCount  uint32
 	// s5MissingInsertions counts recovery forks created by S5. The counter
 	// bounds zero-width progress across one parse.
 	s5MissingInsertions        uint32
@@ -4458,11 +4463,15 @@ type parserCoreRunnerScratch struct {
 	materialization diagnosticParserCoreMaterializationScratch
 	postorder       core.MaterializationPostorderScratch
 	acceptedLeaves  diagnosticParserCoreAcceptedLeafCoverageScratch
-	nodesByID       []*Node
-	nodes           []*Node
-	linkScratch     []*Node
-	lineStarts      []uint32
-	goCompatFrames  []goCompatSubtreeFrame
+	// recoveryTerminalAliasSymbol is valid only when the exact artifact rule
+	// also set recoveryTerminalAliasCertified for this materialization.
+	recoveryTerminalAliasSymbol    Symbol
+	recoveryTerminalAliasCertified bool
+	nodesByID                      []*Node
+	nodes                          []*Node
+	linkScratch                    []*Node
+	lineStarts                     []uint32
+	goCompatFrames                 []goCompatSubtreeFrame
 }
 
 // parserCoreMaxRetainedAcceptedLeafSpans bounds the caller-owned coverage
@@ -4477,7 +4486,8 @@ type diagnosticParserCoreAcceptedLeafSpan struct {
 }
 
 type diagnosticParserCoreAcceptedLeafCoverageScratch struct {
-	spans []diagnosticParserCoreAcceptedLeafSpan
+	spans                []diagnosticParserCoreAcceptedLeafSpan
+	authenticatedAliases []*Node
 }
 
 func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) reset() {
@@ -4486,10 +4496,16 @@ func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) reset() {
 	}
 	if cap(scratch.spans) > parserCoreMaxRetainedAcceptedLeafSpans {
 		scratch.spans = nil
-		return
+	} else {
+		clear(scratch.spans)
+		scratch.spans = scratch.spans[:0]
 	}
-	clear(scratch.spans)
-	scratch.spans = scratch.spans[:0]
+	if cap(scratch.authenticatedAliases) > parserCoreMaxRetainedAcceptedLeafSpans {
+		scratch.authenticatedAliases = nil
+	} else {
+		clear(scratch.authenticatedAliases)
+		scratch.authenticatedAliases = scratch.authenticatedAliases[:0]
+	}
 }
 
 func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) append(
@@ -4539,6 +4555,69 @@ func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) hasVisibleTermin
 	return false
 }
 
+func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) hasAuthenticatedAlias(node *Node) bool {
+	if scratch == nil {
+		return false
+	}
+	for _, alias := range scratch.authenticatedAliases {
+		if alias == node {
+			return true
+		}
+	}
+	return false
+}
+
+func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) authenticateDirectTerminalAliases(
+	parser *Parser,
+	entries []stackEntry,
+	children []*Node,
+	productionID uint16,
+	aliasSymbol Symbol,
+	nodesByID []*Node,
+) {
+	if scratch == nil || parser == nil || parser.language == nil || aliasSymbol == 0 {
+		return
+	}
+	aliases := parser.reduceAliasSequence(productionID)
+	if len(aliases) == 0 {
+		return
+	}
+	structuralChild := 0
+	for _, entry := range entries {
+		raw := stackEntryNode(entry)
+		if raw == nil || raw.isExtra() {
+			continue
+		}
+		alias := Symbol(0)
+		if structuralChild < len(aliases) {
+			alias = aliases[structuralChild]
+		}
+		structuralChild++
+		if alias != aliasSymbol || raw.symbol == alias ||
+			uint32(raw.symbol) >= parser.language.TokenCount ||
+			nodeChildCountNoMaterialize(raw) != 0 ||
+			!scratch.hasVisibleTerminalNode(raw.startByte, raw.endByte, raw, nodesByID) {
+			continue
+		}
+		var match *Node
+		for _, child := range children {
+			if child == nil || child == raw || child.symbol != alias ||
+				child.startByte != raw.startByte || child.endByte != raw.endByte ||
+				nodeChildCountNoMaterialize(child) != 0 {
+				continue
+			}
+			if match != nil {
+				match = nil
+				break
+			}
+			match = child
+		}
+		if match != nil {
+			scratch.authenticatedAliases = append(scratch.authenticatedAliases, match)
+		}
+	}
+}
+
 // nodeSlice returns a zeroed length-n *Node slice, reusing buf's capacity when
 // it fits. Clearing every entry prevents a stale node pointer from an earlier
 // parse leaking into this one.
@@ -4580,6 +4659,8 @@ func (s *parserCoreRunnerScratch) resetTreeBuffers() {
 	}
 	s.postorder.Reset()
 	s.acceptedLeaves.reset()
+	s.recoveryTerminalAliasSymbol = 0
+	s.recoveryTerminalAliasCertified = false
 	s.nodesByID = clearNodeScratch(s.nodesByID)
 	s.nodes = clearNodeScratch(s.nodes)
 	s.linkScratch = clearNodeScratch(s.linkScratch)
@@ -4923,10 +5004,11 @@ func diagnosticParserCoreAcceptedTreeLeafCoverageGap(root *Node, source []byte, 
 		count := n.ChildCount()
 		if count == 0 {
 			sym := n.Symbol()
-			if uint32(sym) >= tokenCount && sym != errorSymbol {
-				return nil
-			}
-			if sym == errorSymbol && !coverage.hasVisibleTerminalNode(n.startByte, n.endByte, n, nodesByID) {
+			// A terminal alias publishes a cloned grammar nonterminal leaf.
+			// Accept only a clone authenticated at its exact reduce site.
+			if uint32(sym) >= tokenCount &&
+				!coverage.hasVisibleTerminalNode(n.startByte, n.endByte, n, nodesByID) &&
+				!coverage.hasAuthenticatedAlias(n) {
 				return nil
 			}
 			if n.startByte > cur {
@@ -5348,6 +5430,10 @@ func materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization(compac
 	if !allowErrorRoot {
 		acceptedLeaves = nil
 	}
+	recoveryTerminalAlias := Symbol(0)
+	if scratch != nil && scratch.recoveryTerminalAliasCertified {
+		recoveryTerminalAlias = scratch.recoveryTerminalAliasSymbol
+	}
 	materializeVisit := func(materializationScratch *diagnosticParserCoreMaterializationScratch) error {
 		visit := func(id core.SubtreeID, view core.MaterializationSubtreeView) error {
 			if view.EndByte < view.StartByte || view.EndByte > uint32(len(source)) {
@@ -5451,12 +5537,9 @@ func materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization(compac
 			// javadoc/doxygen-style comments that close with "*/" (no leading
 			// space) put the decoration marker
 			// on the trailing edge of the root reduce's own gap, indistinguishable
-			// in isolation from a genuine drop (js_log_3 and js_log_7 have the
-			// identical trailing-edge shape and must still be rejected -- verified
-			// directly, byte for byte: both keep declining under this exemption,
-			// since their gaps are not at the root symbol). All 18 fixed html/js
-			// witnesses were re-verified with this exemption active and none sit
-			// at their language's root symbol, so none are affected by it.
+			// in isolation from a genuine drop. The exemption stays limited to the
+			// grammar root. Every internal reduce still passes the ordinary tiling
+			// check before materialization can publish it.
 			isDerivationRootReduce := parser.hasRootSymbol && Symbol(view.Symbol) == parser.rootSymbol
 			if gapStart, gapEnd, gapped := diagnosticParserCoreReduceChildrenTilingGap(view.StartByte, view.EndByte, entries, source); !isDerivationRootReduce && gapped {
 				return &diagnosticParserCoreDecline{
@@ -5485,6 +5568,11 @@ func materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization(compac
 					entries, 0, len(entries), structuralChildren,
 					Symbol(view.Symbol), view.ProductionID, arena,
 				)
+				if recoveryTerminalAlias != 0 {
+					acceptedLeaves.authenticateDirectTerminalAliases(
+						parser, entries, children, view.ProductionID, recoveryTerminalAlias, nodesByID,
+					)
+				}
 				parent := newParentNodeInArenaWithFieldSources(
 					arena, Symbol(view.Symbol), named, children, fieldIDs, fieldSources, view.ProductionID,
 				)
@@ -5526,6 +5614,11 @@ func materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization(compac
 				entries, 0, len(entries), structuralChildren,
 				Symbol(view.Symbol), view.ProductionID, arena,
 			)
+			if recoveryTerminalAlias != 0 {
+				acceptedLeaves.authenticateDirectTerminalAliases(
+					parser, entries, children, view.ProductionID, recoveryTerminalAlias, nodesByID,
+				)
+			}
 			if child := parser.collapsibleUnarySelfReduction(action, Token{}, arena, entries, 0, len(entries), children, fieldIDs); child != nil {
 				child.productionID = view.ProductionID
 				child.dynamicPrecedence += int32(view.DynamicPrecedence)
@@ -6276,6 +6369,12 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			}
 			switch {
 			case hasAction:
+				if s.s3ResumeCount == math.MaxUint32 {
+					return nil, errors.New("parser-core phase zero: strategy-2 resume count overflow")
+				}
+				s.s3ResumeState = StateID(region.state)
+				s.s3ResumeSymbol = Symbol(resumeToken.Symbol)
+				s.s3ResumeCount++
 				// Depth-0 resume: the pre-error state now accepts the current
 				// token. Publish the ERROR container over the absorbed
 				// children and condense it onto the pre-error head (the

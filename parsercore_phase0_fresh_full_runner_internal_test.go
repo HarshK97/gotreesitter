@@ -119,7 +119,14 @@ func TestResetDiagnosticParserCoreGenericSchedulerRejectsActiveScratch(t *testin
 }
 
 func TestResetDiagnosticParserCoreGenericSchedulerClearsRecoveryState(t *testing.T) {
-	scheduler := diagnosticParserCoreGenericScheduler{s5MissingInsertions: 7, s3RegionOpened: true, recoveryIsolation: true}
+	scheduler := diagnosticParserCoreGenericScheduler{
+		s5MissingInsertions: 7,
+		s3RegionOpened:      true,
+		s3ResumeState:       11,
+		s3ResumeSymbol:      12,
+		s3ResumeCount:       1,
+		recoveryIsolation:   true,
+	}
 	if err := resetDiagnosticParserCoreGenericScheduler(&scheduler); err != nil {
 		t.Fatal(err)
 	}
@@ -128,6 +135,10 @@ func TestResetDiagnosticParserCoreGenericSchedulerClearsRecoveryState(t *testing
 	}
 	if scheduler.s3RegionOpened {
 		t.Fatal("the error region marker remained set after reset")
+	}
+	if scheduler.s3ResumeState != 0 || scheduler.s3ResumeSymbol != 0 || scheduler.s3ResumeCount != 0 {
+		t.Fatalf("the recovery resume remained set after reset: %d/%d/%d",
+			scheduler.s3ResumeState, scheduler.s3ResumeSymbol, scheduler.s3ResumeCount)
 	}
 	if scheduler.recoveryIsolation {
 		t.Fatal("recovery isolation remained active after reset")

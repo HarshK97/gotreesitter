@@ -2,6 +2,7 @@ package grammars
 
 import (
 	"crypto/sha256"
+	"slices"
 	"testing"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
@@ -77,10 +78,17 @@ func TestJavaScriptProfileCertifiesCompactRecoveryFrontier(t *testing.T) {
 		!lang.CompactRecoveryPlainFirstCertified {
 		t.Fatal("the JavaScript profile did not attach its compact recovery capabilities")
 	}
+	wantAliases := []gotreesitter.CompactRecoveryTerminalAliasRule{
+		{ResumeState: 1042, ResumeSymbol: 129, AliasSymbol: 261},
+		{ResumeState: 1367, ResumeSymbol: 7, AliasSymbol: 261},
+	}
+	if !slices.Equal(lang.CompactRecoveryTerminalAliasRules, wantAliases) {
+		t.Fatalf("terminal alias rules=%+v, want %+v", lang.CompactRecoveryTerminalAliasRules, wantAliases)
+	}
 	uncertified := &gotreesitter.Language{}
 	if attachBuiltinLanguageRuntimeProfile("javascript", sha256.Sum256([]byte("wrong javascript blob")), uncertified) ||
 		uncertified.CompactStrategy2ErrorRegionCertified || uncertified.CompactMissingTokenInsertionCertified ||
-		uncertified.CompactRecoveryPlainFirstCertified {
+		uncertified.CompactRecoveryPlainFirstCertified || len(uncertified.CompactRecoveryTerminalAliasRules) != 0 {
 		t.Fatal("a mismatched JavaScript blob received compact recovery certification")
 	}
 }
@@ -157,8 +165,21 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	if lang.CompactRecoveryPlainFirstCertified {
 		t.Fatal("unknown runtime profile enabled compact plain-first recovery")
 	}
+	if len(lang.CompactRecoveryTerminalAliasRules) != 0 {
+		t.Fatal("unknown runtime profile attached compact recovery terminal aliases")
+	}
 	if lang.LineContinuationEscapeByte != 0 {
 		t.Fatalf("unknown runtime profile set a line-continuation escape byte: %q", lang.LineContinuationEscapeByte)
+	}
+}
+
+func TestRuntimeProfileSymbolRejectsDuplicateNames(t *testing.T) {
+	lang := &gotreesitter.Language{SymbolNames: []string{"first", "duplicate", "duplicate"}}
+	if symbol, ok := runtimeProfileSymbol(lang, "first"); !ok || symbol != 0 {
+		t.Fatalf("unique symbol=%d ok=%t, want 0/true", symbol, ok)
+	}
+	if symbol, ok := runtimeProfileSymbol(lang, "duplicate"); ok {
+		t.Fatalf("duplicate symbol=%d ok=true, want fail-closed", symbol)
 	}
 }
 
