@@ -57,9 +57,10 @@ func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) 
 		// only for an exact two-head EOF frontier and proves its own immutable
 		// event topology. An explicit public sibling grant keeps the legacy
 		// bypass and takes precedence in dispatchPassActive.
-		allowMetadataEOFAcceptRecovery:  true,
-		allowPrimaryAcceptDerivation:    p.language.CompactPrimaryAcceptanceDerivationCertified,
-		allowConvergedSplitDropArtifact: p.language.CompactConvergedReductionSplitDropsCertified,
+		allowMetadataEOFAcceptRecovery:           true,
+		allowPrimaryAcceptDerivation:             p.language.CompactPrimaryAcceptanceDerivationCertified,
+		allowCompactAcceptanceStructuralElection: p.language.CompactAcceptanceStructuralElectionCertified,
+		allowConvergedSplitDropArtifact:          p.language.CompactConvergedReductionSplitDropsCertified,
 		// Recovery admits the certified S3 base mechanism. S5 also needs the
 		// insertion gate and the lineage-selection gate.
 		Recovery:                          p.language.CompactStrategy2ErrorRegionCertified,

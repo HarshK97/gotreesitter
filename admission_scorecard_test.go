@@ -81,7 +81,7 @@ var admissionScorecardRequiredCompactPasses = map[string]struct{}{
 	"hlsl": {}, "html": {}, "http": {}, "hurl": {}, "hyprlang": {}, "ini": {}, "janet": {}, "javascript": {}, "jinja2": {}, "jq": {},
 	"json5": {}, "jsonnet": {}, "julia": {}, "just": {}, "kconfig": {}, "kdl": {}, "kotlin": {},
 	"ledger": {}, "less": {}, "linkerscript": {}, "liquid": {}, "llvm": {}, "lua": {},
-	"luau": {}, "make": {}, "markdown": {}, "matlab": {}, "mermaid": {}, "mojo": {},
+	"luau": {}, "make": {}, "markdown": {}, "matlab": {}, "mermaid": {}, "meson": {}, "mojo": {},
 	"move": {}, "nginx": {}, "nickel": {}, "nim": {}, "ninja": {}, "nix": {}, "norg": {}, "nushell": {},
 	"objc": {}, "ocaml": {}, "odin": {}, "org": {}, "pascal": {}, "pem": {}, "perl": {},
 	"php": {}, "pkl": {}, "powershell": {}, "prisma": {}, "prolog": {}, "promql": {},
@@ -147,45 +147,15 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 		// registry drift, or surrendered route coverage require an explicit
 		// review and ratchet update.
 		//
-		// minPass moved 200 -> 198 and maxFallback 1 -> 3. Three languages
-		// carry the three FALLBACK rows counted here:
+		// The 199/2/5 ratchet includes Meson's locked-C structural election.
+		// Two languages retain fail-closed FALLBACK rows:
 		//
-		//   - markdown_inline: the pre-existing baseline FALLBACK, already
-		//     present before either landing below and unrelated to both.
-		//     Never in admissionScorecardRequiredCompactPasses, so it was
-		//     never counted in minPass either.
-		//   - meson moved PASS -> FALLBACK when
-		//     selectCompactAcceptanceDerivation's materiality gate
-		//     (parsercore_phase0_driver.go, compactAcceptanceElectionIsVacuous)
-		//     landed: meson's smoke sample ("message('hello')") has a genuine,
-		//     score-tied grammar ambiguity between two distinct real symbols
-		//     (variableunit and var_unit -- both present in the compiled
-		//     language's SymbolNames). The old positional rule happened to
-		//     pick the derivation that matches production; the gate cannot
-		//     prove that pick correct without a C oracle, so it now declines
-		//     instead of publishing an unproven tree.
-		//   - jsdoc moved PASS -> FALLBACK (campaign v7 class-e closure,
-		//     spore.2026-08-02.hornbeam-e.byte-continuity): retiring
-		//     bytesAreSingleByteDecorationTrivia (parsercore_phase0_driver.go)
-		//     closes a measured 189-input false-clean class across
-		//     javascript, haskell, html, and bash, and moves jsdoc from PASS
-		//     to FALLBACK (accepted-leaf-tiling-gap: its own interior
-		//     comment-continuation gap no longer has a tolerating exemption).
-		//     Every jsdoc full parse now pays a measured 2.2x-2.5x latency
-		//     cost relative to a plain production parse: the compact route
-		//     always attempts jsdoc first, always declines at this gate, and
-		//     production then parses the same source a second time from
-		//     scratch. Acceptable for a rare grammar on a fail-closed route;
-		//     not free.
-		//
-		// meson's and jsdoc's moves are both PASS-safe FALLBACKs, never a
-		// DIVERGE (see counts[scorecardDiverge] below, unaffected at 0). No
-		// other language's status changes; production still serves
-		// markdown_inline, meson, and jsdoc correctly.
+		//   - markdown_inline reaches its existing repetition-shift boundary.
+		//   - jsdoc reaches its accepted-leaf interior tiling gap.
 		const (
 			wantTotal   = 206
-			minPass     = 198
-			maxFallback = 3
+			minPass     = 199
+			maxFallback = 2
 			wantSkip    = 5
 		)
 		if got := len(admissionScorecardRequiredCompactPasses); got != minPass {
