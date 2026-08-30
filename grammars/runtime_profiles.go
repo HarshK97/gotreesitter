@@ -27,6 +27,7 @@ type builtinLanguageRuntimeProfile struct {
 	exactStackNodeEquivalence          bool
 	compactStrategy2ErrorRegion        bool
 	compactMissingTokenInsertion       bool
+	compactRecoveryPlainFirst          bool
 	lineContinuationEscapeByte         byte
 	conflictPolicies                   []gotreesitter.ConflictPolicy
 }
@@ -108,6 +109,7 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		compactConvergedSplitDrops:     true,
 		compactStrategy2ErrorRegion:    true,
 		compactMissingTokenInsertion:   true,
+		compactRecoveryPlainFirst:      true,
 	},
 	// These scanner-backed grammars have certified the first retry ladder's
 	// selected accepted-error tree as authoritative. Repeating the whole ladder
@@ -679,6 +681,10 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	}
 	if profile.compactMissingTokenInsertion && !lang.CompactMissingTokenInsertionCertified {
 		lang.CompactMissingTokenInsertionCertified = true
+		changed = true
+	}
+	if profile.compactRecoveryPlainFirst && !lang.CompactRecoveryPlainFirstCertified {
+		lang.CompactRecoveryPlainFirstCertified = true
 		changed = true
 	}
 	if profile.lineContinuationEscapeByte != 0 && lang.LineContinuationEscapeByte != profile.lineContinuationEscapeByte {

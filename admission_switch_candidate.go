@@ -94,6 +94,7 @@ func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) 
 		// for the proof and still fails closed per tree when it is incomplete.
 		replayParseStates:                 true,
 		allowConvergedReductionSplitDrops: p.language.CompactConvergedReductionSplitDropsCertified,
+		recoveryPlainFirst:                p.language.CompactRecoveryPlainFirstCertified,
 	}, nil
 }
 

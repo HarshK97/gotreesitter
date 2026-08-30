@@ -7311,7 +7311,10 @@ func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegionWithMissingFo
 		return true, nil
 	}
 	if s.s3RegionOpened {
-		return false, nil
+		return false, &diagnosticParserCoreDecline{
+			boundary: DiagnosticParserCoreRecovery,
+			detail:   "compact recovery permits one error region per parse",
+		}
 	}
 	// EOF at the very first no-action point, nothing absorbed yet:
 	// cRecoverEOFAccept's whole-file wrap is out of S3 scope. No committed

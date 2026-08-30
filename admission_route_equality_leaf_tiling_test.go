@@ -427,16 +427,19 @@ func TestCompactRouteAcceptedRootTrailingErrorExtraDeclines(t *testing.T) {
 	}
 	lang := entry.Language()
 
-	sources := []string{
-		"<html><body>x</body>\x00>",
-		"<html><body>x</body>\x00/h>",
-		"<html><body>x</body>\x00/h>\x00/html>",
-		"<html><body>-->Hello</body>\x00/h>\x00/html>\n",
+	sources := []struct {
+		source     string
+		wantReason string
+	}{
+		{"<html><body>x</body>\x00>", "error-bearing trailing extra"},
+		{"<html><body>x</body>\x00/h>", "error-bearing trailing extra"},
+		{"<html><body>x</body>\x00/h>\x00/html>", "error-bearing trailing extra"},
+		{"<html><body>-->Hello</body>\x00/h>\x00/html>\n", "one error region per parse"},
 	}
-	for _, src := range sources {
-		src := src
-		t.Run(src, func(t *testing.T) {
-			source := []byte(src)
+	for _, test := range sources {
+		test := test
+		t.Run(test.source, func(t *testing.T) {
+			source := []byte(test.source)
 
 			gts.ResetAdmissionCandidateCountersForTest()
 			candidate := gts.NewParser(lang)
@@ -449,11 +452,11 @@ func TestCompactRouteAcceptedRootTrailingErrorExtraDeclines(t *testing.T) {
 
 			routed, fallback := gts.AdmissionCandidateCounters()
 			if routed != 0 || fallback != 1 {
-				t.Fatalf("%q: route counters routed=%d fallback=%d, want routed=0 fallback=1 (accept-time splice gap must decline)", src, routed, fallback)
+				t.Fatalf("%q: route counters routed=%d fallback=%d, want routed=0 fallback=1", test.source, routed, fallback)
 			}
 			reason := gts.AdmissionCandidateLastFallbackReason()
-			if !strings.Contains(reason, "error-bearing trailing extra") {
-				t.Fatalf("%q: fallback reason=%q, want it to cite the trailing extra splice gap", src, reason)
+			if !strings.Contains(reason, test.wantReason) {
+				t.Fatalf("%q: fallback reason=%q, want %q", test.source, reason, test.wantReason)
 			}
 		})
 	}

@@ -3,6 +3,7 @@
 package gotreesitter
 
 import (
+	"strings"
 	"testing"
 
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
@@ -136,8 +137,8 @@ func TestS3SecondIndependentErrorRegionDeclines(t *testing.T) {
 	original := scheduler.headers[0]
 
 	handled, err := scheduler.s3TryOpenErrorRegionWithMissingFork(0, true)
-	if err != nil {
-		t.Fatalf("s3TryOpenErrorRegionWithMissingFork: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "one error region per parse") {
+		t.Fatalf("s3TryOpenErrorRegionWithMissingFork error=%v, want typed single-region decline", err)
 	}
 	if handled || scheduler.headers[0] != original {
 		t.Fatalf("second region changed the frontier: handled=%t header=%+v", handled, scheduler.headers[0])
