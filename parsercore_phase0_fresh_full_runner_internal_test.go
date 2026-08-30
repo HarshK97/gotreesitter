@@ -118,6 +118,19 @@ func TestResetDiagnosticParserCoreGenericSchedulerRejectsActiveScratch(t *testin
 	}
 }
 
+func TestResetDiagnosticParserCoreGenericSchedulerClearsMissingInsertionCount(t *testing.T) {
+	scheduler := diagnosticParserCoreGenericScheduler{s5MissingInsertions: 7, recoveryIsolation: true}
+	if err := resetDiagnosticParserCoreGenericScheduler(&scheduler); err != nil {
+		t.Fatal(err)
+	}
+	if scheduler.s5MissingInsertions != 0 {
+		t.Fatalf("missing insertion count=%d, want zero", scheduler.s5MissingInsertions)
+	}
+	if scheduler.recoveryIsolation {
+		t.Fatal("recovery isolation remained active after reset")
+	}
+}
+
 func TestParserCoreFreshFullRunnerScratchDoesNotAliasLiveTree(t *testing.T) {
 	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreFreshFullCanonicalOptions())
 	if err != nil {

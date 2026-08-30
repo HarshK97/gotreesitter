@@ -26,6 +26,7 @@ type builtinLanguageRuntimeProfile struct {
 	compactPrimaryAcceptDerivation     bool
 	exactStackNodeEquivalence          bool
 	compactStrategy2ErrorRegion        bool
+	compactMissingTokenInsertion       bool
 	lineContinuationEscapeByte         byte
 	conflictPolicies                   []gotreesitter.ConflictPolicy
 }
@@ -79,13 +80,12 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	"robot": {
 		blobSHA256: mustRuntimeProfileSHA256("25075ecf5323eeb88af4f71b55f51867cef38a277aaa60f01b879ee8abb4c74f"),
 	},
-	// html_erroneous_end_tag (campaign v7 tranche B3 stage S3): C-oracle parity
-	// certifies native strategy-2 recovery (error-region absorb and
-	// condense-resume) for this exact artifact against the ten pinned
-	// html_erroneous_end_tag witnesses (cgo_harness/testdata/compact_t3_oracle_witnesses_v2.json).
+	// C-oracle parity certifies the complete compact recovery competition for
+	// this exact artifact against the ten pinned HTML witnesses.
 	"html": {
-		blobSHA256:                  mustRuntimeProfileSHA256("76d3d788ec44b5eaeaa0b3b0069bf52ffc4b125791059ff743301b9938dffd3d"),
-		compactStrategy2ErrorRegion: true,
+		blobSHA256:                   mustRuntimeProfileSHA256("76d3d788ec44b5eaeaa0b3b0069bf52ffc4b125791059ff743301b9938dffd3d"),
+		compactStrategy2ErrorRegion:  true,
+		compactMissingTokenInsertion: true,
 	},
 	// Objective-C keeps parity-relevant alternatives below the bounded stack
 	// comparison frontier. Exact comparison preserves them until generic result
@@ -669,6 +669,10 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	}
 	if profile.compactStrategy2ErrorRegion && !lang.CompactStrategy2ErrorRegionCertified {
 		lang.CompactStrategy2ErrorRegionCertified = true
+		changed = true
+	}
+	if profile.compactMissingTokenInsertion && !lang.CompactMissingTokenInsertionCertified {
+		lang.CompactMissingTokenInsertionCertified = true
 		changed = true
 	}
 	if profile.lineContinuationEscapeByte != 0 && lang.LineContinuationEscapeByte != profile.lineContinuationEscapeByte {

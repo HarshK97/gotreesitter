@@ -47,12 +47,9 @@ import (
 // diagnosticParserCoreRecoveryCostSource adapts a compact Core to the stage S2
 // cost model's RecoveryCostSource interface.
 //
-// The cost model needs two things a compact subtree record does not store:
-// the missing bit (now carried, stage S5 substrate) and a row span. Rows are
-// read for ERROR nodes only -- RecoveryCostPerSkippedLine times the node's row
-// extent -- so this source computes them from the source text on demand rather
-// than widening the record. newlines is built once per parse, lazily, and only
-// if some ERROR node actually asks.
+// The compact view supplies the missing bit. The compact record does not store
+// row spans. This source computes rows from the text only for ERROR nodes.
+// It builds the newline index once per parse and only when pricing needs it.
 type diagnosticParserCoreRecoveryCostSource struct {
 	compact *core.Core
 	source  []byte

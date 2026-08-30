@@ -550,6 +550,7 @@ func TestDiagnosticParserCoreGenericConflictArbitraryNOrdering(t *testing.T) {
 		{head: incoming, creationSeq: 4},
 		{head: suffix, creationSeq: 6},
 	}
+	headers[2].markRecoveryLineage()
 	before, err := diagnosticParserCoreHeaderReceipts(compact, headers)
 	if err != nil {
 		t.Fatal(err)
@@ -581,6 +582,11 @@ func TestDiagnosticParserCoreGenericConflictArbitraryNOrdering(t *testing.T) {
 	}
 	if !reflect.DeepEqual(states, []StateID{9, 2, 8, 3, 4}) || !reflect.DeepEqual(sequences, []uint64{2, 4, 6, 10, 11}) {
 		t.Fatalf("physical conflict order states=%v sequences=%v", states, sequences)
+	}
+	for index := range scheduler.headers {
+		if scheduler.headers[index].isRecoveryLineage() {
+			t.Fatalf("ordinary conflict output %d retained the recovery marker", index)
+		}
 	}
 	if scheduler.branchOrder != 9 || scheduler.nextSeq != 12 || scheduler.dispatches != 1 || scheduler.work != (DiagnosticParserCoreGenericWork{
 		Dispatches: 1, Conflicts: 1, ConflictActions: 3, Forks: 2, ConflictHeads: 3,
@@ -696,9 +702,11 @@ func TestDiagnosticParserCoreGenericConflictMultiOutputSequencing(t *testing.T) 
 			receipt := &DiagnosticParserCoreGenericScheduler{}
 			scheduler := &diagnosticParserCoreGenericScheduler{
 				compact: compact, headers: append([]diagnosticParserCoreHeader(nil), headers...),
-				token:       Token{Symbol: 10, StartByte: 1, EndByte: 2},
-				branchOrder: test.branchOrder, nextSeq: test.nextSeq,
-				options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100}, receipt: receipt,
+				token:                Token{Symbol: 10, StartByte: 1, EndByte: 2},
+				branchOrder:          test.branchOrder,
+				nextSeq:              test.nextSeq,
+				nextCleanPathLineage: 1,
+				options:              DiagnosticParserCorePrefixOptions{MaxDispatches: 100}, receipt: receipt,
 			}
 			cell := mustDiagnosticParserCoreGenericCell(t, compact, 1, headers[1], 10)
 			err := scheduler.applyGenericConflict(before, cell)
@@ -711,6 +719,7 @@ func TestDiagnosticParserCoreGenericConflictMultiOutputSequencing(t *testing.T) 
 			}
 			if beforeStats != afterStats || !reflect.DeepEqual(scheduler.headers, headers) ||
 				scheduler.branchOrder != test.branchOrder || scheduler.nextSeq != test.nextSeq ||
+				scheduler.nextCleanPathLineage != 1 ||
 				scheduler.dispatches != 0 || scheduler.work != (DiagnosticParserCoreGenericWork{}) ||
 				!reflect.DeepEqual(receipt, &DiagnosticParserCoreGenericScheduler{}) {
 				t.Fatalf("overflow rollback leaked: before=%+v after=%+v scheduler=%+v receipt=%+v", beforeStats, afterStats, scheduler, receipt)
@@ -719,8 +728,8 @@ func TestDiagnosticParserCoreGenericConflictMultiOutputSequencing(t *testing.T) 
 	}
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact, headers: headers, token: Token{Symbol: 10, StartByte: 1, EndByte: 2},
-		branchOrder: 7, nextSeq: 10, options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100},
-		receipt: &DiagnosticParserCoreGenericScheduler{},
+		branchOrder: 7, nextSeq: 10, nextCleanPathLineage: 1,
+		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100}, receipt: &DiagnosticParserCoreGenericScheduler{},
 	}
 	cell := mustDiagnosticParserCoreGenericCell(t, compact, 1, headers[1], 10)
 	if err := scheduler.applyGenericConflict(before, cell); err != nil {

@@ -112,19 +112,10 @@ type compactT3ExpectedOutcome struct {
 	CompactHasError    *bool `json:"compact_has_error"`
 }
 
-// compactT3S3CertifiedWitnesses lists witnesses where native compact
-// recovery is certified to reach exact structural C-oracle parity (B3 stage
-// S3: error-region absorb and condense-resume, Language.
-// CompactStrategy2ErrorRegionCertified, gated on the html grammar blob's own
-// SHA-256, not on Language.Name -- design section 7). html_log_7 is
-// deliberately excluded: its next real token after a dangling start_tag is
-// a valid "</" the parser cannot place without first inserting a synthetic
-// MISSING ">", which stage S5, not S3, owns (design section 4's stop rule:
-// "if any html witness needs strategy 1 or missing insertion, leave it
-// fail-closed and record it for S4/S5; do not widen S3"). Compact detects
-// that shape and declines it, falling back to production exactly as it did
-// before this stage landed; see the dedicated assertion below.
-var compactT3S3CertifiedWitnesses = map[string]bool{
+// compactT3RecoveryCertifiedWitnesses lists HTML witnesses where native
+// compact recovery reaches exact structural C-oracle parity. The exact HTML
+// artifact certifies S3 error absorption and S5 version competition.
+var compactT3RecoveryCertifiedWitnesses = map[string]bool{
 	"html_min_a":    true,
 	"html_min_html": true,
 	"html_log_1":    true,
@@ -133,6 +124,7 @@ var compactT3S3CertifiedWitnesses = map[string]bool{
 	"html_log_4":    true,
 	"html_log_5":    true,
 	"html_log_6":    true,
+	"html_log_7":    true,
 	"html_log_8":    true,
 }
 
@@ -147,17 +139,10 @@ var compactT3S3CertifiedWitnesses = map[string]bool{
 // and per-node HasError) for both production and compact against the C
 // oracle.
 //
-//   - compact vs. the C oracle: B3 stage S3 lands native strategy-2 recovery
-//     (error-region absorb and condense-resume) for the html_erroneous_end_tag
-//     class. Every witness in compactT3S3CertifiedWitnesses is asserted
-//     (not logged) to match the C oracle exactly: a divergence there is a
-//     stage S3 regression, not an expected gap. The one witness S3 does not
-//     own (html_log_7; needs missing-token insertion, S5 scope) stays
-//     logged, with its own assertion that compact's decline is faithful
-//     to production (below) -- unowned shapes fail closed, they do not
-//     guess. Every other language in this manifest (javascript, swift)
-//     still has no compact recovery implementation and stays logged only,
-//     exactly as stage S1 left it.
+//   - compact vs. the C oracle: S3 and S5 cover all ten
+//     html_erroneous_end_tag witnesses. Every witness in
+//     compactT3RecoveryCertifiedWitnesses must match the C oracle exactly.
+//     JavaScript and Swift still have no compact recovery implementation.
 //   - production vs. the C oracle: the S1 design brief's stated gate is
 //     "the harness must pass with production serving every witness before
 //     any compact change." Verified in the pinned parity container
@@ -233,14 +218,14 @@ func TestCompactT3OracleAdjudication(t *testing.T) {
 					switch {
 					case len(divergences) == 0:
 						t.Logf("witness %q: compact matches the C oracle structurally", witness.ID)
-					case compactT3S3CertifiedWitnesses[witness.ID]:
+					case compactT3RecoveryCertifiedWitnesses[witness.ID]:
 						t.Fatalf(
-							"witness %q: B3 stage S3 certifies native compact recovery for this witness, but compact diverges from the C oracle at %d node(s); first: %s",
+							"witness %q: compact recovery certification requires C parity, but compact diverges at %d node(s); first: %s",
 							witness.ID, len(divergences), compactT3FormatDivergence(divergences[0]),
 						)
 					default:
 						t.Logf(
-							"witness %q: compact diverges from the C oracle at %d node(s) (expected pre-B3-S3+ recovery, or -- for html_erroneous_end_tag -- an owned-class witness B3 stage S3 declines); first: %s",
+							"witness %q: compact diverges from the C oracle at %d node(s) outside the certified recovery set; first: %s",
 							witness.ID, len(divergences), compactT3FormatDivergence(divergences[0]),
 						)
 						// The faithful-decline check only applies inside the

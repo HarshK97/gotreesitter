@@ -55,12 +55,8 @@ type parserCoreFreshFullRunner struct {
 }
 
 func newParserCoreFreshFullRunner(scanner ExternalScanner, options DiagnosticParserCorePrefixOptions) (*parserCoreFreshFullRunner, error) {
-	// B3 stage S3: admit options.Recovery only when it is paired with the
-	// certified-capability gate (allowCompactStrategy2ErrorRegion, set only
-	// from a grammar's own CompactStrategy2ErrorRegionCertified flag). Every
-	// other Recovery request -- and Retry/Incremental/IncludedRanges/closed-
-	// prefix, none of which this stage touches -- still declines exactly as
-	// before this stage landed.
+	// S3 supplies the base recovery mechanism. S5 separately requires its
+	// insertion and acceptance-selection gates.
 	if (options.Recovery && !options.allowCompactStrategy2ErrorRegion) ||
 		options.Retry || options.Incremental || options.IncludedRanges || options.GenericStopAtClosedByte != nil {
 		return nil, &diagnosticParserCoreDecline{
@@ -238,10 +234,13 @@ func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGeneric
 	selectedCertifiedPrimary := scheduler.options.allowPrimaryAcceptDerivation &&
 		header.ExactPaths > 1 && !acceptance.HasBranchOrder
 	selectedMaterialityCertified := acceptance.MaterialityCertified && header.ExactPaths > 1
+	acceptCountValid := (acceptance.Accepts == 1 && acceptance.Work.Accepts == 1) ||
+		(acceptance.Work.RecoveryLineageSelections == 1 &&
+			acceptance.Accepts >= 2 && acceptance.Accepts == acceptance.Work.Accepts)
 	if acceptance.Token.Symbol != 0 || acceptance.Token.StartByte != wantEOF || acceptance.Token.EndByte != wantEOF ||
 		acceptance.Token.Missing || acceptance.Token.NoLookahead || acceptance.Token.ExternalScannerToken ||
 		!header.Accepted || header.Paused || header.ExactPaths != 1 && !selectedCertifiedPrimary && !selectedMaterialityCertified ||
-		!parserCoreFreshFullAcceptedTailIsClean(source, header.ByteOffset, continuationEscape) || acceptance.Accepts != 1 || acceptance.Work.Accepts != 1 {
+		!parserCoreFreshFullAcceptedTailIsClean(source, header.ByteOffset, continuationEscape) || !acceptCountValid {
 		// See the comment above: census classification is opt-in and additive.
 		if admissionCensusEnabled() {
 			return admissionCensusAcceptanceDecline(acceptance, wantEOF)

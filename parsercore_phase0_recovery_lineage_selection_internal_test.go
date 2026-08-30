@@ -12,7 +12,7 @@ import (
 // selectCompetingRecoveryLineage is the acceptance half of C's version
 // competition: when more than one head accepts, price the competitors and
 // publish the cheaper tree instead of declining. These tests drive it through
-// a hand-built scheduler, because no live path forks a recovery lineage yet.
+// a hand-built scheduler to isolate the acceptance policy from the live fork.
 
 type lineageSelectionTable struct{}
 
@@ -87,7 +87,7 @@ func TestSelectCompetingRecoveryLineagePublishesTheCheaperTree(t *testing.T) {
 }
 
 // TestSelectCompetingRecoveryLineageDeclinesUnarmed proves the capability
-// actually gates the path, which is what keeps this unreachable today.
+// keeps uncertified parses on the conservative path.
 func TestSelectCompetingRecoveryLineageDeclinesUnarmed(t *testing.T) {
 	scheduler := newLineageSelectionScheduler(t, false)
 	_, resolved, err := scheduler.selectCompetingRecoveryLineage()
@@ -96,6 +96,32 @@ func TestSelectCompetingRecoveryLineageDeclinesUnarmed(t *testing.T) {
 	}
 	if resolved {
 		t.Fatal("an unarmed scheduler resolved a competing frontier")
+	}
+}
+
+func TestCompleteAcceptancePricesRecoveryFrontierBeforeCollapse(t *testing.T) {
+	scheduler := newLineageSelectionScheduler(t, true)
+	scheduler.recoveryIsolation = true
+	scheduler.options.ReceiptMode = DiagnosticParserCoreReceiptSummary
+	scheduler.receipt = &scheduler.receiptBacking
+	for index := range scheduler.headers {
+		scheduler.headers[index].accepted = true
+	}
+	scheduler.work.Accepts = uint64(len(scheduler.headers))
+	eof := uint32(len(scheduler.options.materializationSource))
+	scheduler.token = Token{StartByte: eof, EndByte: eof}
+	want := scheduler.headers[1].head
+
+	if err := scheduler.completeAcceptance(); err != nil {
+		t.Fatalf("completeAcceptance: %v", err)
+	}
+	if scheduler.acceptedHead != want || len(scheduler.headers) != 1 {
+		t.Fatalf("accepted head=%v headers=%d, want absorb head %v", scheduler.acceptedHead, len(scheduler.headers), want)
+	}
+	acceptance := scheduler.receipt.Acceptance
+	if acceptance == nil || acceptance.Accepts != 2 || acceptance.Work.Accepts != 2 ||
+		acceptance.Work.RecoveryLineageSelections != 1 {
+		t.Fatalf("acceptance=%+v, want two accepts and one recovery selection", acceptance)
 	}
 }
 
@@ -228,6 +254,14 @@ func TestCollapseToRecoveryWinnerSeatsTheWinnerAndClearsLosers(t *testing.T) {
 	scheduler.headers = append(scheduler.headers, diagnosticParserCoreHeader{})
 	scheduler.headers[2].markRecoveryLineage()
 	scheduler.headers[2].s3Region = &diagnosticParserCoreS3Region{}
+	scheduler.recoveryIsolation = true
+	retainedRegion := &diagnosticParserCoreS3Region{}
+	for target := range scheduler.canonicalScratch.headerBuffers {
+		buffer := make([]diagnosticParserCoreHeader, 2, 4)
+		buffer[1].markRecoveryLineage()
+		buffer[1].s3Region = retainedRegion
+		scheduler.canonicalScratch.headerBuffers[target] = buffer
+	}
 	want := scheduler.headers[1]
 
 	scheduler.collapseToRecoveryWinner(1)
@@ -241,12 +275,22 @@ func TestCollapseToRecoveryWinnerSeatsTheWinnerAndClearsLosers(t *testing.T) {
 	if scheduler.work.RecoveryLineageSelections != 1 {
 		t.Fatalf("collapse recorded %d selections, want 1", scheduler.work.RecoveryLineageSelections)
 	}
+	if scheduler.recoveryIsolation || scheduler.headers[0].isRecoveryLineage() {
+		t.Fatal("collapse retained recovery competition state on the winner")
+	}
 	// The losers must not stay live in the backing array: each retains an open
 	// error region for the scheduler's lifetime otherwise.
 	tail := scheduler.headers[:cap(scheduler.headers)][1:3]
 	for index := range tail {
 		if tail[index].s3Region != nil || tail[index].isRecoveryLineage() {
 			t.Fatalf("dropped header %d is still live in the backing array", index+1)
+		}
+	}
+	for target, buffer := range scheduler.canonicalScratch.headerBuffers {
+		for index, header := range buffer[:cap(buffer)] {
+			if header.s3Region == retainedRegion || header.isRecoveryLineage() {
+				t.Fatalf("canonical buffer %d retained loser %d", target, index)
+			}
 		}
 	}
 }

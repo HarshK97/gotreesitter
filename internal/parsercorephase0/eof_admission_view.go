@@ -144,12 +144,8 @@ func (c *Core) VisitEOFAdmissionSubtree(
 		External:          record.external,
 		Terminal:          record.terminal,
 		Fragile:           record.fragile,
-		// B3 stage S5 substrate opted in. subtreeRecord now encodes a missing
-		// payload, so this audit view reports the stored bit rather than a
-		// hardcoded false. The live consumer is the EOF-recovery-admission
-		// gate (parsercore_phase0_driver.go), which declines a missing
-		// subtree; leaving this false would have made that decline
-		// permanently unreachable the moment a missing record could exist.
+		// S5 recovery stores the missing bit on its synthetic payload. The EOF
+		// admission gate reads this view and declines that payload shape.
 		Missing:               record.missing,
 		MetadataAuthenticated: c.metadataConstructionAuthenticated,
 	}
