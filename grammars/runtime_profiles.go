@@ -99,6 +99,18 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256:                      mustRuntimeProfileSHA256("e5688e60d41d6ef2d0922de7687b597de0c880761064e9e7b994d401c5508312"),
 		compactLexerSkippedPrefixTiling: true,
 	},
+	// The compact Markdown inline route reduces three proved emphasis rows.
+	// It starts an HTML tag through the sole shift in the fourth exact row.
+	// All other repetition rows remain outside compact admission.
+	"markdown_inline": {
+		blobSHA256: mustRuntimeProfileSHA256("6a9064afbce4db62ab6cca8c143a9d3ae465e639a7ed81109eb65afd85469e0d"),
+		conflictPolicies: []gotreesitter.ConflictPolicy{
+			{State: 18, Lookahead: 56, Kind: gotreesitter.ConflictPolicyRepetitionReduce, CompactOnly: true, CompactMinFrontierHeaders: 2, ReduceSymbols: []gotreesitter.Symbol{107}},
+			{State: 18, Lookahead: 50, Kind: gotreesitter.ConflictPolicyRepetitionReduce, CompactOnly: true, CompactMinFrontierHeaders: 2, ReduceSymbols: []gotreesitter.Symbol{107}},
+			{State: 18, Lookahead: 36, Kind: gotreesitter.ConflictPolicyRepetitionReduce, CompactOnly: true, CompactMinFrontierHeaders: 2, ReduceSymbols: []gotreesitter.Symbol{107}},
+			{State: 209, Lookahead: 50, Kind: gotreesitter.ConflictPolicyShift, CompactOnly: true, ReduceSymbols: []gotreesitter.Symbol{104}},
+		},
+	},
 	// C-oracle parity certifies the complete compact recovery competition for
 	// this exact artifact against the ten pinned HTML witnesses.
 	"html": {

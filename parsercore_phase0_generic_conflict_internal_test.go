@@ -300,12 +300,12 @@ func TestDiagnosticParserCoreGenericConflictPolicyRequiresExactRow(t *testing.T)
 			ReduceSymbols: []Symbol{4},
 		}},
 	}
-	if _, ok := diagnosticParserCoreConflictPolicyOrdinal(language, Token{Symbol: 9}, 1, actions); ok {
+	if _, ok := diagnosticParserCoreConflictPolicyOrdinal(language, Token{Symbol: 9}, 1, actions, 1); ok {
 		t.Fatal("conflict policy admitted an unmatched state")
 	}
 	language.ConflictPolicies[0].State = 1
 	language.ConflictPolicies[0].ReduceSymbols = []Symbol{5}
-	if _, ok := diagnosticParserCoreConflictPolicyOrdinal(language, Token{Symbol: 9}, 1, actions); ok {
+	if _, ok := diagnosticParserCoreConflictPolicyOrdinal(language, Token{Symbol: 9}, 1, actions, 1); ok {
 		t.Fatal("conflict policy admitted an unmatched reduce symbol")
 	}
 }
