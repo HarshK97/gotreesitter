@@ -6,8 +6,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// recovery_cost.go -- campaign v7 tranche B3 stage S2: an inert error-cost
-// model over immutable compact subtree records.
+// recovery_cost.go -- C-compatible recovery costs over immutable compact
+// subtree records.
 //
 // THE PRODUCTION GO PORT IS THE EXECUTABLE SPECIFICATION for this file
 // (spec.compact-recovery-ownership.v1, section 6): parser_recover_c.go's
@@ -19,38 +19,21 @@ import (
 // exactly; a divergence gets a receipt, not a silent "improvement"
 // (decision 0007, hypha://m31labs/gotreesitter).
 //
-// Nothing in this package calls into this file. It is a pure, on-demand
-// library: no Core method, no scheduler path, and no driver file references
-// any declaration here. TestRecoveryCostNoOutsideCallSitesRatchet enforces
-// this as a compile-time property, in the style of
-// condense_outcome_provenance_ratchet_test.go. Stage S3 wires the ERROR-
-// region records this model reads over; stage S4 wires the recovery
-// election that reads RecoveryErrorStatus/RecoveryCompareVersions. Until
-// then this file is dead code by construction (gates G2/G3, design section
-// 8) -- reachable from nowhere except its own tests.
+// No code in this package calls this model. The root scheduler calls its
+// exported pricing surface during recovery selection. The internal ratchet
+// preserves the package boundary.
 //
 // Record shape note: RecoveryCostNode is a strict superset of the existing
 // SubtreeView (core.go). It adds two row fields (StartRow, EndRow) that no
 // compact subtree stores. SubtreeView now carries Missing itself, so that
 // field is no longer part of the difference.
 //
-// The stronger claim this note used to make -- that the compact core has
-// never produced a MISSING node or an ERROR region -- is now false in both
-// halves. Stage S3 publishes ERROR regions for its certified witness class,
-// and the stage S5 substrate (subtreeRecord.missing, Core.MissingLeaf) can
-// represent a MISSING payload. What still holds is narrower: no live parser
-// path publishes a MISSING record yet. cNodeErrorCostLang only ever
-// reads a node's Missing flag or row span when that node either is itself
-// missing or is an ERROR node (parser_recover_c.go:1238,1249-1268); an
-// ordinary clean node's Missing is always false and its row span is never
-// read. So every real SubtreeView-backed RecoveryCostNode in service today
-// leaves Missing=false and StartRow==EndRow==0, and this cost model still
-// returns exactly 0 for it (see the parity corpus test in
-// recovery_cost_test.go and the root-package differential test). The two
-// added fields exist for the paused-header MISSING/ERROR records stage
-// S3/S5 construct (design section 4); this stage defines the shape those
-// stages populate, and does not approximate production *Node state -- it
-// defines a compact record able to carry all of it.
+// Stage S3 publishes ERROR regions. Stage S5 publishes MISSING payloads after
+// the exact artifact gate admits recovery competition. cNodeErrorCostLang
+// reads Missing only for a missing node. It reads row spans only for ERROR
+// nodes (parser_recover_c.go:1238,1249-1268). Ordinary clean nodes keep zero
+// values for both fields. The model therefore preserves zero cost on clean
+// nodes while pricing both live recovery forms.
 // ---------------------------------------------------------------------------
 
 // Cost weights: a literal port of parser_recover_c.go:52-58's error_costs.h
@@ -331,23 +314,16 @@ type RecoveryErrorStatus struct {
 }
 
 // RecoveryVersionStatus is the compact equivalent of cVersionStatus
-// (parser_recover_c.go:2189-2201). Stage S2 owns no header type: the paused
-// flag, the node-count-since-error baseline, dynamic precedence, and
-// open-recovery existence all live on the paused header stage S3
-// introduces ("The open error region is the only mutable piece and lives
-// on the header, not in the arena", design section 4), so this function
-// takes them as explicit parameters instead of reading them off a header
-// that does not exist yet. subtreeCost is the caller-supplied result of
-// RecoveryNodeErrorCost(Memo) over the head's accumulated subtrees -- the
-// compact analogue of cStackErrorCost(s).
+// (parser_recover_c.go:2189-2201). The cost package owns no header type.
+// The scheduler supplies paused state, node count, precedence, and open
+// recovery state. subtreeCost is the accumulated subtree cost for one head.
 //
 // cNodeVisibleSubtreeCount and cNodeCountSinceError
 // (parser_recover_c.go:1178-1214,2155-2166) are deliberately not ported
 // here: they accumulate a visible-node count across a live GLR stack since
 // an error baseline, which is per-head bookkeeping, not a property of one
-// compact subtree. That machinery belongs to the stage that owns paused
-// headers (S3/S4), not this inert stage; NodeCount stays an explicit input
-// for the same reason.
+// compact subtree. The scheduler owns that bookkeeping, so NodeCount remains
+// an explicit input.
 func RecoveryVersionStatus(subtreeCost uint32, paused bool, nodeCount int, dynPrec int, hasOpenRecovery bool) RecoveryErrorStatus {
 	cost := subtreeCost
 	if paused {

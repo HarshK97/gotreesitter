@@ -394,6 +394,33 @@ func (c *Core) ShiftClassifiedWithLiveCondenseCandidatesOwned(owner SchedulerTra
 	return c.shiftClassifiedMaybeLiveScopedOwned(owner, candidates, true, boundary, actionOrdinal, shifted, fork)
 }
 
+// ErrorRegionResumeWithLiveCondenseCandidatesOwned isolates one recovery
+// version from unrelated live versions while it publishes its ERROR payload.
+func (c *Core) ErrorRegionResumeWithLiveCondenseCandidatesOwned(
+	owner SchedulerTransactionToken,
+	candidates []CondenseCandidate,
+	preErrorHead Head,
+	preErrorState StateID,
+	startByte, endByte uint32,
+	children []SubtreeID,
+) (out Head, err error) {
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return out, err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if c.schedulerFrame.fresh {
+		out, err = c.ErrorRegionResume(preErrorHead, preErrorState, startByte, endByte, children)
+		c.clearLiveCondenseCandidates()
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	defer c.clearLiveCondenseCandidates()
+	out, err = c.ErrorRegionResume(preErrorHead, preErrorState, startByte, endByte, children)
+	return out, c.finishSchedulerOwned(owner, err)
+}
+
 // ShiftDirectWithLiveCondenseCandidatesOwned applies a corridor-proven shift
 // without rebuilding a ClassifiedBoundary or running the generic shift path.
 // The caller must validate the action shape from the immutable corridor program.

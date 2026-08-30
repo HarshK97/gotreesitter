@@ -67,7 +67,7 @@ func loadRouteEqualityWitnesses(t testing.TB) map[string]routeEqualityWitness {
 // (html_erroneous_end_tag): compact now routes this input itself instead of
 // declining, publishing an ERROR-wrapped tree that matches the pinned C
 // oracle exactly (cgo_harness/compact_t3_oracle_adjudication_test.go's
-// compactT3S3CertifiedWitnesses asserts the full structural comparison
+// compactT3RecoveryCertifiedWitnesses asserts the full structural comparison
 // under cgo; this always-on test pins only the route decision and root
 // HasError, which do not need cgo). Before either gate landed, the compact
 // route accepted this input and published document[0:8] clean.
@@ -165,7 +165,7 @@ func TestCompactRouteAcceptedHiddenDoctypeLeafTiles(t *testing.T) {
 // same root HasError as production (exact structural C-oracle parity is
 // asserted separately, under cgo, by
 // cgo_harness/compact_t3_oracle_adjudication_test.go's
-// compactT3S3CertifiedWitnesses). The 3 javascript entries are outside B3's
+// compactT3RecoveryCertifiedWitnesses). The 3 javascript entries are outside B3's
 // witness classes staged so far and still decline at the tiling gate exactly
 // as B1 left them.
 //
@@ -271,6 +271,49 @@ func TestCompactRouteDeclinesAdjudicatedFalseCleanWitnesses(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCompactRouteCompetesMissingInsertionWithErrorAbsorb(t *testing.T) {
+	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
+	lang := grammars.HtmlLanguage()
+	if !lang.CompactStrategy2ErrorRegionCertified || !lang.CompactMissingTokenInsertionCertified {
+		t.Fatal("the HTML artifact lacks complete compact recovery certification")
+	}
+	gts.ResetAdmissionCandidateCountersForTest()
+	parser := gts.NewParser(lang)
+	parser.SetAdmissionCandidateRoute(true)
+	tree, err := parser.Parse([]byte("<html><bodyHello</body></html>\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+
+	routed, fallback := gts.AdmissionCandidateCounters()
+	if routed != 1 || fallback != 0 {
+		t.Fatalf("route counters routed=%d fallback=%d, want routed=1 fallback=0; reason=%q",
+			routed, fallback, gts.AdmissionCandidateLastFallbackReason())
+	}
+	if !tree.RootNode().HasError() {
+		t.Fatal("the selected recovery tree lost its error")
+	}
+	if !routeEqualityTreeContainsMissing(tree.RootNode()) {
+		t.Fatal("the selected recovery tree contains no missing terminal")
+	}
+}
+
+func routeEqualityTreeContainsMissing(node *gts.Node) bool {
+	if node == nil {
+		return false
+	}
+	if node.IsMissing() {
+		return true
+	}
+	for index := 0; index < node.ChildCount(); index++ {
+		if routeEqualityTreeContainsMissing(node.Child(index)) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestCompactRouteAcceptedRootLeafCoverageGapDeclines pins the adversarial

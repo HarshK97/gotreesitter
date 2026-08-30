@@ -69,17 +69,12 @@ type admissionRouteEqualityLanguage struct {
 // evidence for large-input route equality instead.
 const routeEqualityFuzzMaxInputBytes = 4096
 
-// FuzzAdmissionRouteEquality is the campaign v7 tranche B2 standing
-// generative gate: on every fuzz input where the compact admission
-// candidate route accepts a fresh full parse, its published tree must equal
-// the production route's tree exactly -- HasError, deep structure (type,
-// byte span, point span, field name, and the named/extra/missing/error
-// flags), and full leaf byte coverage. When the compact route declines
-// (an engine-side fallback, or a never-attempted eligibility decline), the
-// shipped Parse call already served the parse via production within the
-// same call (the B1 fail-closed guarantee), so the input is vacuous for
-// this assertion; it still runs for panic and hang coverage and stays in
-// the corpus.
+// FuzzAdmissionRouteEquality is the campaign v7 tranche B2 generative gate.
+// An accepted compact tree must equal production unless certified recovery
+// publishes an ERROR container or a missing terminal. Those recovery trees
+// must keep the same HasError result and match the separate C oracle gate.
+// When the compact route declines, Parse serves production within the same
+// call. The input remains useful for panic and hang coverage.
 //
 // The fuzz entry point is the shipped Parser.Parse route, reached through
 // the same public per-Parser admission switch every caller can use
@@ -310,34 +305,21 @@ func seedAdmissionRouteEqualityCorpus(f *testing.F, languages []admissionRouteEq
 	f.Add([]byte("0>>"), langIndex["swift"])
 }
 
-// routeEqualityTreeCarriesNativeRecoveryErrorContainer reports whether root's
-// subtree contains a native compact recovery ERROR container: an extra
-// ERROR node (IsError() && IsExtra()), the exact shape ErrorRegionResume
-// (internal/parsercorephase0/error_region.go) publishes -- and the sole
-// mechanism by which the admission-candidate route can ever grow an ERROR
-// node at all. Every other compact-native (routed=1) admission path either
-// accepts a source cleanly or declines outright; none of them construct
-// their own ERROR nodes. A language only reaches this shape once certified
-// (Language.CompactStrategy2ErrorRegionCertified; html is the only grammar
-// certified as of B3 stage S3), so for every other curated fuzz language
-// this predicate is always false and the full equality gate below stays in
-// force unconditionally, exactly as before.
+// routeEqualityTreeCarriesNativeRecoveryNode reports whether root contains a
+// node that only native compact recovery can publish. S3 publishes an extra
+// ERROR container. S5 publishes a missing terminal.
 //
-// A tree carrying this shape is a witness the certified recovery mechanism
-// touched it, which -- by design (spec.compact-recovery-ownership.v1) --
-// intentionally serves the C oracle's shape rather than production's own,
-// pre-existing, documented divergence from the oracle on recovered trees
-// (finding production-recovery-structural-divergence) on exactly that
-// subtree. Route equality does not, and must not, hold there.
-func routeEqualityTreeCarriesNativeRecoveryErrorContainer(n *gts.Node) bool {
+// Such a tree follows the C oracle instead of production's divergent recovery
+// shape. Route equality does not apply to that tree.
+func routeEqualityTreeCarriesNativeRecoveryNode(n *gts.Node) bool {
 	if n == nil {
 		return false
 	}
-	if n.IsError() && n.IsExtra() {
+	if n.IsMissing() || (n.IsError() && n.IsExtra()) {
 		return true
 	}
 	for i := 0; i < n.ChildCount(); i++ {
-		if routeEqualityTreeCarriesNativeRecoveryErrorContainer(n.Child(i)) {
+		if routeEqualityTreeCarriesNativeRecoveryNode(n.Child(i)) {
 			return true
 		}
 	}
@@ -349,23 +331,13 @@ func routeEqualityTreeCarriesNativeRecoveryErrorContainer(n *gts.Node) bool {
 // names -- HasError, deep structure (type, span, field, flags, named-ness),
 // and full leaf byte coverage.
 //
-// B3 stage S3 carves out one deliberate exception, keyed on tree shape
-// rather than an enumerated source allowlist
-// (routeEqualityTreeCarriesNativeRecoveryErrorContainer): whenever compact's
-// own tree carries a native recovery ERROR container, it diverges from
-// production ON PURPOSE (it matches the C oracle instead), so only HasError
-// is asserted there; the deep-structure and digest checks are logged, not
-// required. A byte-exact allowlist of the ten committed witnesses caught
-// only literal replays of those seeds -- live mutation constantly produces
-// new inputs this same certified mechanism legitimately accepts (adversarial
-// review finding: "00&" fails in under 3 seconds of live fuzzing, ~38% of
-// natively routed html mutations hit this class), which starved the fuzzer
-// on its very first generation and made seed-only CI green meaningless. The
-// shape predicate instead recognizes every input the mechanism touches, by
-// construction, so live fuzzing exercises the corpus again -- and keeps
-// catching a genuine compact break, since an ordinary clean parse or any
-// non-recovery structural regression carries no such container and still
-// gets the full, unweakened check below.
+// Certified native recovery has one deliberate exception, keyed on tree
+// shape instead of an enumerated source allowlist. When compact publishes an
+// ERROR container or a missing terminal, it follows the C oracle. Production
+// can differ, so only HasError is required there. The deep checks are logged.
+// A byte-exact allowlist covers only the committed witnesses. Live fuzzing
+// finds new inputs for the same certified mechanism. The shape check keeps
+// the full equality gate for ordinary compact parses.
 func assertAdmissionRouteEquality(t *testing.T, lp admissionRouteEqualityLanguage, src []byte, compactTree, productionTree *gts.Tree) {
 	t.Helper()
 
@@ -384,9 +356,9 @@ func assertAdmissionRouteEquality(t *testing.T, lp admissionRouteEqualityLanguag
 			lp.name, len(src), compactRoot.HasError(), productionRoot.HasError(), previewRouteEqualityInput(src))
 	}
 
-	if lp.name == "html" && routeEqualityTreeCarriesNativeRecoveryErrorContainer(compactRoot) {
+	if lp.name == "html" && routeEqualityTreeCarriesNativeRecoveryNode(compactRoot) {
 		if diff := routeEqualityFirstDivergence(compactRoot, productionRoot, lp.lang, "root"); diff != "" {
-			t.Logf("lang=%s bytes=%d native recovery ERROR container present: compact intentionally diverges from production (matches the C oracle instead): %s (input=%s)",
+			t.Logf("lang=%s bytes=%d native recovery node present: compact follows the C oracle instead of production: %s (input=%s)",
 				lp.name, len(src), diff, previewRouteEqualityInput(src))
 		}
 		return

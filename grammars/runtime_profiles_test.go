@@ -53,6 +53,19 @@ func TestCrystalAndMatlabKeepAcceptedErrorRetryLadder(t *testing.T) {
 	}
 }
 
+func TestHTMLProfileCertifiesCompleteCompactRecovery(t *testing.T) {
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+	lang := HtmlLanguage()
+	if !lang.CompactStrategy2ErrorRegionCertified || !lang.CompactMissingTokenInsertionCertified {
+		t.Fatal("the HTML profile did not attach both compact recovery capabilities")
+	}
+	uncertified := &gotreesitter.Language{}
+	if attachBuiltinLanguageRuntimeProfile("html", sha256.Sum256([]byte("wrong html blob")), uncertified) ||
+		uncertified.CompactStrategy2ErrorRegionCertified || uncertified.CompactMissingTokenInsertionCertified {
+		t.Fatal("a mismatched HTML blob received compact recovery certification")
+	}
+}
+
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// 42 = the prior 41 plus the F# unary-wrapper materialization profile.
 	// Bash, Haskell, and JavaScript reuse their existing exact profiles.

@@ -131,6 +131,76 @@ func TestDiagnosticParserCoreGenericReductionSequenceOverflowRollsBack(t *testin
 	}
 }
 
+func TestDiagnosticParserCoreRecoveryReductionForkClearsMarkers(t *testing.T) {
+	table := &genericConflictTable{
+		cells: map[genericConflictCell][]core.Action{
+			{state: 1, symbol: 8}: {{Type: core.ActionShift, State: 3}},
+			{state: 2, symbol: 8}: {{Type: core.ActionShift, State: 3}},
+			{state: 3, symbol: 9}: {{Type: core.ActionReduce, Symbol: 4, ChildCount: 1}},
+		},
+		gotos: map[genericConflictCell]core.StateID{
+			{state: 1, symbol: 4}: 5,
+			{state: 2, symbol: 4}: 6,
+		},
+	}
+	compact, err := core.New(table, core.Limits{MaxDerivations: 8, MaxPopPaths: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := compact.Seed(2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = compact.Shift(first, 8, 0, core.Token{Symbol: 8, EndByte: 1}, core.ForkOrder{}); err != nil {
+		t.Fatal(err)
+	}
+	head, err := compact.Shift(second, 8, 0, core.Token{Symbol: 8, EndByte: 1}, core.ForkOrder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact:              compact,
+		headers:              []diagnosticParserCoreHeader{{head: head, creationSeq: 3}},
+		token:                Token{Symbol: 9, StartByte: 1, EndByte: 2},
+		nextSeq:              10,
+		nextCleanPathLineage: 1,
+		options:              DiagnosticParserCorePrefixOptions{MaxDispatches: 20},
+		receipt:              &DiagnosticParserCoreGenericScheduler{},
+	}
+	scheduler.headers[0].markRecoveryLineage()
+	scheduler.recoveryIsolation = true
+	before, err := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, scheduler.headers[0], 9)
+	if err := scheduler.applyGenericReduction(before, cell); err != nil {
+		t.Fatal(err)
+	}
+	if len(scheduler.headers) != 2 {
+		t.Fatalf("reduction produced %d heads, want 2", len(scheduler.headers))
+	}
+	for index := range scheduler.headers {
+		if scheduler.headers[index].isRecoveryLineage() {
+			t.Fatalf("ordinary reduction output %d retained the recovery marker", index)
+		}
+	}
+	if !scheduler.recoveryIsolation {
+		t.Fatal("ordinary reduction disabled the fail-closed recovery guard")
+	}
+	unsupported, err := scheduler.dispatchPass()
+	if err != nil {
+		t.Fatalf("dispatchPass: %v", err)
+	}
+	if unsupported == nil || unsupported.boundary != DiagnosticParserCoreRecovery {
+		t.Fatalf("unsupported=%+v, want recovery decline", unsupported)
+	}
+}
+
 func TestDiagnosticParserCoreCanonicalizeRunnableDominatesPaused(t *testing.T) {
 	compact, err := core.New(&genericConflictTable{}, core.Limits{})
 	if err != nil {

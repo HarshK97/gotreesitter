@@ -3,22 +3,18 @@ package parsercorephase0
 import "errors"
 
 // ---------------------------------------------------------------------------
-// missing_leaf.go -- campaign v7 tranche B3 stage S5 substrate: the compact
-// representation of C's recovery-inserted MISSING terminal.
+// missing_leaf.go -- compact support for C's recovery-inserted MISSING
+// terminal.
 //
 // THE PRODUCTION GO PORT IS THE EXECUTABLE SPECIFICATION for the mechanism
-// that will produce these (cHandleError's missing-token search,
+// that produces these (cHandleError's missing-token search,
 // parser_recover_c.go, itself a port of ts_parser__handle_error step 2,
 // parser.c:2154-2230). The pinned C oracle is the parity arbiter
 // (decision 0007).
 //
-// NOTHING IN THE SHIPPED PARSER CALLS MissingLeaf TODAY. It is inert
-// substrate, landed on its own so the storage and materialization change can
-// be reviewed apart from the scheduler mechanism that will use it. The
-// admission census reports six real-corpus rows whose first decline point is
-// owned by this mechanism, and three of those six already carry a production
-// tree that is structurally identical to the locked C oracle, so the
-// mechanism has a measured target to hit.
+// The compact S5 recovery stage calls MissingLeaf after it creates competing
+// missing-insertion and error-absorb lineages. Artifact certification gates
+// that stage.
 // ---------------------------------------------------------------------------
 
 // MissingLeaf publishes one zero-width recovery-inserted terminal.
@@ -117,4 +113,142 @@ func (c *Core) ShiftMissingLeaf(head Head, targetState StateID, symbol Symbol, a
 	return c.condense(c.shiftedBoundaryKey(targetState, atByte), linkInput{
 		prev: head.Node, payload: payload,
 	})
+}
+
+// UniqueStateSpine returns the state stack below head, from the seed to head.
+// It succeeds only when each node has one predecessor.
+//
+// A compact head can represent many graph-structured stack paths. Recovery
+// simulations need one concrete version, so ambiguity and truncation decline.
+func (c *Core) UniqueStateSpine(head Head, maxDepth int) ([]StateID, bool, error) {
+	if maxDepth <= 0 {
+		return nil, false, nil
+	}
+	reversed := make([]StateID, 0, min(maxDepth, 64))
+	id := head.Node
+	for depth := 0; depth < maxDepth; depth++ {
+		node, err := c.node(id)
+		if err != nil {
+			return nil, false, err
+		}
+		reversed = append(reversed, node.state)
+		if node.linkCount == 0 {
+			for left, right := 0, len(reversed)-1; left < right; left, right = left+1, right-1 {
+				reversed[left], reversed[right] = reversed[right], reversed[left]
+			}
+			return reversed, true, nil
+		}
+		if node.linkCount != 1 {
+			return nil, false, nil
+		}
+		linkID := LinkID(node.firstLink)
+		if linkID == 0 || uint64(linkID) > uint64(len(c.links)) {
+			return nil, false, errors.New("parser-core phase zero: state spine adjacency is out of range")
+		}
+		link := c.links[linkID-1]
+		if link.prev == 0 {
+			return nil, false, errors.New("parser-core phase zero: state spine link has no predecessor")
+		}
+		id = link.prev
+	}
+	return nil, false, nil
+}
+
+const (
+	canShiftAfterReductionsMaxSteps       = 4096
+	canShiftAfterReductionsMaxStackGrowth = 64
+)
+
+type recoverySimulationStackNode struct {
+	prev  int
+	state StateID
+	depth int
+}
+
+type recoverySimulationStackKey struct {
+	prev  int
+	state StateID
+}
+
+// CanShiftAfterReductions reports whether lookahead can make progress after
+// zero or more reductions. It explores each reduction arm.
+//
+// The simulation interns persistent stack nodes. Thus, its memory grows with
+// explored states instead of multiplying each state by the source stack depth.
+func (c *Core) CanShiftAfterReductions(spine []StateID, lookahead Symbol) (bool, error) {
+	if len(spine) == 0 {
+		return false, nil
+	}
+
+	nodes := make([]recoverySimulationStackNode, 1, len(spine)+64)
+	interned := make(map[recoverySimulationStackKey]int, len(spine)+64)
+	top := 0
+	for _, state := range spine {
+		key := recoverySimulationStackKey{prev: top, state: state}
+		id, ok := interned[key]
+		if !ok {
+			id = len(nodes)
+			nodes = append(nodes, recoverySimulationStackNode{
+				prev: top, state: state, depth: nodes[top].depth + 1,
+			})
+			interned[key] = id
+		}
+		top = id
+	}
+
+	frontier := []int{top}
+	seen := map[int]struct{}{top: {}}
+	steps := 0
+	maxDepth := len(spine) + canShiftAfterReductionsMaxStackGrowth
+	for len(frontier) != 0 {
+		current := frontier[len(frontier)-1]
+		frontier = frontier[:len(frontier)-1]
+		row, err := c.tables.Actions(nodes[current].state, lookahead)
+		if err != nil {
+			return false, err
+		}
+		for ordinal := 0; ordinal < row.Len(); ordinal++ {
+			action := row.At(ordinal)
+			switch action.Type {
+			case ActionShift, ActionRecover:
+				if !action.Extra && !action.Repetition {
+					return true, nil
+				}
+			case ActionReduce:
+				steps++
+				if steps > canShiftAfterReductionsMaxSteps {
+					return false, nil
+				}
+				base := current
+				for count := 0; count < int(action.ChildCount) && base != 0; count++ {
+					base = nodes[base].prev
+				}
+				if base == 0 {
+					continue
+				}
+				gotoState, err := c.tables.Goto(nodes[base].state, action.Symbol)
+				if err != nil {
+					return false, err
+				}
+				if gotoState == 0 || nodes[base].depth+1 > maxDepth {
+					continue
+				}
+				key := recoverySimulationStackKey{prev: base, state: gotoState}
+				next, ok := interned[key]
+				if !ok {
+					next = len(nodes)
+					nodes = append(nodes, recoverySimulationStackNode{
+						prev: base, state: gotoState, depth: nodes[base].depth + 1,
+					})
+					interned[key] = next
+				}
+				if _, ok := seen[next]; ok {
+					continue
+				}
+				seen[next] = struct{}{}
+				frontier = append(frontier, next)
+			}
+		}
+	}
+	return false, nil
 }

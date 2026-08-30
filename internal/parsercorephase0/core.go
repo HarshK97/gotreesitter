@@ -971,11 +971,8 @@ type subtreeRecord struct {
 	// startByte would round the record up to 48 and grow every compact
 	// subtree in every parse.
 	//
-	// No live parser path sets this today. B3 stage S5 owns the mechanism
-	// that will (C's ts_parser__handle_error step 2, parser.c:2154-2230);
-	// this record bit, MissingLeaf, and the two view fields are the inert
-	// substrate that mechanism needs, landed separately so the storage and
-	// materialization change can be reviewed on its own.
+	// The compact S5 recovery stage sets this through MissingLeaf after its
+	// artifact gate admits the complete recovery competition.
 	missing    bool
 	startByte  uint32
 	endByte    uint32
@@ -4515,22 +4512,11 @@ func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowP
 	// spec.derivation-set-equivalence.v1, which scopes it out until error-path
 	// equivalence lands.
 	//
-	// STALE-INVARIANT WARNING. That omission used to be justified by a
-	// stronger statement: the compact core could not represent an error or
-	// recovery subtree at all, so no resident payload could ever have a
-	// positive error cost and the shortcut could never apply. B3 stage S3
-	// (ERROR regions) and the stage S5 substrate (subtreeRecord.missing,
-	// Core.MissingLeaf) have both weakened that. A MISSING payload carries
-	// error cost ERROR_COST_PER_MISSING_TREE + ERROR_COST_PER_RECOVERY
-	// (subtree.h:331-337), so it is exactly the shape the shortcut exists for.
-	//
-	// What still holds, and what does not: no live parser path publishes a
-	// MISSING record today (Core.MissingLeaf has no non-test caller), so the
-	// class cannot currently see one and behavior is unchanged. Before any
-	// path does start publishing one, this class MUST gain C's both-errors
-	// shortcut. Two differently shaped error payloads are the failing case.
-	// C collapses them through the shortcut. This class compares their fields
-	// instead, finds them different, and keeps both.
+	// Error payloads can now reach this class through S3 and S5. The omitted
+	// shortcut keeps alternatives that C can merge. That difference is
+	// fail-closed: recovery pricing rejects an ambiguous compact head instead
+	// of publishing one guessed alternative. Exact error-path equivalence
+	// remains outside spec.derivation-set-equivalence.v1.
 	//
 	// External payloads separately require exact per-token scanner provenance
 	// or a stable language certificate.

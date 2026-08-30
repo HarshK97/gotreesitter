@@ -23,6 +23,7 @@ type recursiveInsertionProfileExpectation struct {
 	primaryAcceptanceDerivation  bool
 	exactStackNodeEquivalence    bool
 	strategy2ErrorRegion         bool
+	missingTokenInsertion        bool
 }
 
 type recursiveInsertionRealCorpusRow struct {
@@ -56,6 +57,7 @@ type recursiveInsertionProfileSnapshot struct {
 	primaryAcceptanceDerivation  bool
 	exactStackNodeEquivalence    bool
 	strategy2ErrorRegion         bool
+	missingTokenInsertion        bool
 }
 
 // TestAdmissionCandidateRecursiveInsertionHaskellSmall is a strict route contract.
@@ -213,6 +215,7 @@ func recursiveInsertionProfile(lang *gts.Language) recursiveInsertionProfileSnap
 		primaryAcceptanceDerivation:  lang.CompactPrimaryAcceptanceDerivationCertified,
 		exactStackNodeEquivalence:    lang.ExactStackNodeEquivalenceCertified,
 		strategy2ErrorRegion:         lang.CompactStrategy2ErrorRegionCertified,
+		missingTokenInsertion:        lang.CompactMissingTokenInsertionCertified,
 	}
 }
 
@@ -225,7 +228,8 @@ func requireRecursiveInsertionProfile(t testing.TB, want recursiveInsertionRealC
 		got.eofAcceptNoActionSiblings != want.profile.eofAcceptNoActionSiblings ||
 		got.primaryAcceptanceDerivation != want.profile.primaryAcceptanceDerivation ||
 		got.exactStackNodeEquivalence != want.profile.exactStackNodeEquivalence ||
-		got.strategy2ErrorRegion != want.profile.strategy2ErrorRegion {
+		got.strategy2ErrorRegion != want.profile.strategy2ErrorRegion ||
+		got.missingTokenInsertion != want.profile.missingTokenInsertion {
 		t.Fatalf("compact profile changed for %s: got=%+v want=%+v", want.language, got, want.profile)
 	}
 }

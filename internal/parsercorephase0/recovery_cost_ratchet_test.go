@@ -26,10 +26,8 @@ import (
 // as bare package-scope identifiers, and some are common enough (Core.Reset,
 // for one) that banning them by name would false-positive on unrelated
 // methods. What this ratchet protects is the set of package-scope
-// declarations recovery_cost.go introduces: its exported API plus its two
-// unexported helper functions/constant. A later stage that wires this file
-// in (S3 onward) will make this ratchet fail on purpose -- that failure is
-// the signal to update or retire it alongside the real call site landing.
+// declarations recovery_cost.go introduces: its exported API plus its
+// unexported helpers. The root scheduler uses only the exported API.
 //
 // SCOPE CORRECTION. This ratchet reads only THIS package's files, and
 // recovery_cost.go's API is exported, so a caller in another package never
@@ -96,9 +94,8 @@ func TestRecoveryCostNoOutsideCallSitesRatchet(t *testing.T) {
 				return true
 			}
 			violations++
-			t.Errorf("%s references %s, a recovery_cost.go (stage S2, inert) declaration -- "+
-				"the clean path must not call into the recovery cost model; if a later stage "+
-				"intentionally wires this in, update this ratchet in the same change",
+			t.Errorf("%s references %s from recovery_cost.go; "+
+				"the compact core must not call the recovery model directly",
 				fset.Position(ident.Pos()), ident.Name)
 			return true
 		})

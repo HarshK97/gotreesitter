@@ -2,9 +2,9 @@ package parsercorephase0
 
 import "testing"
 
-// B3 stage S5 substrate. MissingLeaf is the compact representation of C's
-// ts_subtree_new_missing_leaf (subtree.c:534-546). No shipped parser path
-// publishes one yet, so these tests drive the Core API directly.
+// MissingLeaf is the compact representation of C's
+// ts_subtree_new_missing_leaf (subtree.c:534-546). These tests drive the Core
+// API directly.
 
 func newMissingLeafTestCore(t *testing.T) *Core {
 	t.Helper()
@@ -108,19 +108,12 @@ func TestMissingLeafSurfacesThroughMaterializationView(t *testing.T) {
 	}
 }
 
-// TestMissingLeafIsInertSubstrate checks the stage boundary over the publish
-// paths reachable from a bare Core: seed, diagnostic payload, error-region
-// leaf, and error-region resume all report Missing false.
+// TestMissingLeafIsExplicit checks the stage boundary over the publish paths
+// reachable from a bare Core. Only an explicit MissingLeaf call sets the bit.
 //
-// Read the scope honestly. Go zero-values the field and MissingLeaf is the
-// only site that sets it, so this assertion cannot fail for any code that
-// merely forgets to propagate the bit -- it is a boundary marker, not a trap.
-// It also does not reach the shift paths (scheduler_owned.go) or Reduce,
-// which need a table with real actions rather than the inert fixture here.
-// The load-bearing inertness evidence is elsewhere: MissingLeaf has exactly
-// one non-test occurrence in the tree, its own definition, and the real-corpus
-// admission matrix is unchanged at 88/0/46/12 with this substrate present.
-func TestMissingLeafIsInertSubstrate(t *testing.T) {
+// The test does not reach scheduler shift paths or Reduce. Those paths need a
+// table with real actions instead of this inert fixture.
+func TestMissingLeafIsExplicit(t *testing.T) {
 	compact := newMissingLeafTestCore(t)
 	seed, err := compact.Seed(StateID(1), 0)
 	if err != nil {
@@ -255,5 +248,110 @@ func TestMissingLeafDropCohortReceiptDistinguishesTheBit(t *testing.T) {
 	}
 	if order == 0 {
 		t.Fatal("the drop-cohort comparator ordered a MISSING payload equal to a clean one")
+	}
+}
+
+func TestUniqueStateSpineRequiresOneCompletePath(t *testing.T) {
+	compact := newMissingLeafTestCore(t)
+	seed, err := compact.Seed(StateID(1), 0)
+	if err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	shifted, err := compact.ShiftMissingLeaf(seed, StateID(2), Symbol(7), 0)
+	if err != nil {
+		t.Fatalf("ShiftMissingLeaf: %v", err)
+	}
+	spine, ok, err := compact.UniqueStateSpine(shifted, 2)
+	if err != nil {
+		t.Fatalf("UniqueStateSpine: %v", err)
+	}
+	if !ok || len(spine) != 2 || spine[0] != 1 || spine[1] != 2 {
+		t.Fatalf("spine=%v ok=%t, want [1 2] true", spine, ok)
+	}
+	if _, ok, err := compact.UniqueStateSpine(shifted, 1); err != nil || ok {
+		t.Fatalf("truncated spine returned ok=%t err=%v", ok, err)
+	}
+
+	first, err := compact.MissingLeaf(Symbol(8), 0)
+	if err != nil {
+		t.Fatalf("first payload: %v", err)
+	}
+	second, err := compact.MissingLeaf(Symbol(9), 0)
+	if err != nil {
+		t.Fatalf("second payload: %v", err)
+	}
+	key := compact.shiftedBoundaryKey(StateID(3), 0)
+	ambiguous, err := compact.condense(key, linkInput{prev: seed.Node, payload: first})
+	if err != nil {
+		t.Fatalf("first condense: %v", err)
+	}
+	ambiguous, err = compact.condense(key, linkInput{prev: shifted.Node, payload: second})
+	if err != nil {
+		t.Fatalf("second condense: %v", err)
+	}
+	if _, ok, err := compact.UniqueStateSpine(ambiguous, 8); err != nil || ok {
+		t.Fatalf("ambiguous spine returned ok=%t err=%v", ok, err)
+	}
+}
+
+// TestCanShiftAfterReductionsKeepsDistinctStackPrefixes pins a subtle
+// simulation rule. Equal depth and top state do not identify a whole stack.
+func TestCanShiftAfterReductionsKeepsDistinctStackPrefixes(t *testing.T) {
+	const lookahead = Symbol(9)
+	tables := &fakeTable{
+		actions: map[tableCell][]Action{
+			{state: 3, symbol: lookahead}: {
+				{Type: ActionReduce, Symbol: 10, ChildCount: 1},
+				{Type: ActionReduce, Symbol: 11, ChildCount: 2},
+			},
+			{state: 6, symbol: lookahead}: {
+				{Type: ActionReduce, Symbol: 12, ChildCount: 0},
+			},
+			{state: 4, symbol: lookahead}: {
+				{Type: ActionReduce, Symbol: 13, ChildCount: 1},
+			},
+			{state: 8, symbol: lookahead}: {
+				{Type: ActionShift, State: 9},
+			},
+		},
+		gotos: map[tableCell]StateID{
+			{state: 2, symbol: 10}: 4,
+			{state: 1, symbol: 11}: 6,
+			{state: 6, symbol: 12}: 4,
+			{state: 2, symbol: 13}: 7,
+			{state: 6, symbol: 13}: 8,
+		},
+	}
+	compact, err := New(tables, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := compact.CanShiftAfterReductions([]StateID{1, 2, 3}, lookahead)
+	if err != nil {
+		t.Fatalf("CanShiftAfterReductions: %v", err)
+	}
+	if !got {
+		t.Fatal("the viable reduction path was lost after two stacks reached the same depth and top state")
+	}
+}
+
+func TestCanShiftAfterReductionsRejectsNonProgressShifts(t *testing.T) {
+	const lookahead = Symbol(9)
+	tables := &fakeTable{actions: map[tableCell][]Action{
+		{state: 2, symbol: lookahead}: {
+			{Type: ActionShift, State: 2, Extra: true},
+			{Type: ActionShift, State: 2, Repetition: true},
+		},
+	}}
+	compact, err := New(tables, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := compact.CanShiftAfterReductions([]StateID{1, 2}, lookahead)
+	if err != nil {
+		t.Fatalf("CanShiftAfterReductions: %v", err)
+	}
+	if got {
+		t.Fatal("an extra or repetition shift reported grammatical progress")
 	}
 }
