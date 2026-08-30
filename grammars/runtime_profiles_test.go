@@ -660,6 +660,50 @@ func TestBuiltinDartConflictPoliciesAttach(t *testing.T) {
 	}
 }
 
+func TestBuiltinMarkdownInlineConflictPolicyRequiresExactBlob(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	builtin := MarkdownInlineLanguage()
+	if got := len(builtin.ConflictPolicies); got != 4 {
+		t.Fatalf("Markdown inline conflict policies = %d, want 4", got)
+	}
+	fold := builtin.ConflictPolicies[0]
+	if fold.State != 18 || fold.Lookahead != 56 || fold.Kind != gotreesitter.ConflictPolicyRepetitionReduce ||
+		!fold.CompactOnly || fold.CompactMinFrontierHeaders != 2 || len(fold.ReduceSymbols) != 1 || fold.ReduceSymbols[0] != 107 {
+		t.Fatalf("Markdown inline fold policy = %+v, want state 18 reduce symbol 107 for lookahead 56", fold)
+	}
+	wordFold := builtin.ConflictPolicies[1]
+	if wordFold.State != 18 || wordFold.Lookahead != 50 || wordFold.Kind != gotreesitter.ConflictPolicyRepetitionReduce ||
+		!wordFold.CompactOnly || wordFold.CompactMinFrontierHeaders != 2 || len(wordFold.ReduceSymbols) != 1 || wordFold.ReduceSymbols[0] != 107 {
+		t.Fatalf("Markdown inline word fold policy = %+v, want state 18 reduce symbol 107 for lookahead 50", wordFold)
+	}
+	lineEndFold := builtin.ConflictPolicies[2]
+	if lineEndFold.State != 18 || lineEndFold.Lookahead != 36 || lineEndFold.Kind != gotreesitter.ConflictPolicyRepetitionReduce ||
+		!lineEndFold.CompactOnly || lineEndFold.CompactMinFrontierHeaders != 2 || len(lineEndFold.ReduceSymbols) != 1 || lineEndFold.ReduceSymbols[0] != 107 {
+		t.Fatalf("Markdown inline line-end fold policy = %+v, want state 18 reduce symbol 107 for lookahead 36", lineEndFold)
+	}
+	policy := builtin.ConflictPolicies[3]
+	if policy.State != 209 || policy.Lookahead != 50 || policy.Kind != gotreesitter.ConflictPolicyShift ||
+		!policy.CompactOnly || len(policy.ReduceSymbols) != 1 || policy.ReduceSymbols[0] != 104 {
+		t.Fatalf("Markdown inline conflict policy = %+v, want state 209 shift over symbol 104 for lookahead 50", policy)
+	}
+
+	custom := &gotreesitter.Language{Name: "markdown_inline"}
+	AttachLanguageSupport("markdown_inline", custom)
+	if len(custom.ConflictPolicies) != 0 {
+		t.Fatal("same-name custom grammar received the Markdown inline conflict policy")
+	}
+
+	stale := &gotreesitter.Language{Name: "markdown_inline"}
+	if attachBuiltinLanguageRuntimeProfile("markdown_inline", sha256.Sum256([]byte("stale")), stale) {
+		t.Fatal("stale Markdown inline blob reported a runtime-profile attachment")
+	}
+	if len(stale.ConflictPolicies) != 0 {
+		t.Fatal("stale Markdown inline blob received the conflict policy")
+	}
+}
+
 // TestBuiltinGomodConflictPoliciesAttach covers the certified go.mod
 // require-list rows that replaced gomodRepetitionShiftConflictChoice
 // through the generic policy path.

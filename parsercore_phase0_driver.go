@@ -4118,8 +4118,8 @@ func diagnosticParserCoreSameSpanRelex(shared, relexed Token) (Token, bool) {
 }
 
 var diagnosticParserCoreRepetitionFoldOptOut = map[string]bool{
-	// The compact reduction frontier splits an attribute-bearing HTML tag.
-	// TestMarkdownInlineAttributeHTMLTagStaysWhole protects the production shape.
+	// Most Markdown inline repetition rows are not certified for the compact
+	// frontier. Exact runtime-profile policies admit the proved rows.
 	"markdown_inline": true,
 }
 
@@ -4169,6 +4169,7 @@ func diagnosticParserCoreConflictPolicyOrdinal(
 	token Token,
 	state core.StateID,
 	actions core.ActionRow,
+	frontierHeaders int,
 ) (int, bool) {
 	if language == nil || len(language.ConflictPolicies) == 0 || actions.Len() < 2 {
 		return 0, false
@@ -4183,7 +4184,7 @@ func diagnosticParserCoreConflictPolicyOrdinal(
 	for ordinal := 0; ordinal < actions.Len(); ordinal++ {
 		decoded[ordinal] = rootParserCoreAction(actions.At(ordinal))
 	}
-	selected, ok := conflictPolicyChoice(language, token, StateID(state), decoded)
+	selected, ok := conflictPolicyChoiceForCompact(language, token, StateID(state), decoded, frontierHeaders)
 	if !ok {
 		return 0, false
 	}
@@ -6747,6 +6748,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				cell.dispatchToken(s.token),
 				boundary.State(),
 				actions,
+				len(s.headers),
 			); ok {
 				cell.selectedOrdinal = ordinal
 				cell.selectedBy = diagnosticParserCoreCellSelectionConflictPolicy

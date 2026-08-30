@@ -100,6 +100,15 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Graduated the Markdown inline smoke route with four exact, compact-only
+  conflict policies bound to the built-in grammar blob. Three repetition
+  reductions require at least two live compact headers. The HTML entry row
+  selects its sole shift. All other repetition rows still fail closed.
+  The locked upstream corpus reports 15 direct routes and 348 fallbacks across
+  363 cases. Every direct tree matches C exactly. The nested-emphasis
+  counterexample remains a required fallback. The admission scorecard now
+  reports 201 PASS, zero DIVERGE, zero FALLBACK, five SKIP, and zero ERROR rows.
+
 - Apply the production route's contextual close-angle deferral in the
   compact dispatch and the C4 corridor (issue #983). Add the two Swift
   witnesses to the committed route-equality seed corpus. Totals stay

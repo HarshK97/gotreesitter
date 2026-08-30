@@ -1,14 +1,18 @@
 package gotreesitter
 
 func conflictPolicyChoice(lang *Language, tok Token, currentState StateID, actions []ParseAction) (ParseAction, bool) {
-	return conflictPolicyChoiceForContext(lang, nil, false, tok, currentState, actions)
+	return conflictPolicyChoiceForContextAndCompactFrontier(lang, nil, false, tok, currentState, actions, 0, false)
 }
 
 func conflictPolicyChoiceForDispatch(lang *Language, stack *glrStack, tok Token, currentState StateID, actions []ParseAction) (ParseAction, bool) {
-	return conflictPolicyChoiceForContext(lang, stack, true, tok, currentState, actions)
+	return conflictPolicyChoiceForContextAndCompactFrontier(lang, stack, true, tok, currentState, actions, 0, false)
 }
 
-func conflictPolicyChoiceForContext(lang *Language, stack *glrStack, allowRecovered bool, tok Token, currentState StateID, actions []ParseAction) (ParseAction, bool) {
+func conflictPolicyChoiceForCompact(lang *Language, tok Token, currentState StateID, actions []ParseAction, frontierHeaders int) (ParseAction, bool) {
+	return conflictPolicyChoiceForContextAndCompactFrontier(lang, nil, false, tok, currentState, actions, frontierHeaders, true)
+}
+
+func conflictPolicyChoiceForContextAndCompactFrontier(lang *Language, stack *glrStack, allowRecovered bool, tok Token, currentState StateID, actions []ParseAction, frontierHeaders int, compact bool) (ParseAction, bool) {
 	if lang == nil || len(lang.ConflictPolicies) == 0 {
 		return ParseAction{}, false
 	}
@@ -18,6 +22,12 @@ func conflictPolicyChoiceForContext(lang *Language, stack *glrStack, allowRecove
 			continue
 		}
 		if policy.Lookahead != tok.Symbol && policy.Lookahead != ConflictPolicyAnyLookahead {
+			continue
+		}
+		if policy.CompactOnly && !compact {
+			continue
+		}
+		if compact && int(policy.CompactMinFrontierHeaders) > frontierHeaders {
 			continue
 		}
 		if policy.Kind == ConflictPolicyRecoveredRepetitionReduce {

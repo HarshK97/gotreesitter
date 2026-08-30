@@ -57,6 +57,30 @@ func TestConflictPolicyChoiceRepetitionReduce(t *testing.T) {
 	}
 }
 
+func TestConflictPolicyChoiceCompactFrontierMinimum(t *testing.T) {
+	lang := &Language{
+		ConflictPolicies: []ConflictPolicy{{
+			State: 42, Lookahead: 7, Kind: ConflictPolicyRepetitionReduce,
+			CompactOnly: true, CompactMinFrontierHeaders: 2, ReduceSymbols: []Symbol{3},
+		}},
+	}
+	reduce := ParseAction{Type: ParseActionReduce, Symbol: 3, ChildCount: 2}
+	actions := []ParseAction{
+		reduce,
+		{Type: ParseActionShift, State: 99, Repetition: true},
+	}
+
+	if chosen, ok := conflictPolicyChoice(lang, Token{Symbol: 7}, 42, actions); ok {
+		t.Fatalf("production conflict policy choice = %+v, want no choice", chosen)
+	}
+	if chosen, ok := conflictPolicyChoiceForCompact(lang, Token{Symbol: 7}, 42, actions, 1); ok {
+		t.Fatalf("single-header compact choice = %+v, want no choice", chosen)
+	}
+	if chosen, ok := conflictPolicyChoiceForCompact(lang, Token{Symbol: 7}, 42, actions, 2); !ok || chosen != reduce {
+		t.Fatalf("two-header compact choice = %+v, %t, want reduce", chosen, ok)
+	}
+}
+
 func TestConflictPolicyChoiceShift(t *testing.T) {
 	lang := &Language{
 		Name:                  "synthetic_policy_test",
@@ -577,7 +601,7 @@ func TestConflictPolicyGobRoundTrip(t *testing.T) {
 	lang := &Language{
 		Name: "synthetic_policy_test",
 		ConflictPolicies: []ConflictPolicy{
-			{State: 42, Lookahead: 7, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{3, 4}},
+			{State: 42, Lookahead: 7, Kind: ConflictPolicyRepetitionShift, CompactOnly: true, CompactMinFrontierHeaders: 2, ReduceSymbols: []Symbol{3, 4}},
 			{State: 86, Lookahead: 25, Kind: ConflictPolicyRecoveredRepetitionReduce, ReduceSymbols: []Symbol{68}},
 		},
 	}
@@ -594,7 +618,7 @@ func TestConflictPolicyGobRoundTrip(t *testing.T) {
 		t.Fatalf("decoded %d policies, want 2", len(decoded.ConflictPolicies))
 	}
 	got := decoded.ConflictPolicies[0]
-	if got.State != 42 || got.Lookahead != 7 || got.Kind != ConflictPolicyRepetitionShift {
+	if got.State != 42 || got.Lookahead != 7 || got.Kind != ConflictPolicyRepetitionShift || !got.CompactOnly || got.CompactMinFrontierHeaders != 2 {
 		t.Fatalf("decoded policy = %+v, want state/lookahead/kind preserved", got)
 	}
 	if len(got.ReduceSymbols) != 2 || got.ReduceSymbols[0] != 3 || got.ReduceSymbols[1] != 4 {

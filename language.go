@@ -344,6 +344,13 @@ type ConflictPolicy struct {
 	State     StateID
 	Lookahead Symbol
 	Kind      ConflictPolicyKind
+	// CompactOnly prevents the production GLR parser from applying this
+	// policy. The compact scheduler can still use it after its safety gates.
+	CompactOnly bool
+	// CompactMinFrontierHeaders limits this policy to a compact scheduler
+	// frontier with at least this many live headers. Production ignores this
+	// gate when CompactOnly is false.
+	CompactMinFrontierHeaders uint16
 
 	// ReduceSymbols, when non-empty, requires every reduce in the conflict to
 	// reduce one of these symbols. The generic action-shape validator still

@@ -81,7 +81,7 @@ var admissionScorecardRequiredCompactPasses = map[string]struct{}{
 	"hlsl": {}, "html": {}, "http": {}, "hurl": {}, "hyprlang": {}, "ini": {}, "janet": {}, "javascript": {}, "jinja2": {}, "jq": {}, "jsdoc": {},
 	"json5": {}, "jsonnet": {}, "julia": {}, "just": {}, "kconfig": {}, "kdl": {}, "kotlin": {},
 	"ledger": {}, "less": {}, "linkerscript": {}, "liquid": {}, "llvm": {}, "lua": {},
-	"luau": {}, "make": {}, "markdown": {}, "matlab": {}, "mermaid": {}, "meson": {}, "mojo": {},
+	"luau": {}, "make": {}, "markdown": {}, "markdown_inline": {}, "matlab": {}, "mermaid": {}, "meson": {}, "mojo": {},
 	"move": {}, "nginx": {}, "nickel": {}, "nim": {}, "ninja": {}, "nix": {}, "norg": {}, "nushell": {},
 	"objc": {}, "ocaml": {}, "odin": {}, "org": {}, "pascal": {}, "pem": {}, "perl": {},
 	"php": {}, "pkl": {}, "powershell": {}, "prisma": {}, "prolog": {}, "promql": {},
@@ -147,14 +147,12 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 		// registry drift, or surrendered route coverage require an explicit
 		// review and ratchet update.
 		//
-		// The 200/1/5 ratchet includes JSDoc's locked-C lexer skipped-prefix
-		// tiling route. One language retains a fail-closed FALLBACK row:
-		//
-		//   - markdown_inline reaches its existing repetition-shift boundary.
+		// The 201/0/5 ratchet includes Markdown inline's exact compact conflict
+		// policies. Its smoke route now reaches authenticated EOF.
 		const (
 			wantTotal   = 206
-			minPass     = 200
-			maxFallback = 1
+			minPass     = 201
+			maxFallback = 0
 			wantSkip    = 5
 		)
 		if got := len(admissionScorecardRequiredCompactPasses); got != minPass {
