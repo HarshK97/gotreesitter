@@ -115,7 +115,7 @@ type compactT3ExpectedOutcome struct {
 // compactT3RecoveryCertifiedWitnesses lists witnesses where native compact
 // recovery reaches exact structural C-oracle parity. The exact HTML artifact
 // certifies its complete class. JavaScript certifies the current S3 frontier;
-// its remaining five witnesses stay fail-closed.
+// its remaining three witnesses stay fail-closed.
 var compactT3RecoveryCertifiedWitnesses = map[string]bool{
 	"html_min_a":    true,
 	"html_min_html": true,
@@ -129,7 +129,9 @@ var compactT3RecoveryCertifiedWitnesses = map[string]bool{
 	"html_log_8":    true,
 	"js_log_1":      true,
 	"js_log_2":      true,
+	"js_log_3":      true,
 	"js_log_4":      true,
+	"js_log_7":      true,
 }
 
 // TestCompactT3OracleAdjudication verifies each committed false-clean witness
@@ -146,7 +148,7 @@ var compactT3RecoveryCertifiedWitnesses = map[string]bool{
 //   - compact vs. the C oracle: S3 and S5 cover all ten
 //     html_erroneous_end_tag witnesses. Every witness in
 //     compactT3RecoveryCertifiedWitnesses must match the C oracle exactly.
-//     JavaScript routes three witnesses exactly and fails closed on five.
+//     JavaScript routes five witnesses exactly and fails closed on three.
 //     Swift still has no compact recovery implementation.
 //   - production vs. the C oracle: the S1 design brief's stated gate is
 //     "the harness must pass with production serving every witness before
@@ -279,11 +281,11 @@ func TestCompactT3JavaScriptRecoveryProfileCharacterization(t *testing.T) {
 	}{
 		"js_log_1": {routed: true},
 		"js_log_2": {routed: true},
-		"js_log_3": {fallbackDetail: "accepted compact root leaves do not tile the accepted span: gap=34..36"},
+		"js_log_3": {routed: true},
 		"js_log_4": {routed: true},
 		"js_log_5": {fallbackDetail: "generic scheduler has no table action for the elected token"},
 		"js_log_6": {fallbackDetail: "error-mode lex disagrees with the ordinary shared election"},
-		"js_log_7": {fallbackDetail: "accepted compact root leaves do not tile the accepted span: gap=34..36"},
+		"js_log_7": {routed: true},
 		"js_log_8": {fallbackDetail: "generic scheduler has no table action for the elected token"},
 	}
 

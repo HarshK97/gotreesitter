@@ -27,6 +27,7 @@ type builtinLanguageRuntimeProfile struct {
 	exactStackNodeEquivalence          bool
 	compactStrategy2ErrorRegion        bool
 	compactMissingTokenInsertion       bool
+	compactRecoveryTerminalAliases     []compactRecoveryTerminalAliasProfile
 	compactRecoveryPlainFirst          bool
 	lineContinuationEscapeByte         byte
 	conflictPolicies                   []gotreesitter.ConflictPolicy
@@ -37,6 +38,12 @@ type nativeUnaryWrapperFlatteningProfile struct {
 	wrapper             string
 	leaf                string
 	wrapperPreGotoState gotreesitter.StateID
+}
+
+type compactRecoveryTerminalAliasProfile struct {
+	resumeState  gotreesitter.StateID
+	resumeSymbol string
+	aliasSymbol  string
 }
 
 const (
@@ -101,7 +108,7 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	// explicit forest parsing and non-certified languages keep the full budget.
 	//
 	// The same exact artifact certifies the current compact recovery frontier.
-	// Three pinned witnesses route with exact C parity. Five stop at
+	// Five pinned witnesses route with exact C parity. Three stop at
 	// typed fail-closed boundaries and remain production-owned.
 	"javascript": {
 		blobSHA256:                     mustRuntimeProfileSHA256("6706f93890f24d8ea90d6a140df5dde29c02ec8a3213bae16e8cc4df37e33ee0"),
@@ -109,7 +116,11 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		compactConvergedSplitDrops:     true,
 		compactStrategy2ErrorRegion:    true,
 		compactMissingTokenInsertion:   true,
-		compactRecoveryPlainFirst:      true,
+		compactRecoveryTerminalAliases: []compactRecoveryTerminalAliasProfile{
+			{resumeState: 1042, resumeSymbol: "_automatic_semicolon", aliasSymbol: "property_identifier"},
+			{resumeState: 1367, resumeSymbol: "{", aliasSymbol: "property_identifier"},
+		},
+		compactRecoveryPlainFirst: true,
 	},
 	// These scanner-backed grammars have certified the first retry ladder's
 	// selected accepted-error tree as authoritative. Repeating the whole ladder
@@ -683,6 +694,11 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 		lang.CompactMissingTokenInsertionCertified = true
 		changed = true
 	}
+	if rules := resolveCompactRecoveryTerminalAliasProfile(lang, profile.compactRecoveryTerminalAliases); len(rules) > 0 &&
+		!slices.Equal(lang.CompactRecoveryTerminalAliasRules, rules) {
+		lang.CompactRecoveryTerminalAliasRules = rules
+		changed = true
+	}
 	if profile.compactRecoveryPlainFirst && !lang.CompactRecoveryPlainFirstCertified {
 		lang.CompactRecoveryPlainFirstCertified = true
 		changed = true
@@ -740,6 +756,49 @@ func runtimeProfileNamedSymbol(lang *gotreesitter.Language, name string) (gotree
 		}
 	}
 	return 0, false
+}
+
+func resolveCompactRecoveryTerminalAliasProfile(
+	lang *gotreesitter.Language,
+	profile []compactRecoveryTerminalAliasProfile,
+) []gotreesitter.CompactRecoveryTerminalAliasRule {
+	if lang == nil || len(profile) == 0 {
+		return nil
+	}
+	rules := make([]gotreesitter.CompactRecoveryTerminalAliasRule, 0, len(profile))
+	for _, candidate := range profile {
+		resumeSymbol, resumeOK := runtimeProfileSymbol(lang, candidate.resumeSymbol)
+		aliasSymbol, aliasOK := runtimeProfileSymbol(lang, candidate.aliasSymbol)
+		if !resumeOK || !aliasOK || uint32(candidate.resumeState) >= lang.StateCount ||
+			uint32(resumeSymbol) >= lang.TokenCount || uint32(aliasSymbol) < lang.TokenCount {
+			return nil
+		}
+		rules = append(rules, gotreesitter.CompactRecoveryTerminalAliasRule{
+			ResumeState:  candidate.resumeState,
+			ResumeSymbol: resumeSymbol,
+			AliasSymbol:  aliasSymbol,
+		})
+	}
+	return rules
+}
+
+func runtimeProfileSymbol(lang *gotreesitter.Language, name string) (gotreesitter.Symbol, bool) {
+	if lang == nil {
+		return 0, false
+	}
+	var match gotreesitter.Symbol
+	found := false
+	for index, symbolName := range lang.SymbolNames {
+		if symbolName != name {
+			continue
+		}
+		if found {
+			return 0, false
+		}
+		match = gotreesitter.Symbol(index)
+		found = true
+	}
+	return match, found
 }
 
 func languageHasConflictPolicy(lang *gotreesitter.Language, want gotreesitter.ConflictPolicy) bool {
