@@ -165,7 +165,7 @@ func newExactExternalRecursiveInsertFixture(t *testing.T, externalDescendant boo
 	}
 	externalChild, err := core.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: 31, startByte: 10, endByte: 11, external: true, terminal: true,
-	})
+	}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -670,7 +670,7 @@ func TestSubtreeExternalProvenanceUsesPackedCache(t *testing.T) {
 	}
 	external, err := core.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: 11, external: true, terminal: true,
-	})
+	}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -739,7 +739,7 @@ func TestRecursiveInsertKeepsScannerCheckpointMismatchSeparate(t *testing.T) {
 	}
 	top, err := core.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: 30, startByte: 10, endByte: 11, external: true, terminal: true,
-	})
+	}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

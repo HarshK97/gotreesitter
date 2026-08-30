@@ -93,6 +93,7 @@ var (
 	coreNodeLineageRecordBytes    = uint64(unsafe.Sizeof(nodeLineageRecord{}))
 	coreCheckpointIDBytes         = uint64(unsafe.Sizeof(CheckpointID(0)))
 	coreExternalProvenanceBytes   = uint64(unsafe.Sizeof(externalPayloadProvenance{}))
+	coreLexerSkippedPrefixBytes   = uint64(unsafe.Sizeof(lexerSkippedPrefixProvenance{}))
 	coreCheckpointRecordBytes     = uint64(unsafe.Sizeof(checkpointRecord{}))
 	coreCheckpointBucketBytes     = uint64(unsafe.Sizeof([32]byte{})) + uint64(unsafe.Sizeof(CheckpointID(0)))
 	coreBoundarySlotBytes         = uint64(unsafe.Sizeof(boundarySlot{}))
@@ -156,6 +157,7 @@ func (c *Core) FootprintBytes() uint64 {
 	total += uint64(cap(c.nodeLineages)) * coreNodeLineageRecordBytes
 	total += uint64(cap(c.nodeCheckpoints)) * coreCheckpointIDBytes
 	total += uint64(cap(c.externalProvenance)) * coreExternalProvenanceBytes
+	total += uint64(cap(c.lexerSkippedPrefixes)) * coreLexerSkippedPrefixBytes
 	total += uint64(cap(c.boundaryJournal)) * coreBoundaryMutationBytes
 	total += uint64(cap(c.nodeLineageJournal)) * coreNodeLineageMutationBytes
 	total += uint64(cap(c.dropCohortLinkRefIndexes)) * coreUint32Bytes
@@ -343,6 +345,7 @@ func (c *Core) releaseOversizedRetention() {
 	c.dropCohortLinkRefJournal = nil
 	c.subtrees = nil
 	c.externalProvenance = nil
+	c.lexerSkippedPrefixes = nil
 	c.children = nil
 	c.fields = nil
 	c.aliases = nil

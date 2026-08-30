@@ -292,6 +292,7 @@ func planDiagnosticEOFRecoveryClone(live *Core, payloads []SubtreeID, providerWr
 		{len(live.links), coreLinkRecordBytes},
 		{len(live.subtrees), coreSubtreeRecordBytes},
 		{len(live.externalProvenance), coreExternalProvenanceBytes},
+		{len(live.lexerSkippedPrefixes), coreLexerSkippedPrefixBytes},
 		{len(live.children), coreChildRecordBytes},
 		{len(live.fields), coreFieldRecordBytes},
 		{len(live.aliases), coreAliasRecordBytes},
@@ -452,6 +453,7 @@ func cloneDiagnosticEOFRecoveryCore(
 	shadow.links = cloneDiagnosticSlice(live.links, 0)
 	shadow.subtrees = cloneDiagnosticSlice(live.subtrees, 1)
 	shadow.externalProvenance = cloneDiagnosticSlice(live.externalProvenance, 0)
+	shadow.lexerSkippedPrefixes = cloneDiagnosticSlice(live.lexerSkippedPrefixes, 0)
 	shadow.children = cloneDiagnosticSlice(live.children, payloadCount)
 	shadow.fields = cloneDiagnosticSlice(live.fields, 0)
 	shadow.aliases = cloneDiagnosticSlice(live.aliases, 0)
@@ -527,6 +529,7 @@ func diagnosticEOFRecoveryCopiedArenasEqual(live, shadow *Core) bool {
 		equalDiagnosticSlice(live.links, shadow.links) &&
 		equalDiagnosticSlice(live.subtrees, shadow.subtrees[:len(live.subtrees)]) &&
 		equalDiagnosticSlice(live.externalProvenance, shadow.externalProvenance) &&
+		equalDiagnosticSlice(live.lexerSkippedPrefixes, shadow.lexerSkippedPrefixes) &&
 		equalDiagnosticSlice(live.children, shadow.children[:len(live.children)]) &&
 		equalDiagnosticSlice(live.fields, shadow.fields) &&
 		equalDiagnosticSlice(live.aliases, shadow.aliases) &&
@@ -580,6 +583,7 @@ func diagnosticEOFRecoveryStorageDisjoint(live, shadow *Core) bool {
 		disjointDiagnosticSlice(live.links, shadow.links) &&
 		disjointDiagnosticSlice(live.subtrees, shadow.subtrees) &&
 		disjointDiagnosticSlice(live.externalProvenance, shadow.externalProvenance) &&
+		disjointDiagnosticSlice(live.lexerSkippedPrefixes, shadow.lexerSkippedPrefixes) &&
 		disjointDiagnosticSlice(live.children, shadow.children) &&
 		disjointDiagnosticSlice(live.fields, shadow.fields) &&
 		disjointDiagnosticSlice(live.aliases, shadow.aliases) &&

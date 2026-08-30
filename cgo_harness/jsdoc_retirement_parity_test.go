@@ -60,6 +60,19 @@ func TestJsdocLexerSkipProvenanceLockedCParity(t *testing.T) {
 			}
 			t.Cleanup(production.Release)
 
+			routedBefore, fallbackBefore := gotreesitter.AdmissionCandidateCounters()
+			candidateParser := gotreesitter.NewParser(language)
+			candidateParser.SetAdmissionCandidateRoute(true)
+			candidate, err := candidateParser.Parse(test.source)
+			if err != nil {
+				t.Fatalf("candidate parse: %v", err)
+			}
+			t.Cleanup(candidate.Release)
+			routedAfter, fallbackAfter := gotreesitter.AdmissionCandidateCounters()
+			if routedAfter != routedBefore+1 || fallbackAfter != fallbackBefore {
+				t.Fatalf("candidate route counters routed=%d/%d fallback=%d/%d", routedBefore, routedAfter, fallbackBefore, fallbackAfter)
+			}
+
 			cParser := sitter.NewParser()
 			t.Cleanup(cParser.Close)
 			if err := cParser.SetLanguage(cLanguage); err != nil {
@@ -77,14 +90,96 @@ func TestJsdocLexerSkipProvenanceLockedCParity(t *testing.T) {
 			}
 			rawRuntime := raw.ParseRuntime()
 			productionRuntime := production.ParseRuntime()
-			if rawRuntime.NormalizationNodesRewritten != 0 || productionRuntime.NormalizationNodesRewritten != 0 {
-				t.Fatalf("JSDoc normalization rewrote nodes: raw=%d production=%d", rawRuntime.NormalizationNodesRewritten, productionRuntime.NormalizationNodesRewritten)
+			candidateRuntime := candidate.ParseRuntime()
+			if rawRuntime.NormalizationNodesRewritten != 0 || productionRuntime.NormalizationNodesRewritten != 0 || candidateRuntime.NormalizationNodesRewritten != 0 {
+				t.Fatalf("JSDoc normalization rewrote nodes: raw=%d production=%d candidate=%d", rawRuntime.NormalizationNodesRewritten, productionRuntime.NormalizationNodesRewritten, candidateRuntime.NormalizationNodesRewritten)
 			}
-			t.Logf("witness=%s bytes=%d source_sha256=%s raw_rewrites=%d production_rewrites=%d c_digest=%s", test.name, len(test.source), test.sha256, rawRuntime.NormalizationNodesRewritten, productionRuntime.NormalizationNodesRewritten, cDigest)
+			t.Logf("witness=%s bytes=%d source_sha256=%s raw_rewrites=%d production_rewrites=%d candidate_rewrites=%d c_digest=%s", test.name, len(test.source), test.sha256, rawRuntime.NormalizationNodesRewritten, productionRuntime.NormalizationNodesRewritten, candidateRuntime.NormalizationNodesRewritten, cDigest)
 
 			assertJsdocLockedCTreeExact(t, "raw", raw, language, cTree, cDigest)
 			assertJsdocLockedCTreeExact(t, "production", production, language, cTree, cDigest)
+			assertJsdocLockedCTreeExact(t, "candidate", candidate, language, cTree, cDigest)
 		})
+	}
+}
+
+func TestJsdocLexerSkippedPrefixMutationsLockedCParity(t *testing.T) {
+	t.Setenv("GTS_DISPATCHER_CENSUS", "1")
+	entry, ok := parityEntriesByName["jsdoc"]
+	if !ok {
+		t.Fatal("missing JSDoc grammar entry")
+	}
+	language := entry.Language()
+	cLanguage, err := COracleLanguage("jsdoc")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		source []byte
+	}{
+		{name: "space_only_prefix", source: []byte("/**\n * @param {string} name\n   @returns {number}\n */\n")},
+		{name: "double_decoration", source: []byte("/**\n * @param {string} name\n ** @returns {number}\n */\n")},
+		{name: "content_before_tag", source: []byte("/**\n * @param {string} name\n * x @returns {number}\n */\n")},
+		{name: "unterminated_type", source: []byte("/**\n * @param {string name\n * @returns {number}\n */\n")},
+		{name: "missing_comment_close", source: []byte("/**\n * @param {string} name\n * @returns {number}\n")},
+		{name: "crlf_prefix", source: []byte("/**\r\n * @param {string} name\r\n * @returns {number}\r\n */\r\n")},
+		{name: "tabbed_prefix", source: []byte("/**\n * @param {string} name\n\t* @returns {number}\n */\n")},
+		{name: "empty_decorated_line", source: []byte("/**\n * @param {string} name\n *\n * @returns {number}\n */\n")},
+	}
+	direct, fallback := 0, 0
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cParser := sitter.NewParser()
+			t.Cleanup(cParser.Close)
+			if err := cParser.SetLanguage(cLanguage); err != nil {
+				t.Fatal(err)
+			}
+			cTree := cParser.Parse(test.source, nil)
+			if cTree == nil || cTree.RootNode() == nil {
+				t.Fatal("C oracle returned a nil tree")
+			}
+			t.Cleanup(cTree.Close)
+			cDigest, err := COracleDeepDigest(cTree)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			productionParser := gotreesitter.NewParser(language)
+			productionParser.SetAdmissionCandidateRoute(false)
+			production, err := productionParser.Parse(test.source)
+			if err != nil {
+				t.Fatalf("production parse: %v", err)
+			}
+			t.Cleanup(production.Release)
+
+			routedBefore, fallbackBefore := gotreesitter.AdmissionCandidateCounters()
+			candidateParser := gotreesitter.NewParser(language)
+			candidateParser.SetAdmissionCandidateRoute(true)
+			candidate, err := candidateParser.Parse(test.source)
+			if err != nil {
+				t.Fatalf("candidate parse: %v", err)
+			}
+			t.Cleanup(candidate.Release)
+			routedAfter, fallbackAfter := gotreesitter.AdmissionCandidateCounters()
+			switch {
+			case routedAfter == routedBefore+1 && fallbackAfter == fallbackBefore:
+				direct++
+				t.Log("candidate route=direct")
+			case routedAfter == routedBefore && fallbackAfter == fallbackBefore+1:
+				fallback++
+				t.Logf("candidate route=fallback reason=%s", gotreesitter.AdmissionCandidateLastFallbackReason())
+			default:
+				t.Fatalf("candidate route counters routed=%d/%d fallback=%d/%d", routedBefore, routedAfter, fallbackBefore, fallbackAfter)
+			}
+
+			assertJsdocLockedCTreeExact(t, "mutation_production", production, language, cTree, cDigest)
+			assertJsdocLockedCTreeExact(t, "mutation_candidate", candidate, language, cTree, cDigest)
+		})
+	}
+	if direct == 0 || fallback == 0 {
+		t.Fatalf("mutation routes direct=%d fallback=%d, want both exercised", direct, fallback)
 	}
 }
 

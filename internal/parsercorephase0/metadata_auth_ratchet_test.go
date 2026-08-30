@@ -96,7 +96,7 @@ func TestMetadataAuthenticationLexicalProvenanceRatchet(t *testing.T) {
 						} else {
 							allowedTerminalCallers[functionName]++
 							if !authenticatedTerminalLiteral(node) {
-								t.Errorf("%s: appendAuthenticatedTerminal in %s must receive one subtreeRecord literal with terminal:true", fset.Position(node.Pos()), functionName)
+								t.Errorf("%s: appendAuthenticatedTerminal in %s must receive one subtreeRecord literal with terminal:true and one lexer provenance length", fset.Position(node.Pos()), functionName)
 							}
 						}
 					}
@@ -129,7 +129,7 @@ func TestMetadataAuthenticationLexicalProvenanceRatchet(t *testing.T) {
 }
 
 func authenticatedTerminalLiteral(call *ast.CallExpr) bool {
-	if len(call.Args) != 1 {
+	if len(call.Args) != 2 {
 		return false
 	}
 	literal, ok := call.Args[0].(*ast.CompositeLit)

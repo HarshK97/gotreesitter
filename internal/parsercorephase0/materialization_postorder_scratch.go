@@ -134,6 +134,7 @@ func (c *Core) VisitMaterializationPostorderWithScratch(
 				Extra:    record.extra, External: record.external, Terminal: record.terminal,
 				Fragile: record.fragile, Missing: record.missing,
 			}
+			view.LexerSkippedPrefixStart, view.LexerSkippedPrefix = c.lexerSkippedPrefix(top.id)
 			if err := visit(top.id, view); err != nil {
 				return err
 			}

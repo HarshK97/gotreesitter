@@ -78,7 +78,7 @@ var admissionScorecardRequiredCompactPasses = map[string]struct{}{
 	"gdscript": {}, "git_config": {}, "git_rebase": {}, "gitattributes": {}, "gitcommit": {}, "gitignore": {}, "gleam": {},
 	"glsl": {}, "gn": {}, "go": {}, "godot_resource": {}, "gomod": {}, "graphql": {},
 	"groovy": {}, "hack": {}, "hare": {}, "haskell": {}, "haxe": {}, "hcl": {}, "heex": {},
-	"hlsl": {}, "html": {}, "http": {}, "hurl": {}, "hyprlang": {}, "ini": {}, "janet": {}, "javascript": {}, "jinja2": {}, "jq": {},
+	"hlsl": {}, "html": {}, "http": {}, "hurl": {}, "hyprlang": {}, "ini": {}, "janet": {}, "javascript": {}, "jinja2": {}, "jq": {}, "jsdoc": {},
 	"json5": {}, "jsonnet": {}, "julia": {}, "just": {}, "kconfig": {}, "kdl": {}, "kotlin": {},
 	"ledger": {}, "less": {}, "linkerscript": {}, "liquid": {}, "llvm": {}, "lua": {},
 	"luau": {}, "make": {}, "markdown": {}, "matlab": {}, "mermaid": {}, "meson": {}, "mojo": {},
@@ -147,15 +147,14 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 		// registry drift, or surrendered route coverage require an explicit
 		// review and ratchet update.
 		//
-		// The 199/2/5 ratchet includes Meson's locked-C structural election.
-		// Two languages retain fail-closed FALLBACK rows:
+		// The 200/1/5 ratchet includes JSDoc's locked-C lexer skipped-prefix
+		// tiling route. One language retains a fail-closed FALLBACK row:
 		//
 		//   - markdown_inline reaches its existing repetition-shift boundary.
-		//   - jsdoc reaches its accepted-leaf interior tiling gap.
 		const (
 			wantTotal   = 206
-			minPass     = 199
-			maxFallback = 2
+			minPass     = 200
+			maxFallback = 1
 			wantSkip    = 5
 		)
 		if got := len(admissionScorecardRequiredCompactPasses); got != minPass {
@@ -190,17 +189,11 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 }
 
 func TestAdmissionCandidateNoLookaheadSmokeRatchet(t *testing.T) {
-	// jsdoc dropped from this set (campaign v7 class-e closure,
-	// spore.2026-08-02.hornbeam-e.byte-continuity): its smoke sample now
-	// correctly declines at accepted-leaf-tiling-gap once
-	// bytesAreSingleByteDecorationTrivia (parsercore_phase0_driver.go) no
-	// longer excuses its interior comment-continuation gap. That decline is
-	// unrelated to the no-lookahead root-reduce shape this test otherwise
-	// covers; see admissionScorecardRequiredCompactPasses's own ratchet
-	// comment (above) for the full accounting. doxygen and vhdl are
-	// unaffected and keep the PASS assertion below.
+	// JSDoc rejoins this set through exact internal-DFA skipped-prefix
+	// provenance. The route does not restore the retired source-byte exception.
 	wanted := map[string]struct{}{
 		"doxygen": {},
+		"jsdoc":   {},
 		"vhdl":    {},
 	}
 	var doxygen grammars.LangEntry

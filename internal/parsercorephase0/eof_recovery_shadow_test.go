@@ -19,6 +19,7 @@ func TestDiagnosticEOFRecoveryClonePlanAccountsEveryRequestedByte(t *testing.T) 
 		links:                             make([]linkRecord, 3),
 		subtrees:                          make([]subtreeRecord, 4),
 		externalProvenance:                make([]externalPayloadProvenance, 1),
+		lexerSkippedPrefixes:              make([]lexerSkippedPrefixProvenance, 2),
 		children:                          make([]SubtreeID, 5),
 		fields:                            make([]FieldMapEntry, 6),
 		aliases:                           make([]Symbol, 7),
@@ -46,6 +47,7 @@ func TestDiagnosticEOFRecoveryClonePlanAccountsEveryRequestedByte(t *testing.T) 
 		uint64(3)*coreLinkRecordBytes +
 		uint64(4)*coreSubtreeRecordBytes +
 		coreExternalProvenanceBytes +
+		uint64(2)*coreLexerSkippedPrefixBytes +
 		uint64(5)*coreChildRecordBytes +
 		uint64(6)*coreFieldRecordBytes +
 		uint64(7)*coreAliasRecordBytes +

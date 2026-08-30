@@ -181,7 +181,7 @@ func TestMaterializationMetadataAuthenticationIsConstructionScoped(t *testing.T)
 
 	// The authenticated terminal seam preserves the Core invariant and accepts
 	// only statically ratcheted metadata-trivial terminal literals in production.
-	trustedLeaf, err := compact.appendAuthenticatedTerminal(subtreeRecord{symbol: 4, endByte: 1, terminal: true})
+	trustedLeaf, err := compact.appendAuthenticatedTerminal(subtreeRecord{symbol: 4, endByte: 1, terminal: true}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

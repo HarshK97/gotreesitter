@@ -136,7 +136,9 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// ConflictPolicyDeclaredReduceReduceHighestSymbol row that resolves the
 	// grammar-declared simpleId/className reduce-reduce conflict to the
 	// C-native reading during dispatch.
-	if got, want := len(builtinLanguageRuntimeProfiles), 48; got != want {
+	// 49 = the prior 48 plus the JSDoc entry. It certifies exact internal-DFA
+	// skipped-prefix evidence for compact reduce tiling.
+	if got, want := len(builtinLanguageRuntimeProfiles), 49; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -163,6 +165,9 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	}
 	if lang.CompactPrimaryAcceptanceDerivationCertified {
 		t.Fatal("unknown runtime profile enabled compact primary derivation selection")
+	}
+	if lang.CompactLexerSkippedPrefixTilingCertified {
+		t.Fatal("unknown runtime profile enabled compact lexer skipped-prefix tiling")
 	}
 	if lang.ExactStackNodeEquivalenceCertified {
 		t.Fatal("unknown runtime profile enabled exact stack-node equivalence")
@@ -356,6 +361,38 @@ func TestBuiltinCompactAcceptanceProfilesRequireExactBlobIdentity(t *testing.T) 
 				t.Fatal("wrong blob identity enabled compact acceptance certification")
 			}
 		})
+	}
+}
+
+func TestBuiltinJsdocLexerSkippedPrefixProfileRequiresExactBlobIdentity(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	builtin := JsdocLanguage()
+	if !builtin.CompactLexerSkippedPrefixTilingCertified {
+		t.Fatal("exact built-in JSDoc artifact did not receive skipped-prefix certification")
+	}
+
+	custom := &gotreesitter.Language{Name: "jsdoc"}
+	AttachLanguageSupport("jsdoc", custom)
+	if custom.CompactLexerSkippedPrefixTilingCertified {
+		t.Fatal("same-name custom JSDoc grammar enabled skipped-prefix certification")
+	}
+
+	stale := &gotreesitter.Language{Name: "jsdoc"}
+	if attachBuiltinLanguageRuntimeProfile("jsdoc", sha256.Sum256([]byte("stale")), stale) {
+		t.Fatal("stale JSDoc blob unexpectedly attached a runtime profile")
+	}
+	if stale.CompactLexerSkippedPrefixTilingCertified {
+		t.Fatal("stale JSDoc blob enabled skipped-prefix certification")
+	}
+
+	exact := &gotreesitter.Language{Name: "jsdoc"}
+	if !attachBuiltinLanguageRuntimeProfile("jsdoc", sha256.Sum256(BlobByName("jsdoc")), exact) {
+		t.Fatal("exact JSDoc blob did not attach its runtime profile")
+	}
+	if !exact.CompactLexerSkippedPrefixTilingCertified {
+		t.Fatal("exact JSDoc blob did not enable skipped-prefix certification")
 	}
 }
 

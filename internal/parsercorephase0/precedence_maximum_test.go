@@ -394,14 +394,14 @@ func TestScannerStatePairNonterminalRootsIgnoreDescendants(t *testing.T) {
 	if err := core.SetPhaseExternalTokenScannerCheckpoints(start, endLeft); err != nil {
 		t.Fatal(err)
 	}
-	leftChild, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true})
+	leftChild, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := core.SetPhaseExternalTokenScannerCheckpoints(start, endRight); err != nil {
 		t.Fatal(err)
 	}
-	rightChild, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 21, external: true, terminal: true})
+	rightChild, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 21, external: true, terminal: true}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,14 +427,14 @@ func TestScannerStatePairDistinctPayloadsEqualEndState(t *testing.T) {
 	if err := core.SetPhaseExternalTokenScannerCheckpoints(leftStart, end); err != nil {
 		t.Fatal(err)
 	}
-	left, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true})
+	left, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := core.SetPhaseExternalTokenScannerCheckpoints(rightStart, end); err != nil {
 		t.Fatal(err)
 	}
-	right, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 21, external: true, terminal: true})
+	right, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 21, external: true, terminal: true}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,14 +452,14 @@ func TestScannerStatePairUnequalEndStateDeclines(t *testing.T) {
 	if err := core.SetPhaseExternalTokenScannerCheckpoints(start, leftEnd); err != nil {
 		t.Fatal(err)
 	}
-	left, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true})
+	left, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := core.SetPhaseExternalTokenScannerCheckpoints(start, rightEnd); err != nil {
 		t.Fatal(err)
 	}
-	right, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true})
+	right, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,14 +477,14 @@ func TestScannerStatePairIgnoresStartStateDifference(t *testing.T) {
 	if err := core.SetPhaseExternalTokenScannerCheckpoints(leftStart, end); err != nil {
 		t.Fatal(err)
 	}
-	left, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true})
+	left, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := core.SetPhaseExternalTokenScannerCheckpoints(rightStart, end); err != nil {
 		t.Fatal(err)
 	}
-	right, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true})
+	right, err := core.appendAuthenticatedTerminal(subtreeRecord{symbol: 20, external: true, terminal: true}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

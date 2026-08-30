@@ -502,7 +502,7 @@ func (c *Core) shiftClassifiedUncheckpointed(boundary ClassifiedBoundary, action
 	payload, err := c.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: shifted.Symbol, startByte: shifted.StartByte, endByte: shifted.EndByte,
 		extra: act.Extra, external: shifted.External, terminal: true,
-	})
+	}, shifted.LexerSkippedPrefixLength)
 	if err != nil {
 		return Head{}, err
 	}
@@ -541,7 +541,7 @@ func (c *Core) shiftDirectUncheckpointed(
 	payload, err := c.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: shifted.Symbol, startByte: shifted.StartByte, endByte: shifted.EndByte,
 		extra: extra, external: shifted.External, terminal: true,
-	})
+	}, shifted.LexerSkippedPrefixLength)
 	if err != nil {
 		return Head{}, err
 	}
@@ -658,7 +658,7 @@ func (c *Core) shiftOrdinaryClassifiedCohortUncheckpointed(boundaries []Classifi
 	payload, err := c.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: shifted.Symbol, startByte: shifted.StartByte, endByte: shifted.EndByte,
 		external: shifted.External, terminal: true,
-	})
+	}, shifted.LexerSkippedPrefixLength)
 	if err != nil {
 		return nil, err
 	}
@@ -784,7 +784,7 @@ func (c *Core) shiftExtraClassifiedCohortUncheckpointed(boundaries []ClassifiedB
 	payload, err := c.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: shifted.Symbol, startByte: shifted.StartByte, endByte: shifted.EndByte,
 		extra: true, external: shifted.External, terminal: true,
-	})
+	}, shifted.LexerSkippedPrefixLength)
 	if err != nil {
 		return nil, err
 	}
