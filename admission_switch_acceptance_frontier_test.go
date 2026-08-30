@@ -3,6 +3,7 @@
 package gotreesitter_test
 
 import (
+	"strings"
 	"testing"
 
 	gts "github.com/odvcencio/gotreesitter"
@@ -11,15 +12,7 @@ import (
 )
 
 func TestAdmissionCandidateCertifiedAcceptanceFrontiers(t *testing.T) {
-	// meson is not in this list: its smoke sample has a genuine, score-tied
-	// grammar ambiguity (variableunit vs var_unit) that
-	// selectCompactAcceptanceDerivation's materiality gate
-	// (parsercore_phase0_driver.go, compactAcceptanceElectionIsVacuous) can
-	// no longer prove correct without a C oracle, so the route now declines
-	// and falls back to production instead of publishing an unproven pick.
-	// See admission_scorecard_test.go's admissionScorecardRequiredCompactPasses
-	// comment for the full account.
-	for _, name := range []string{"http", "robot"} {
+	for _, name := range []string{"http", "meson", "robot"} {
 		t.Run(name, func(t *testing.T) {
 			entry := grammars.DetectLanguageByName(name)
 			if entry == nil {
@@ -70,5 +63,50 @@ func TestAdmissionCandidateCertifiedAcceptanceFrontiers(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestMesonStructuralAcceptanceElectionFailsClosedWithoutArtifactCapability(t *testing.T) {
+	language := *grammars.MesonLanguage()
+	language.CompactAcceptanceStructuralElectionCertified = false
+	source := []byte(grammars.ParseSmokeSample("meson"))
+	t.Setenv("GTS_ADMISSION_CENSUS", "1")
+	gts.ResetAdmissionCensusEnabledForTest()
+	t.Cleanup(gts.ResetAdmissionCensusEnabledForTest)
+
+	gts.ResetAdmissionCandidateCountersForTest()
+	parser := gts.NewParser(&language)
+	parser.SetAdmissionCandidateRoute(true)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+	if routed, fallback := gts.AdmissionCandidateCounters(); routed != 0 || fallback != 1 {
+		t.Fatalf("route counters=%d/%d, want 0/1", routed, fallback)
+	}
+	if reason := gts.AdmissionCandidateLastFallbackReason(); !strings.Contains(reason, "material-acceptance-election") {
+		t.Fatalf("fallback reason=%q, want material acceptance election", reason)
+	}
+}
+
+func TestMesonStructuralAcceptanceElectionDoesNotDependOnPrimaryCapability(t *testing.T) {
+	language := *grammars.MesonLanguage()
+	language.CompactPrimaryAcceptanceDerivationCertified = false
+	source := []byte(grammars.ParseSmokeSample("meson"))
+
+	gts.ResetAdmissionCandidateCountersForTest()
+	parser := gts.NewParser(&language)
+	parser.SetAdmissionCandidateRoute(true)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+	if routed, fallback := gts.AdmissionCandidateCounters(); routed != 1 || fallback != 0 {
+		t.Fatalf("route counters=%d/%d, want 1/0", routed, fallback)
+	}
+	if got := tree.RootNode().SExpr(&language); got != "(source_file (normal_command (identifier) (variableunit (string))))" {
+		t.Fatalf("tree=%s, want the C-ordered variableunit branch", got)
 	}
 }

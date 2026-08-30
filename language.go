@@ -772,6 +772,13 @@ type Language struct {
 	// profiles set this only after C-oracle parity proves production selects it.
 	CompactPrimaryAcceptanceDerivationCertified bool
 
+	// CompactAcceptanceStructuralElectionCertified permits the compact route
+	// to apply C's raw subtree ordering to a clean, tied acceptance frontier.
+	// Exact built-in profiles set this only after the locked C oracle proves
+	// the compact derivation order and result for that grammar artifact.
+	// Custom, adapted, and stale artifacts retain the false default.
+	CompactAcceptanceStructuralElectionCertified bool
+
 	// ExactStackNodeEquivalenceCertified preserves deep stack-node alternatives
 	// until generic result selection. Exact built-in profiles set this only when
 	// bounded equivalence can merge parity-relevant shapes. Custom, adapted, and

@@ -290,7 +290,8 @@ func TestBuiltinCompactAcceptanceProfilesRequireExactBlobIdentity(t *testing.T) 
 		{
 			name: "meson", load: MesonLanguage,
 			want: func(lang *gotreesitter.Language) bool {
-				return lang.CompactPrimaryAcceptanceDerivationCertified
+				return lang.CompactPrimaryAcceptanceDerivationCertified &&
+					lang.CompactAcceptanceStructuralElectionCertified
 			},
 		},
 		// The tied-election family (A3 certification workstream,

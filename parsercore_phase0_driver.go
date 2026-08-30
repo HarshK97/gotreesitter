@@ -84,10 +84,14 @@ type DiagnosticParserCorePrefixOptions struct {
 	freshSchedulerSession bool
 	// These acceptance options require exact artifact certification. Diagnostic
 	// callers retain the conservative false defaults.
-	allowEOFAcceptNoActionSiblings  bool
-	allowMetadataEOFAcceptRecovery  bool
-	allowPrimaryAcceptDerivation    bool
-	allowConvergedSplitDropArtifact bool
+	allowEOFAcceptNoActionSiblings bool
+	allowMetadataEOFAcceptRecovery bool
+	allowPrimaryAcceptDerivation   bool
+	// allowCompactAcceptanceStructuralElection permits C's raw subtree
+	// comparator for a clean, tied acceptance frontier. The admission route
+	// binds it only from an exact grammar-artifact capability.
+	allowCompactAcceptanceStructuralElection bool
+	allowConvergedSplitDropArtifact          bool
 	// allowCompactStrategy2ErrorRegion permits the generic scheduler to
 	// attempt native S3 recovery (error-region absorb and condense-resume)
 	// at a true no-table-action point instead of declining. Set only from
@@ -434,13 +438,16 @@ type DiagnosticParserCoreGenericAcceptance struct {
 	// MaterialityCertified records the bounded public-tree comparison that
 	// makes a multi-derivation selection safe without a certified primary.
 	MaterialityCertified bool
-	CoreWork             core.Work
-	Accepts              uint64
-	SelectedNodes        uint64
-	SelectedParents      uint64
-	SelectedLeaves       uint64
-	Stats                core.Stats
-	Work                 DiagnosticParserCoreGenericWork
+	// StructuralElectionCertified records an exact artifact's C-order proof.
+	// It makes a clean multi-derivation selection safe without a primary proof.
+	StructuralElectionCertified bool
+	CoreWork                    core.Work
+	Accepts                     uint64
+	SelectedNodes               uint64
+	SelectedParents             uint64
+	SelectedLeaves              uint64
+	Stats                       core.Stats
+	Work                        DiagnosticParserCoreGenericWork
 }
 
 // DiagnosticParserCoreGenericConflict records one table-driven conflict cell.
@@ -7796,20 +7803,27 @@ func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() (err error) 
 		s.censusAcceptanceDerivationSetTruncated()
 		return err
 	}
-	path, selected, materialityCertified := selectCompactAcceptanceDerivationWithMateriality(
-		paths, s.options.allowPrimaryAcceptDerivation,
+	selection, err := decideCompactAcceptanceElection(
+		s.compact,
+		paths,
+		compactAcceptanceElectionPolicy{
+			allowPrimary: s.options.allowPrimaryAcceptDerivation,
+			allowCStructural: s.options.allowCompactAcceptanceStructuralElection &&
+				!metadataAdmission && !s.s3RegionOpened && s.s5MissingInsertions == 0,
+		},
 	)
-	if !selected {
+	if err != nil {
+		return err
+	}
+	if !selection.selected {
 		s.censusAcceptanceDerivationSet(paths, core.Derivation{}, false, false)
 		return s.finish(DiagnosticParserCoreAccept, "generic scheduler requires one certified accepted derivation", 0)
 	}
-	// R1 materiality gate: selectCompactAcceptanceDerivation's tie guard has
-	// no C-faithful basis for choosing among score-tied derivations. A
-	// certified primary, or the provisional path selected above when no
-	// primary is certified, is safe only when every live derivation
-	// materializes to the identical tree. This is a vacuous election: any
-	// candidate produces the same public result. len(paths) > 1 here means
-	// that the bounded comparison must run.
+	path := selection.path
+	materialityCertified := selection.materialityCertified
+	// The R1 materiality gate remains the fallback for tied frontiers without
+	// an exact structural-election capability. A certified primary or a
+	// provisional path is safe only when all paths publish the same tree.
 	//
 	// COST, stated plainly, not special-cased away: Apex's class_literal_alias
 	// witness ("Object t = RecordPage.class;", apexA3TiedElectionWitnesses,
@@ -7820,13 +7834,10 @@ func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() (err error) 
 	// election where the primary is wrong: it declines class_literal_alias
 	// too, and the route now serves production's C-divergent tree instead of
 	// compact's C-exact one -- public output got worse on this one input.
-	// This is judged acceptable because it restores the pre-compact status
-	// quo (production already served every input before the compact route
-	// existed) and because the planned C-comparator port (R2) recovers it
-	// properly, by comparing error cost/dynamic precedence/structural order
-	// the way the C runtime does instead of requiring exact identity. It is
-	// not fixed by special-casing this witness.
-	if len(paths) > 1 {
+	// This restores the pre-compact result because production already served
+	// every input. The C comparator now exists, but Apex still needs its own
+	// exact artifact certification. This code does not special-case the witness.
+	if len(paths) > 1 && !selection.cStructuralCertified {
 		if detail := compactAcceptanceElectionMaterialityDeclineDetail(paths, s.options.materializationContextSet); detail != "" {
 			// The cap and context guard keep comparison cost bounded and keep
 			// callers without a materialization context fail-closed. Count
@@ -7889,8 +7900,9 @@ func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() (err error) 
 		ElectionIndex: s.electionIndex, Token: s.token, Header: header,
 		Payloads: payloads, Score: path.Score, BranchOrder: path.BranchOrder,
 		HasBranchOrder: path.HasBranchOrder, MaterialityCertified: materialityCertified,
-		CoreWork: s.compact.Work(),
-		Accepts:  s.work.Accepts, Stats: stats, Work: s.work,
+		StructuralElectionCertified: selection.cStructuralCertified,
+		CoreWork:                    s.compact.Work(),
+		Accepts:                     s.work.Accepts, Stats: stats, Work: s.work,
 	}
 	s.receipt.Acceptance = &s.receipt.acceptanceBacking
 	if mergeCensusEnabled {
@@ -7963,6 +7975,87 @@ func selectCompactAcceptanceDerivationWithMateriality(paths []core.Derivation, a
 		return path, selected, false
 	}
 	return paths[0], true, true
+}
+
+type compactAcceptanceElectionPolicy struct {
+	allowPrimary     bool
+	allowCStructural bool
+}
+
+type compactAcceptanceElectionDecision struct {
+	path                 core.Derivation
+	selected             bool
+	materialityCertified bool
+	cStructuralCertified bool
+}
+
+// decideCompactAcceptanceElection keeps the acceptance policy in one place.
+// An artifact-certified C election takes precedence. Every unsupported shape
+// returns to the existing primary or materiality rules and stays fail-closed.
+func decideCompactAcceptanceElection(
+	compact *core.Core,
+	paths []core.Derivation,
+	policy compactAcceptanceElectionPolicy,
+) (compactAcceptanceElectionDecision, error) {
+	if policy.allowCStructural && len(paths) > 1 {
+		path, selected, err := selectCompactAcceptanceDerivationByCOrder(compact, paths)
+		if err != nil {
+			return compactAcceptanceElectionDecision{}, err
+		}
+		if selected {
+			return compactAcceptanceElectionDecision{
+				path: path, selected: true, cStructuralCertified: true,
+			}, nil
+		}
+	}
+	path, selected, materialityCertified := selectCompactAcceptanceDerivationWithMateriality(paths, policy.allowPrimary)
+	return compactAcceptanceElectionDecision{
+		path: path, selected: selected, materialityCertified: materialityCertified,
+	}, nil
+}
+
+// selectCompactAcceptanceDerivationByCOrder ports the clean-tree portion of
+// ts_parser__select_tree. Derivation Score is the compact path's cumulative
+// dynamic precedence. CompareCSelectionSubtrees supplies C's final raw-tree
+// ordering. A single payload is required because C rebuilds that accepted
+// root without changing its symbol or children. Multi-payload acceptance needs
+// a separate exact root reconstruction and therefore remains fail-closed.
+func selectCompactAcceptanceDerivationByCOrder(
+	compact *core.Core,
+	paths []core.Derivation,
+) (core.Derivation, bool, error) {
+	if compact == nil || len(paths) < 2 || len(paths) > compactAcceptanceElectionMaxLiveDerivations {
+		return core.Derivation{}, false, nil
+	}
+	for _, path := range paths {
+		if len(path.Payloads) != 1 {
+			return core.Derivation{}, false, nil
+		}
+	}
+	winner := 0
+	for candidate := 1; candidate < len(paths); candidate++ {
+		if paths[candidate].Score > paths[winner].Score {
+			winner = candidate
+			continue
+		}
+		if paths[candidate].Score < paths[winner].Score {
+			continue
+		}
+		comparison, err := compact.CompareCSelectionSubtrees(
+			paths[winner].Payloads[0],
+			paths[candidate].Payloads[0],
+		)
+		if errors.Is(err, core.ErrCSelectionComparisonBudget) {
+			return core.Derivation{}, false, nil
+		}
+		if err != nil {
+			return core.Derivation{}, false, err
+		}
+		if comparison > 0 {
+			winner = candidate
+		}
+	}
+	return paths[winner], true, nil
 }
 
 func compactDerivationsForAcceptance(compact *core.Core, head core.Head) ([]core.Derivation, error) {

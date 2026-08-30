@@ -12,27 +12,28 @@ import (
 // parser core: loading the exact certified blob attaches its profile, while
 // caller-constructed and adapted languages retain conservative zero defaults.
 type builtinLanguageRuntimeProfile struct {
-	blobSHA256                         [32]byte
-	externalScannerFullParseRetry      gotreesitter.ExternalScannerFullParseRetryPolicy
-	fullParseAcceptedErrorRetryProfile gotreesitter.FullParseAcceptedErrorRetryProfile
-	automaticForestMemoryAllowance     int64
-	automaticForestEnabled             bool
-	fullParseArenaDensityCap           bool
-	fullParseGSSConvergence            bool
-	nativeResultCompatibility          gotreesitter.ResultCompatibilityCapability
-	nativeUnaryWrapperFlattening       []nativeUnaryWrapperFlatteningProfile
-	compactConvergedSplitDrops         bool
-	compactEOFAcceptNoActionSiblings   bool
-	compactPrimaryAcceptDerivation     bool
-	exactStackNodeEquivalence          bool
-	compactStrategy2ErrorRegion        bool
-	compactMissingTokenInsertion       bool
-	compactRecoveryTrailingRetirement  bool
-	compactRecoveryErrorModeKeyword    bool
-	compactRecoveryTerminalAliases     []compactRecoveryTerminalAliasProfile
-	compactRecoveryPlainFirst          bool
-	lineContinuationEscapeByte         byte
-	conflictPolicies                   []gotreesitter.ConflictPolicy
+	blobSHA256                          [32]byte
+	externalScannerFullParseRetry       gotreesitter.ExternalScannerFullParseRetryPolicy
+	fullParseAcceptedErrorRetryProfile  gotreesitter.FullParseAcceptedErrorRetryProfile
+	automaticForestMemoryAllowance      int64
+	automaticForestEnabled              bool
+	fullParseArenaDensityCap            bool
+	fullParseGSSConvergence             bool
+	nativeResultCompatibility           gotreesitter.ResultCompatibilityCapability
+	nativeUnaryWrapperFlattening        []nativeUnaryWrapperFlatteningProfile
+	compactConvergedSplitDrops          bool
+	compactEOFAcceptNoActionSiblings    bool
+	compactPrimaryAcceptDerivation      bool
+	compactAcceptanceStructuralElection bool
+	exactStackNodeEquivalence           bool
+	compactStrategy2ErrorRegion         bool
+	compactMissingTokenInsertion        bool
+	compactRecoveryTrailingRetirement   bool
+	compactRecoveryErrorModeKeyword     bool
+	compactRecoveryTerminalAliases      []compactRecoveryTerminalAliasProfile
+	compactRecoveryPlainFirst           bool
+	lineContinuationEscapeByte          byte
+	conflictPolicies                    []gotreesitter.ConflictPolicy
 }
 
 type nativeUnaryWrapperFlatteningProfile struct {
@@ -419,12 +420,13 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256:             mustRuntimeProfileSHA256("cca71a0e6385fd9b2791eb6fefc1fe493f93eb2bf58e903f8989096884c31fe4"),
 		automaticForestEnabled: true,
 	},
-	// Meson's retry ladder changes selected trees on small error-bearing files,
-	// but is redundant for complete accepted-error sources at or above this
-	// conservative exact-blob corpus-certified floor.
+	// Meson's tied smoke election compares variableunit with var_unit. The
+	// locked C runtime selects variableunit through its raw subtree comparator.
+	// The retry ladder still changes selected trees on small error-bearing files.
 	"meson": {
-		blobSHA256:                     mustRuntimeProfileSHA256("b3b7e74bcd35614419f5359c31eb8a05bd58c0b97529f133f2aea2f40796789d"),
-		compactPrimaryAcceptDerivation: true,
+		blobSHA256:                          mustRuntimeProfileSHA256("b3b7e74bcd35614419f5359c31eb8a05bd58c0b97529f133f2aea2f40796789d"),
+		compactPrimaryAcceptDerivation:      true,
+		compactAcceptanceStructuralElection: true,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 			SkipCompleteMinSourceBytes:     mesonAcceptedErrorRetryMinSourceBytes,
@@ -685,6 +687,10 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	}
 	if profile.compactPrimaryAcceptDerivation && !lang.CompactPrimaryAcceptanceDerivationCertified {
 		lang.CompactPrimaryAcceptanceDerivationCertified = true
+		changed = true
+	}
+	if profile.compactAcceptanceStructuralElection && !lang.CompactAcceptanceStructuralElectionCertified {
+		lang.CompactAcceptanceStructuralElectionCertified = true
 		changed = true
 	}
 	if profile.exactStackNodeEquivalence && !lang.ExactStackNodeEquivalenceCertified {

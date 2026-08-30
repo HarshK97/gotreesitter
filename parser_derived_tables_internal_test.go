@@ -180,18 +180,21 @@ func TestParserDerivedTablesReadOnlyPostLoadMutableFields(t *testing.T) {
 	derived := lang.acquireParserDerivedTables()
 
 	restoreErrorRegion := lang.CompactStrategy2ErrorRegionCertified
+	restoreStructuralElection := lang.CompactAcceptanceStructuralElectionCertified
 	restoreMissingInsertion := lang.CompactMissingTokenInsertionCertified
 	restoreErrorModeKeyword := lang.CompactRecoveryErrorModeKeywordCaptureCertified
 	restoreSplitDrops := lang.CompactConvergedReductionSplitDropsCertified
 	restoreScanner := lang.ExternalScanner
 	t.Cleanup(func() {
 		lang.CompactStrategy2ErrorRegionCertified = restoreErrorRegion
+		lang.CompactAcceptanceStructuralElectionCertified = restoreStructuralElection
 		lang.CompactMissingTokenInsertionCertified = restoreMissingInsertion
 		lang.CompactRecoveryErrorModeKeywordCaptureCertified = restoreErrorModeKeyword
 		lang.CompactConvergedReductionSplitDropsCertified = restoreSplitDrops
 		lang.ExternalScanner = restoreScanner
 	})
 	lang.CompactStrategy2ErrorRegionCertified = !restoreErrorRegion
+	lang.CompactAcceptanceStructuralElectionCertified = !restoreStructuralElection
 	lang.CompactMissingTokenInsertionCertified = !restoreMissingInsertion
 	lang.CompactRecoveryErrorModeKeywordCaptureCertified = !restoreErrorModeKeyword
 	lang.CompactConvergedReductionSplitDropsCertified = !restoreSplitDrops
