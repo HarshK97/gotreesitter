@@ -83,9 +83,12 @@ func TestJsdocLexerSkipProvenanceRoutes(t *testing.T) {
 			}
 			t.Logf("compact route=%s digest=%s", compactRoute, compactDigest)
 			if test.name == "multi_tag_trigger" {
-				uncertified := *language
+				uncertified, err := LoadLanguage("jsdoc", BlobByName("jsdoc"))
+				if err != nil {
+					t.Fatalf("load uncertified JSDoc language: %v", err)
+				}
 				uncertified.CompactLexerSkippedPrefixTilingCertified = false
-				uncertifiedRoute, uncertifiedDigest := jsdocCompactRoute(t, &uncertified, test.source, productionDigest)
+				uncertifiedRoute, uncertifiedDigest := jsdocCompactRoute(t, uncertified, test.source, productionDigest)
 				if uncertifiedRoute != jsdocUncertifiedGapRoute {
 					t.Fatalf("uncertified compact route=%q, want %q", uncertifiedRoute, jsdocUncertifiedGapRoute)
 				}
