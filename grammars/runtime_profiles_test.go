@@ -75,10 +75,12 @@ func TestJavaScriptProfileCertifiesCompactRecoveryFrontier(t *testing.T) {
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
 	lang := JavascriptLanguage()
 	if !lang.CompactStrategy2ErrorRegionCertified || !lang.CompactMissingTokenInsertionCertified ||
-		!lang.CompactRecoveryPlainFirstCertified || !lang.CompactRecoveryTrailingLineageRetirementCertified {
+		!lang.CompactRecoveryPlainFirstCertified || !lang.CompactRecoveryTrailingLineageRetirementCertified ||
+		!lang.CompactRecoveryErrorModeKeywordCaptureCertified {
 		t.Fatal("the JavaScript profile did not attach its compact recovery capabilities")
 	}
 	wantAliases := []gotreesitter.CompactRecoveryTerminalAliasRule{
+		{ResumeState: 20, ResumeSymbol: 54, AliasSymbol: 261},
 		{ResumeState: 231, ResumeSymbol: 85, AliasSymbol: 261},
 		{ResumeState: 1042, ResumeSymbol: 129, AliasSymbol: 261},
 		{ResumeState: 1367, ResumeSymbol: 7, AliasSymbol: 261},
@@ -90,6 +92,7 @@ func TestJavaScriptProfileCertifiesCompactRecoveryFrontier(t *testing.T) {
 	if attachBuiltinLanguageRuntimeProfile("javascript", sha256.Sum256([]byte("wrong javascript blob")), uncertified) ||
 		uncertified.CompactStrategy2ErrorRegionCertified || uncertified.CompactMissingTokenInsertionCertified ||
 		uncertified.CompactRecoveryPlainFirstCertified || uncertified.CompactRecoveryTrailingLineageRetirementCertified ||
+		uncertified.CompactRecoveryErrorModeKeywordCaptureCertified ||
 		len(uncertified.CompactRecoveryTerminalAliasRules) != 0 {
 		t.Fatal("a mismatched JavaScript blob received compact recovery certification")
 	}
@@ -170,6 +173,9 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	if lang.CompactRecoveryTrailingLineageRetirementCertified {
 		t.Fatal("unknown runtime profile enabled compact trailing-lineage retirement")
 	}
+	if lang.CompactRecoveryErrorModeKeywordCaptureCertified {
+		t.Fatal("unknown runtime profile enabled compact error-mode keyword capture")
+	}
 	if len(lang.CompactRecoveryTerminalAliasRules) != 0 {
 		t.Fatal("unknown runtime profile attached compact recovery terminal aliases")
 	}
@@ -185,6 +191,20 @@ func TestRuntimeProfileSymbolRejectsDuplicateNames(t *testing.T) {
 	}
 	if symbol, ok := runtimeProfileSymbol(lang, "duplicate"); ok {
 		t.Fatalf("duplicate symbol=%d ok=true, want fail-closed", symbol)
+	}
+}
+
+func TestRuntimeProfileTerminalSymbolIgnoresNonterminalDuplicate(t *testing.T) {
+	lang := &gotreesitter.Language{
+		TokenCount:  2,
+		SymbolNames: []string{"end", "class", "class"},
+	}
+	if symbol, ok := runtimeProfileTerminalSymbol(lang, "class"); !ok || symbol != 1 {
+		t.Fatalf("terminal symbol=%d ok=%t, want 1/true", symbol, ok)
+	}
+	lang.SymbolNames[0] = "class"
+	if symbol, ok := runtimeProfileTerminalSymbol(lang, "class"); ok {
+		t.Fatalf("duplicate terminal symbol=%d ok=true, want fail-closed", symbol)
 	}
 }
 

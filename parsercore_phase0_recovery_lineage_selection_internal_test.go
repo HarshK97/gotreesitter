@@ -294,3 +294,26 @@ func TestCollapseToRecoveryWinnerSeatsTheWinnerAndClearsLosers(t *testing.T) {
 		}
 	}
 }
+
+func TestCollapseToRecoveryWinnerRecordsOnlyTheOriginalS5AbsorbLineage(t *testing.T) {
+	newScheduler := func() *diagnosticParserCoreGenericScheduler {
+		return &diagnosticParserCoreGenericScheduler{
+			s5MissingInsertions: 1,
+			headers: []diagnosticParserCoreHeader{
+				{creationSeq: 4},
+				{creationSeq: 5},
+			},
+		}
+	}
+	absorb := newScheduler()
+	absorb.collapseToRecoveryWinner(0)
+	if !absorb.selectedRecoveryAbsorbLineage {
+		t.Fatal("the earlier original S5 lineage was not recorded as the absorb winner")
+	}
+
+	missing := newScheduler()
+	missing.collapseToRecoveryWinner(1)
+	if missing.selectedRecoveryAbsorbLineage {
+		t.Fatal("the later missing lineage was recorded as the absorb winner")
+	}
+}

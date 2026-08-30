@@ -809,6 +809,14 @@ type Language struct {
 	// adapted, and stale artifacts retain the false default.
 	CompactRecoveryTrailingLineageRetirementCertified bool
 
+	// CompactRecoveryErrorModeKeywordCaptureCertified permits the compact
+	// scheduler to apply the grammar's keyword lexer after an error-mode lex
+	// returns the keyword-capture token. C performs this second lex while the
+	// recovery stack is in ERROR_STATE. Exact built-in profiles must certify
+	// the complete recovery election. Custom, adapted, and stale artifacts
+	// retain the false default.
+	CompactRecoveryErrorModeKeywordCaptureCertified bool
+
 	// CompactRecoveryTerminalAliasRules permits the accepted-root leaf audit to
 	// authenticate a materialized terminal alias after one certified recovery
 	// resume. The materializer must also prove the exact raw terminal and alias

@@ -174,6 +174,7 @@ type StateDependentRecoveryProvenanceForTest struct {
 	MissingInsertions  uint32
 	LineageSelections  uint64
 	LineageRetirements uint64
+	SelectedAbsorb     bool
 	NoActionDrops      uint64
 }
 
@@ -183,6 +184,22 @@ func RunStateDependentRecoveryRelexProvenanceForTest(lang *Language, source []by
 	return runStateDependentRecoveryRelexSchedulerForTest(lang, source)
 }
 
+func ErrorModeRelexForTest(lang *Language, source []byte, startByte uint32) (Token, bool) {
+	parser := NewParser(lang)
+	tokenSource := parser.acquireParserDFATokenSourceWithErrorRuns(source, true)
+	if tokenSource == nil {
+		return Token{}, false
+	}
+	defer tokenSource.Close()
+	scheduler := diagnosticParserCoreGenericScheduler{
+		tokenSource: tokenSource,
+		options: DiagnosticParserCorePrefixOptions{
+			allowCompactRecoveryErrorModeKeywordCapture: lang.CompactRecoveryErrorModeKeywordCaptureCertified,
+		},
+	}
+	return scheduler.s3ErrorModeRelex(startByte)
+}
+
 func runStateDependentRecoveryRelexSchedulerForTest(lang *Language, source []byte) (DiagnosticParserCoreGenericScheduler, StateDependentRecoveryProvenanceForTest, error) {
 	parser := NewParser(lang)
 	runner, err := newAdmissionCandidateRunner(parser)
@@ -190,6 +207,13 @@ func runStateDependentRecoveryRelexSchedulerForTest(lang *Language, source []byt
 		return DiagnosticParserCoreGenericScheduler{}, StateDependentRecoveryProvenanceForTest{}, err
 	}
 	runner.options.ReceiptMode = DiagnosticParserCoreReceiptFull
+	// executeSchedulerOpen normally binds this context. This test seam calls
+	// the scheduler directly, so bind the same production materialization and
+	// recovery-pricing inputs here.
+	runner.options.materializationParser = parser
+	runner.options.materializationSource = source
+	runner.options.materializationForceReplayParseStates = true
+	runner.options.materializationContextSet = true
 	tokenSource := parser.acquireParserDFATokenSourceWithErrorRuns(source, true)
 	if tokenSource == nil {
 		return DiagnosticParserCoreGenericScheduler{}, StateDependentRecoveryProvenanceForTest{}, nil
@@ -213,6 +237,7 @@ func runStateDependentRecoveryRelexSchedulerForTest(lang *Language, source []byt
 		MissingInsertions:  scheduler.s5MissingInsertions,
 		LineageSelections:  scheduler.work.RecoveryLineageSelections,
 		LineageRetirements: scheduler.work.RecoveryLineageRetirements,
+		SelectedAbsorb:     scheduler.selectedRecoveryAbsorbLineage,
 		NoActionDrops:      scheduler.work.NoActionDrops,
 	}
 	return *scheduler.receipt, provenance, runErr

@@ -68,6 +68,7 @@ func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) 
 		allowCompactRecoveryLineageSelection: p.language.CompactStrategy2ErrorRegionCertified &&
 			p.language.CompactMissingTokenInsertionCertified,
 		allowCompactRecoveryTrailingLineageRetirement: p.language.CompactRecoveryTrailingLineageRetirementCertified,
+		allowCompactRecoveryErrorModeKeywordCapture:   p.language.CompactRecoveryErrorModeKeywordCaptureCertified,
 		noLookaheadRootSymbol:                         p.rootSymbol,
 		hasNoLookaheadRootSymbol:                      p.hasRootSymbol,
 		// Tranche B8 scheduler stop-control: bind this Parser so the scheduler
