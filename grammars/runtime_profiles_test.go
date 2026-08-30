@@ -138,7 +138,9 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// C-native reading during dispatch.
 	// 49 = the prior 48 plus the JSDoc entry. It certifies exact internal-DFA
 	// skipped-prefix evidence for compact reduce tiling.
-	if got, want := len(builtinLanguageRuntimeProfiles), 49; got != want {
+	// 50 = the prior 49 plus the Markdown inline entry. It certifies four exact
+	// compact conflict rows while production parsing ignores them.
+	if got, want := len(builtinLanguageRuntimeProfiles), 50; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
