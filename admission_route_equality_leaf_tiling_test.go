@@ -202,7 +202,7 @@ func TestCompactRouteAdjudicatesFalseCleanWitnesses(t *testing.T) {
 	witnesses := loadRouteEqualityWitnesses(t)
 	ids := []string{
 		"html_min_a", "html_min_html", "html_log_1",
-		"js_log_1", "js_log_2", "js_log_3", "js_log_5", "js_log_7", "js_log_8",
+		"js_log_1", "js_log_2", "js_log_3", "js_log_5", "js_log_6", "js_log_7", "js_log_8",
 	}
 	for _, id := range ids {
 		id := id
@@ -251,7 +251,7 @@ func TestCompactRouteAdjudicatesFalseCleanWitnesses(t *testing.T) {
 
 			routed, fallback := gts.AdmissionCandidateCounters()
 			nativeRecovery := witness.Language == "html" || id == "js_log_1" || id == "js_log_2" || id == "js_log_3" ||
-				id == "js_log_5" || id == "js_log_7" || id == "js_log_8"
+				id == "js_log_5" || id == "js_log_6" || id == "js_log_7" || id == "js_log_8"
 			if nativeRecovery {
 				if routed != 1 || fallback != 0 {
 					t.Fatalf("witness %q: route counters routed=%d fallback=%d, want routed=1 fallback=0; reason=%q",

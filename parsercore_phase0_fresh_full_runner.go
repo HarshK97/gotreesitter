@@ -305,15 +305,23 @@ func (r *parserCoreFreshFullRunner) compactRecoveryTerminalAliasSymbol(
 	scheduler *diagnosticParserCoreGenericScheduler,
 ) (Symbol, bool) {
 	if r == nil || r.lang == nil || scheduler == nil ||
-		!scheduler.s3RegionOpened || scheduler.s3ResumeCount != 1 ||
-		scheduler.work.RecoveryLineageSelections != 0 {
+		!scheduler.s3RegionOpened || scheduler.s3ResumeCount != 1 {
 		return 0, false
 	}
 	standaloneRegion := scheduler.s5MissingInsertions == 0 &&
+		scheduler.work.RecoveryLineageSelections == 0 &&
 		scheduler.work.RecoveryLineageRetirements == 0 && scheduler.work.NoActionDrops == 1
 	retiredMissingLineage := scheduler.s5MissingInsertions == 1 &&
+		scheduler.work.RecoveryLineageSelections == 0 &&
 		scheduler.work.RecoveryLineageRetirements == 1 && scheduler.work.NoActionDrops == 1
-	if !standaloneRegion && !retiredMissingLineage {
+	// S5 publishes the original absorb lineage before its missing sibling.
+	// collapseToRecoveryWinner records this proof before it clears the loser.
+	// A missing-lineage winner must not borrow the absorb lineage's resume rule.
+	selectedAbsorbLineage := scheduler.s5MissingInsertions == 1 &&
+		scheduler.work.RecoveryLineageSelections == 1 &&
+		scheduler.work.RecoveryLineageRetirements == 0 && scheduler.work.NoActionDrops == 1 &&
+		scheduler.selectedRecoveryAbsorbLineage
+	if !standaloneRegion && !retiredMissingLineage && !selectedAbsorbLineage {
 		return 0, false
 	}
 	for _, rule := range r.lang.CompactRecoveryTerminalAliasRules {
@@ -445,12 +453,14 @@ func (r *parserCoreFreshFullRunner) parseWithObserverAndErrorRuns(
 	savedMissingInsertion := r.options.allowCompactMissingTokenInsertion
 	savedLineageSelection := r.options.allowCompactRecoveryLineageSelection
 	savedTrailingRetirement := r.options.allowCompactRecoveryTrailingLineageRetirement
+	savedErrorModeKeyword := r.options.allowCompactRecoveryErrorModeKeywordCapture
 	if !recoveryEnabled {
 		r.options.Recovery = false
 		r.options.allowCompactStrategy2ErrorRegion = false
 		r.options.allowCompactMissingTokenInsertion = false
 		r.options.allowCompactRecoveryLineageSelection = false
 		r.options.allowCompactRecoveryTrailingLineageRetirement = false
+		r.options.allowCompactRecoveryErrorModeKeywordCapture = false
 	}
 	defer func() {
 		r.options.Recovery = savedRecovery
@@ -458,6 +468,7 @@ func (r *parserCoreFreshFullRunner) parseWithObserverAndErrorRuns(
 		r.options.allowCompactMissingTokenInsertion = savedMissingInsertion
 		r.options.allowCompactRecoveryLineageSelection = savedLineageSelection
 		r.options.allowCompactRecoveryTrailingLineageRetirement = savedTrailingRetirement
+		r.options.allowCompactRecoveryErrorModeKeywordCapture = savedErrorModeKeyword
 	}()
 	scheduler, tokenSource, err := r.executeSchedulerOpenWithObserverAndErrorRuns(
 		source, r.compact, true, observer, forceErrorRuns,

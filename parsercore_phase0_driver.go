@@ -116,8 +116,13 @@ type DiagnosticParserCorePrefixOptions struct {
 	// removal for one exact two-version S5 frontier. The admission route sets
 	// this only from an exact grammar-artifact capability.
 	allowCompactRecoveryTrailingLineageRetirement bool
-	noLookaheadRootSymbol                         Symbol
-	hasNoLookaheadRootSymbol                      bool
+	// allowCompactRecoveryErrorModeKeywordCapture permits s3ErrorModeRelex to
+	// run the keyword lexer in ERROR_STATE after the main lexer returns the
+	// grammar's keyword-capture token. The admission route sets this only from
+	// an exact grammar-artifact capability.
+	allowCompactRecoveryErrorModeKeywordCapture bool
+	noLookaheadRootSymbol                       Symbol
+	hasNoLookaheadRootSymbol                    bool
 	// stopControlParser, when non-nil, arms the scheduler's stop-control poll
 	// (spec.campaign.v7 tranche B8): once per dispatch-pass-loop iteration,
 	// diagnosticParserCoreGenericScheduler.run checks this Parser's deadline
@@ -2361,6 +2366,10 @@ type diagnosticParserCoreGenericScheduler struct {
 	s3ResumeState  StateID
 	s3ResumeSymbol Symbol
 	s3ResumeCount  uint32
+	// selectedRecoveryAbsorbLineage records that EOF pricing selected S5's
+	// original, earlier absorb version. Materialization uses this outcome to
+	// prevent the later missing version from borrowing an absorb-resume rule.
+	selectedRecoveryAbsorbLineage bool
 	// s5MissingInsertions counts recovery forks created by S5. The counter
 	// bounds zero-width progress across one parse.
 	s5MissingInsertions        uint32
@@ -7023,6 +7032,24 @@ func (s *diagnosticParserCoreGenericScheduler) s3ErrorModeRelex(startByte uint32
 	if relexed.Symbol == 0 && relexed.StartByte == relexed.EndByte {
 		return Token{}, false
 	}
+	if s.options.allowCompactRecoveryErrorModeKeywordCapture &&
+		relexed.Symbol == lang.KeywordCaptureToken {
+		savedState := s.tokenSource.state
+		savedGLRStates := s.tokenSource.glrStates
+		s.tokenSource.state = 0
+		s.tokenSource.glrStates = nil
+		promoted, demoted := s.tokenSource.promoteKeyword(relexed)
+		s.tokenSource.state = savedState
+		s.tokenSource.glrStates = savedGLRStates
+		// C accepts only a keyword that owns the complete capture span. Keep the
+		// raw capture token if the shared promoter did not prove that exact
+		// result. The caller then reaches its existing disagreement decline.
+		if !demoted && promoted.isKeyword && promoted.Symbol != relexed.Symbol &&
+			promoted.StartByte == relexed.StartByte && promoted.EndByte == relexed.EndByte &&
+			promoted.StartPoint == relexed.StartPoint && promoted.EndPoint == relexed.EndPoint {
+			relexed = promoted
+		}
+	}
 	return relexed, true
 }
 
@@ -7626,6 +7653,9 @@ func (s *diagnosticParserCoreGenericScheduler) collapseToRecoveryWinner(winner i
 		return
 	}
 	s.work.RecoveryLineageSelections++
+	s.selectedRecoveryAbsorbLineage = len(s.headers) == 2 && winner == 0 &&
+		s.s5MissingInsertions == 1 &&
+		s.headers[0].creationSeq < s.headers[1].creationSeq
 	winnerHeader := s.headers[winner]
 	winnerHeader.clearRecoveryLineage()
 	clear(s.headers[:cap(s.headers)])

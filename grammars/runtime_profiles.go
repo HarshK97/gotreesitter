@@ -28,6 +28,7 @@ type builtinLanguageRuntimeProfile struct {
 	compactStrategy2ErrorRegion        bool
 	compactMissingTokenInsertion       bool
 	compactRecoveryTrailingRetirement  bool
+	compactRecoveryErrorModeKeyword    bool
 	compactRecoveryTerminalAliases     []compactRecoveryTerminalAliasProfile
 	compactRecoveryPlainFirst          bool
 	lineContinuationEscapeByte         byte
@@ -108,9 +109,8 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	// trees and outcomes across all files while cutting aggregate allocations;
 	// explicit forest parsing and non-certified languages keep the full budget.
 	//
-	// The same exact artifact certifies the current compact recovery frontier.
-	// Seven pinned witnesses route with exact C parity. One stops at a typed
-	// fail-closed boundary and remains production-owned.
+	// The same exact artifact certifies the complete pinned compact recovery
+	// frontier. All eight witnesses route with exact C parity.
 	"javascript": {
 		blobSHA256:                        mustRuntimeProfileSHA256("6706f93890f24d8ea90d6a140df5dde29c02ec8a3213bae16e8cc4df37e33ee0"),
 		automaticForestMemoryAllowance:    javascriptAutomaticForestMemoryAllowance,
@@ -118,7 +118,9 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		compactStrategy2ErrorRegion:       true,
 		compactMissingTokenInsertion:      true,
 		compactRecoveryTrailingRetirement: true,
+		compactRecoveryErrorModeKeyword:   true,
 		compactRecoveryTerminalAliases: []compactRecoveryTerminalAliasProfile{
+			{resumeState: 20, resumeSymbol: "class", aliasSymbol: "property_identifier"},
 			{resumeState: 231, resumeSymbol: "+", aliasSymbol: "property_identifier"},
 			{resumeState: 1042, resumeSymbol: "_automatic_semicolon", aliasSymbol: "property_identifier"},
 			{resumeState: 1367, resumeSymbol: "{", aliasSymbol: "property_identifier"},
@@ -701,6 +703,10 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 		lang.CompactRecoveryTrailingLineageRetirementCertified = true
 		changed = true
 	}
+	if profile.compactRecoveryErrorModeKeyword && !lang.CompactRecoveryErrorModeKeywordCaptureCertified {
+		lang.CompactRecoveryErrorModeKeywordCaptureCertified = true
+		changed = true
+	}
 	if rules := resolveCompactRecoveryTerminalAliasProfile(lang, profile.compactRecoveryTerminalAliases); len(rules) > 0 &&
 		!slices.Equal(lang.CompactRecoveryTerminalAliasRules, rules) {
 		lang.CompactRecoveryTerminalAliasRules = rules
@@ -774,7 +780,7 @@ func resolveCompactRecoveryTerminalAliasProfile(
 	}
 	rules := make([]gotreesitter.CompactRecoveryTerminalAliasRule, 0, len(profile))
 	for _, candidate := range profile {
-		resumeSymbol, resumeOK := runtimeProfileSymbol(lang, candidate.resumeSymbol)
+		resumeSymbol, resumeOK := runtimeProfileTerminalSymbol(lang, candidate.resumeSymbol)
 		aliasSymbol, aliasOK := runtimeProfileSymbol(lang, candidate.aliasSymbol)
 		if !resumeOK || !aliasOK || uint32(candidate.resumeState) >= lang.StateCount ||
 			uint32(resumeSymbol) >= lang.TokenCount || uint32(aliasSymbol) < lang.TokenCount {
@@ -787,6 +793,29 @@ func resolveCompactRecoveryTerminalAliasProfile(
 		})
 	}
 	return rules
+}
+
+func runtimeProfileTerminalSymbol(lang *gotreesitter.Language, name string) (gotreesitter.Symbol, bool) {
+	if lang == nil {
+		return 0, false
+	}
+	limit := len(lang.SymbolNames)
+	if uint64(lang.TokenCount) < uint64(limit) {
+		limit = int(lang.TokenCount)
+	}
+	var match gotreesitter.Symbol
+	found := false
+	for index := 0; index < limit; index++ {
+		if lang.SymbolNames[index] != name {
+			continue
+		}
+		if found {
+			return 0, false
+		}
+		match = gotreesitter.Symbol(index)
+		found = true
+	}
+	return match, found
 }
 
 func runtimeProfileSymbol(lang *gotreesitter.Language, name string) (gotreesitter.Symbol, bool) {
