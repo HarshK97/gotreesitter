@@ -789,6 +789,15 @@ type Language struct {
 	// Custom and adapted languages retain the false default.
 	CompactMissingTokenInsertionCertified bool
 
+	// CompactRecoveryPlainFirstCertified preserves the ordinary compact lexer
+	// for the first attempt. After a fail-closed decline, the route retries with
+	// C error-mode lexing and the certified S3/S5 recovery mechanisms.
+	//
+	// Exact built-in profiles set this only when C-oracle differentials prove
+	// that the retry adds recovery routes without removing clean routes. Custom,
+	// adapted, and stale artifacts keep the direct recovery attempt.
+	CompactRecoveryPlainFirstCertified bool
+
 	// LineContinuationEscapeByte declares the single byte this language's
 	// scanner treats as a line-continuation escape when immediately followed
 	// by a newline (LF, or CR+LF) — for example PowerShell's backtick. C

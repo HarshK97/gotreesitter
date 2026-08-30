@@ -118,13 +118,16 @@ func TestResetDiagnosticParserCoreGenericSchedulerRejectsActiveScratch(t *testin
 	}
 }
 
-func TestResetDiagnosticParserCoreGenericSchedulerClearsMissingInsertionCount(t *testing.T) {
-	scheduler := diagnosticParserCoreGenericScheduler{s5MissingInsertions: 7, recoveryIsolation: true}
+func TestResetDiagnosticParserCoreGenericSchedulerClearsRecoveryState(t *testing.T) {
+	scheduler := diagnosticParserCoreGenericScheduler{s5MissingInsertions: 7, s3RegionOpened: true, recoveryIsolation: true}
 	if err := resetDiagnosticParserCoreGenericScheduler(&scheduler); err != nil {
 		t.Fatal(err)
 	}
 	if scheduler.s5MissingInsertions != 0 {
 		t.Fatalf("missing insertion count=%d, want zero", scheduler.s5MissingInsertions)
+	}
+	if scheduler.s3RegionOpened {
+		t.Fatal("the error region marker remained set after reset")
 	}
 	if scheduler.recoveryIsolation {
 		t.Fatal("recovery isolation remained active after reset")

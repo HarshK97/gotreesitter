@@ -855,7 +855,7 @@ jobs:
             --test-parallel 1 \
             --c-ref-build-jobs 1 \
             --timeout 20m \
-            --run '^TestCompactT3OracleAdjudication$'
+            --run '^(TestCompactT3OracleAdjudication|TestCompactT3JavaScriptRecoveryProfileCharacterization|TestCompactT3JavaScriptRecoveryRouteSeedOracleParity|TestCompactT3JavaScriptRecoveryMutationDifferential|TestCompactJavaScriptS5RecoveryMutationDifferential)$'
 
   # merge-event-census-cgo runs stage M0 of spec.merge-time-election.v1: the
   # census that counts stack-merge events on both sides and breaks production's

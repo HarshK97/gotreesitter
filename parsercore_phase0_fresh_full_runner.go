@@ -5,6 +5,7 @@ package gotreesitter
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
@@ -31,6 +32,9 @@ type parserCoreFreshFullRunner struct {
 	options                           DiagnosticParserCorePrefixOptions
 	replayParseStates                 bool
 	allowConvergedReductionSplitDrops bool
+	// recoveryPlainFirst preserves ordinary lexing for the first attempt. A
+	// fail-closed decline then retries with C error-mode lexing enabled.
+	recoveryPlainFirst bool
 	// certificateAdmissionEnabled is armed only by the private D3 test seam.
 	// It is copied into options for each cached parse after Core.Reset.
 	certificateAdmissionEnabled bool
@@ -111,6 +115,17 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpenWithObserver(
 	reset bool,
 	observer diagnosticParserCoreSeedObserver,
 ) (*diagnosticParserCoreGenericScheduler, *dfaTokenSource, error) {
+	forceErrorRuns := r != nil && r.options.Recovery && r.options.allowCompactStrategy2ErrorRegion
+	return r.executeSchedulerOpenWithObserverAndErrorRuns(source, compact, reset, observer, forceErrorRuns)
+}
+
+func (r *parserCoreFreshFullRunner) executeSchedulerOpenWithObserverAndErrorRuns(
+	source []byte,
+	compact *core.Core,
+	reset bool,
+	observer diagnosticParserCoreSeedObserver,
+	forceErrorRuns bool,
+) (*diagnosticParserCoreGenericScheduler, *dfaTokenSource, error) {
 	if r == nil || r.parser == nil || r.lang == nil || r.tables == nil || compact == nil {
 		return nil, nil, errors.New("parser-core fresh-full runner is incomplete")
 	}
@@ -135,7 +150,6 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpenWithObserver(
 	// plain lexer silently skipping it -- the silent-skip shape a true no-
 	// table-action dispatch point can never observe, verified against every
 	// committed html_erroneous_end_tag witness.
-	forceErrorRuns := r.options.Recovery && r.options.allowCompactStrategy2ErrorRegion
 	tokenSource := r.parser.acquireParserDFATokenSourceWithErrorRuns(source, forceErrorRuns)
 	if tokenSource == nil {
 		return nil, nil, errors.New("parser-core fresh-full runner: production DFA unavailable")
@@ -381,16 +395,67 @@ func (r *parserCoreFreshFullRunner) parseWithObserver(
 			err = errors.Join(err, fmt.Errorf("parser-core fresh-full runner: reset after decline: %w", resetErr))
 		}
 	}()
-	scheduler, tokenSource, err2 := r.executeSchedulerOpenWithObserver(source, r.compact, true, observer)
-	if err2 != nil {
-		return nil, err2
+	recoveryEnabled := r.options.Recovery && r.options.allowCompactStrategy2ErrorRegion
+	if r.recoveryPlainFirst && recoveryEnabled {
+		tree, err = r.parseWithObserverAndErrorRuns(source, observer, false, false)
+		if err == nil {
+			return tree, nil
+		}
+		if !compactRecoveryRetryAfterPlainEligible(err) {
+			return nil, err
+		}
+		return r.parseWithObserverAndErrorRuns(source, observer, true, true)
 	}
-	defer tokenSource.Close()
-	tree, err = r.materializeSelection(source, r.compact, scheduler)
+	return r.parseWithObserverAndErrorRuns(source, observer, recoveryEnabled, recoveryEnabled)
+}
+
+func (r *parserCoreFreshFullRunner) parseWithObserverAndErrorRuns(
+	source []byte,
+	observer diagnosticParserCoreSeedObserver,
+	recoveryEnabled bool,
+	forceErrorRuns bool,
+) (*Tree, error) {
+	savedRecovery := r.options.Recovery
+	savedErrorRegion := r.options.allowCompactStrategy2ErrorRegion
+	savedMissingInsertion := r.options.allowCompactMissingTokenInsertion
+	savedLineageSelection := r.options.allowCompactRecoveryLineageSelection
+	if !recoveryEnabled {
+		r.options.Recovery = false
+		r.options.allowCompactStrategy2ErrorRegion = false
+		r.options.allowCompactMissingTokenInsertion = false
+		r.options.allowCompactRecoveryLineageSelection = false
+	}
+	defer func() {
+		r.options.Recovery = savedRecovery
+		r.options.allowCompactStrategy2ErrorRegion = savedErrorRegion
+		r.options.allowCompactMissingTokenInsertion = savedMissingInsertion
+		r.options.allowCompactRecoveryLineageSelection = savedLineageSelection
+	}()
+	scheduler, tokenSource, err := r.executeSchedulerOpenWithObserverAndErrorRuns(
+		source, r.compact, true, observer, forceErrorRuns,
+	)
 	if err != nil {
 		return nil, err
 	}
+	tree, materializeErr := r.materializeSelection(source, r.compact, scheduler)
+	tokenSource.Close()
+	if materializeErr != nil {
+		if tree != nil {
+			tree.Release()
+		}
+		return nil, materializeErr
+	}
 	return tree, nil
+}
+
+func compactRecoveryRetryAfterPlainEligible(err error) bool {
+	var decline *diagnosticParserCoreDecline
+	if errors.As(err, &decline) {
+		return decline.boundary != DiagnosticParserCoreCap
+	}
+	message := err.Error()
+	return strings.HasPrefix(message, "parser-core fresh-full runner did not accept EOF") ||
+		strings.HasPrefix(message, "parser-core fresh-full runner acceptance is not sole exact EOF")
 }
 
 func (r *parserCoreFreshFullRunner) parseSelectedStore(source []byte) (*core.SelectedStore, error) {

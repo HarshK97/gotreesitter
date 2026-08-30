@@ -156,45 +156,107 @@ func FuzzAdmissionRouteEquality(f *testing.F) {
 			t.Skip("input at or above the fuzz latency safety cap")
 		}
 		lp := languages[int(langSel)%len(languages)]
-
-		defer func() {
-			if r := recover(); r != nil {
-				t.Fatalf("panic during route-equality fuzz (lang=%s bytes=%d): %v\ninput=%s",
-					lp.name, len(src), r, previewRouteEqualityInput(src))
-			}
-		}()
-
-		gts.ResetAdmissionCandidateCountersForTest()
-		compactTree, err := lp.compact.Parse(src)
-		if err != nil {
-			t.Fatalf("lang=%s compact-lane Parse: %v (input=%s)", lp.name, err, previewRouteEqualityInput(src))
-		}
-		if compactTree == nil {
-			t.Fatalf("lang=%s compact-lane Parse returned a nil tree with no error (input=%s)", lp.name, previewRouteEqualityInput(src))
-		}
-		defer compactTree.Release()
-
-		routed, _ := gts.AdmissionCandidateCounters()
-		if routed != 1 {
-			// Compact declined -- engine-side, or never attempted. Parse
-			// already served production internally within this same call
-			// (the B1 fail-closed guarantee), so compactTree already IS the
-			// production tree. Vacuous for route equality; still exercised
-			// for panic and hang coverage.
-			return
-		}
-
-		productionTree, err := lp.production.Parse(src)
-		if err != nil {
-			t.Fatalf("lang=%s production-lane Parse: %v (input=%s)", lp.name, err, previewRouteEqualityInput(src))
-		}
-		if productionTree == nil {
-			t.Fatalf("lang=%s production-lane Parse returned a nil tree with no error (input=%s)", lp.name, previewRouteEqualityInput(src))
-		}
-		defer productionTree.Release()
-
-		assertAdmissionRouteEquality(t, lp, src, compactTree, productionTree)
+		exerciseAdmissionRouteEquality(t, lp, src, false)
 	})
+}
+
+// FuzzJavaScriptAdmissionRouteEquality keeps live compact recovery mutations
+// on JavaScript. The C differential owns recovered-tree equality because
+// production can disagree with C on both structure and the error result.
+func FuzzJavaScriptAdmissionRouteEquality(f *testing.F) {
+	f.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
+	entry := grammars.DetectLanguageByName("javascript")
+	if entry == nil {
+		f.Fatal("JavaScript is not registered")
+	}
+	lang := entry.Language()
+	if lang == nil {
+		f.Fatal("JavaScript resolved a nil Language")
+	}
+	if support := grammars.EvaluateParseSupport(*entry, lang); support.Backend != grammars.ParseBackendDFA {
+		f.Fatalf("JavaScript is not DFA-routable: backend=%s reason=%s", support.Backend, support.Reason)
+	}
+	lp := admissionRouteEqualityLanguage{
+		name:       "javascript",
+		lang:       lang,
+		compact:    gts.NewParser(lang),
+		production: gts.NewParser(lang),
+	}
+	lp.compact.SetAdmissionCandidateRoute(true)
+	lp.production.SetAdmissionCandidateRoute(false)
+
+	f.Add([]byte(grammars.ParseSmokeSample("javascript")))
+	witnesses := loadRouteEqualityWitnesses(f)
+	ids := make([]string, 0, len(witnesses))
+	for id, witness := range witnesses {
+		if witness.Language == "javascript" {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		f.Add([]byte(witnesses[id].SourceUTF8))
+	}
+	f.Add([]byte("function A(){A000000} # 0"))
+	f.Add([]byte("a; # ; b"))
+	f.Add([]byte("function f(, b) { return a + b; }"))
+	f.Add([]byte("const x = a ? b :;c;"))
+
+	f.Fuzz(func(t *testing.T, src []byte) {
+		if len(src) >= routeEqualityFuzzMaxInputBytes {
+			t.Skip("input at or above the fuzz latency safety cap")
+		}
+		exerciseAdmissionRouteEquality(t, lp, src, true)
+	})
+}
+
+func exerciseAdmissionRouteEquality(t *testing.T, lp admissionRouteEqualityLanguage, src []byte, recoveryOracleOwned bool) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panic during route-equality fuzz (lang=%s bytes=%d): %v\ninput=%s",
+				lp.name, len(src), r, previewRouteEqualityInput(src))
+		}
+	}()
+
+	gts.ResetAdmissionCandidateCountersForTest()
+	compactTree, err := lp.compact.Parse(src)
+	if err != nil {
+		t.Fatalf("lang=%s compact-lane Parse: %v (input=%s)", lp.name, err, previewRouteEqualityInput(src))
+	}
+	if compactTree == nil {
+		t.Fatalf("lang=%s compact-lane Parse returned a nil tree with no error (input=%s)", lp.name, previewRouteEqualityInput(src))
+	}
+	defer compactTree.Release()
+
+	routed, _ := gts.AdmissionCandidateCounters()
+	if routed != 1 {
+		// Compact declined -- engine-side, or never attempted. Parse
+		// already served production internally within this same call
+		// (the B1 fail-closed guarantee), so compactTree already IS the
+		// production tree. Vacuous for route equality; still exercised
+		// for panic and hang coverage.
+		return
+	}
+
+	productionTree, err := lp.production.Parse(src)
+	if err != nil {
+		t.Fatalf("lang=%s production-lane Parse: %v (input=%s)", lp.name, err, previewRouteEqualityInput(src))
+	}
+	if productionTree == nil {
+		t.Fatalf("lang=%s production-lane Parse returned a nil tree with no error (input=%s)", lp.name, previewRouteEqualityInput(src))
+	}
+	defer productionTree.Release()
+	if recoveryOracleOwned && lp.lang.CompactStrategy2ErrorRegionCertified &&
+		routeEqualityTreeCarriesNativeRecoveryNode(compactTree.RootNode()) {
+		if diff := routeEqualityFirstDivergence(compactTree.RootNode(), productionTree.RootNode(), lp.lang, "root"); diff != "" {
+			t.Logf("lang=%s bytes=%d recovery tree is C-oracle-owned: %s (input=%s)",
+				lp.name, len(src), diff, previewRouteEqualityInput(src))
+		}
+		return
+	}
+
+	assertAdmissionRouteEquality(t, lp, src, compactTree, productionTree)
 }
 
 // seedAdmissionRouteEqualityCorpus commits the B2 seed corpus: the 20-witness
@@ -356,7 +418,7 @@ func assertAdmissionRouteEquality(t *testing.T, lp admissionRouteEqualityLanguag
 			lp.name, len(src), compactRoot.HasError(), productionRoot.HasError(), previewRouteEqualityInput(src))
 	}
 
-	if lp.name == "html" && routeEqualityTreeCarriesNativeRecoveryNode(compactRoot) {
+	if lp.lang.CompactStrategy2ErrorRegionCertified && routeEqualityTreeCarriesNativeRecoveryNode(compactRoot) {
 		if diff := routeEqualityFirstDivergence(compactRoot, productionRoot, lp.lang, "root"); diff != "" {
 			t.Logf("lang=%s bytes=%d native recovery node present: compact follows the C oracle instead of production: %s (input=%s)",
 				lp.name, len(src), diff, previewRouteEqualityInput(src))

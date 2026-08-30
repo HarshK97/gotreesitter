@@ -112,9 +112,10 @@ type compactT3ExpectedOutcome struct {
 	CompactHasError    *bool `json:"compact_has_error"`
 }
 
-// compactT3RecoveryCertifiedWitnesses lists HTML witnesses where native
-// compact recovery reaches exact structural C-oracle parity. The exact HTML
-// artifact certifies S3 error absorption and S5 version competition.
+// compactT3RecoveryCertifiedWitnesses lists witnesses where native compact
+// recovery reaches exact structural C-oracle parity. The exact HTML artifact
+// certifies its complete class. JavaScript certifies the current S3 frontier;
+// its remaining five witnesses stay fail-closed.
 var compactT3RecoveryCertifiedWitnesses = map[string]bool{
 	"html_min_a":    true,
 	"html_min_html": true,
@@ -126,6 +127,9 @@ var compactT3RecoveryCertifiedWitnesses = map[string]bool{
 	"html_log_6":    true,
 	"html_log_7":    true,
 	"html_log_8":    true,
+	"js_log_1":      true,
+	"js_log_2":      true,
+	"js_log_4":      true,
 }
 
 // TestCompactT3OracleAdjudication verifies each committed false-clean witness
@@ -142,7 +146,8 @@ var compactT3RecoveryCertifiedWitnesses = map[string]bool{
 //   - compact vs. the C oracle: S3 and S5 cover all ten
 //     html_erroneous_end_tag witnesses. Every witness in
 //     compactT3RecoveryCertifiedWitnesses must match the C oracle exactly.
-//     JavaScript and Swift still have no compact recovery implementation.
+//     JavaScript routes three witnesses exactly and fails closed on five.
+//     Swift still has no compact recovery implementation.
 //   - production vs. the C oracle: the S1 design brief's stated gate is
 //     "the harness must pass with production serving every witness before
 //     any compact change." Verified in the pinned parity container
@@ -251,6 +256,249 @@ func TestCompactT3OracleAdjudication(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCompactT3JavaScriptRecoveryProfileCharacterization pins the exact compact
+// recovery frontier for the certified JavaScript artifact. A routed row must match C
+// structurally. Every other row must fail closed at its recorded mechanism
+// boundary and return to the production parser.
+func TestCompactT3JavaScriptRecoveryProfileCharacterization(t *testing.T) {
+	manifest := loadCompactT3WitnessManifest(t)
+	cLanguage, err := ParityCLanguage("javascript")
+	if err != nil {
+		t.Fatalf("load C oracle: %v", err)
+	}
+	goLanguage := grammars.JavascriptLanguage()
+	if !goLanguage.CompactStrategy2ErrorRegionCertified || !goLanguage.CompactMissingTokenInsertionCertified {
+		t.Fatal("the exact JavaScript artifact lacks compact recovery certification")
+	}
+
+	expectations := map[string]struct {
+		routed         bool
+		fallbackDetail string
+	}{
+		"js_log_1": {routed: true},
+		"js_log_2": {routed: true},
+		"js_log_3": {fallbackDetail: "accepted compact root leaves do not tile the accepted span: gap=34..36"},
+		"js_log_4": {routed: true},
+		"js_log_5": {fallbackDetail: "generic scheduler has no table action for the elected token"},
+		"js_log_6": {fallbackDetail: "error-mode lex disagrees with the ordinary shared election"},
+		"js_log_7": {fallbackDetail: "accepted compact root leaves do not tile the accepted span: gap=34..36"},
+		"js_log_8": {fallbackDetail: "generic scheduler has no table action for the elected token"},
+	}
+
+	for _, witness := range compactT3WitnessesForLanguage(manifest, "javascript") {
+		witness := witness
+		expectation, ok := expectations[witness.ID]
+		if !ok {
+			t.Fatalf("JavaScript witness %q has no forced-profile expectation", witness.ID)
+		}
+		t.Run(witness.ID, func(t *testing.T) {
+			source := []byte(witness.SourceUTF8)
+			cTree := compactT3ParseC(t, cLanguage, source)
+			defer cTree.Close()
+
+			routedBefore, fallbackBefore := gotreesitter.AdmissionCandidateCounters()
+			compactTree := compactT3ParseGo(t, goLanguage, source, true)
+			defer compactTree.Release()
+			routedAfter, fallbackAfter := gotreesitter.AdmissionCandidateCounters()
+			routed := routedAfter - routedBefore
+			fallback := fallbackAfter - fallbackBefore
+
+			if expectation.routed {
+				if routed != 1 || fallback != 0 {
+					t.Fatalf("route counters=%d/%d, want 1/0; reason=%q", routed, fallback, gotreesitter.AdmissionCandidateLastFallbackReason())
+				}
+				if divergences := compactT3StructuralDivergences(compactTree.RootNode(), goLanguage, cTree.RootNode()); len(divergences) != 0 {
+					t.Fatalf("forced compact recovery diverges from C at %d node(s); first: %s", len(divergences), compactT3FormatDivergence(divergences[0]))
+				}
+				return
+			}
+
+			if routed != 0 || fallback != 1 {
+				t.Fatalf("route counters=%d/%d, want 0/1", routed, fallback)
+			}
+			if reason := gotreesitter.AdmissionCandidateLastFallbackReason(); !strings.Contains(reason, expectation.fallbackDetail) {
+				t.Fatalf("fallback reason=%q, want substring %q", reason, expectation.fallbackDetail)
+			}
+		})
+	}
+}
+
+// TestCompactT3JavaScriptRecoveryRouteSeedOracleParity adjudicates recovery
+// trees that the required route-equality seed corpus reaches outside the
+// compact T3 manifest. They must match C before the seed gate can treat their
+// compact-versus-production difference as certified recovery behavior.
+func TestCompactT3JavaScriptRecoveryRouteSeedOracleParity(t *testing.T) {
+	cLanguage, err := ParityCLanguage("javascript")
+	if err != nil {
+		t.Fatalf("load C oracle: %v", err)
+	}
+	goLanguage := grammars.JavascriptLanguage()
+	if !goLanguage.CompactStrategy2ErrorRegionCertified || !goLanguage.CompactMissingTokenInsertionCertified {
+		t.Fatal("the exact JavaScript artifact lacks compact recovery certification")
+	}
+	for _, test := range []struct {
+		name   string
+		source string
+	}{
+		{name: "hash_after_identifier_run", source: "function A(){A000000} # 0"},
+		{name: "hash_between_statements", source: "a; # ; b"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := []byte(test.source)
+			cTree := compactT3ParseC(t, cLanguage, source)
+			defer cTree.Close()
+
+			routedBefore, fallbackBefore := gotreesitter.AdmissionCandidateCounters()
+			compactTree := compactT3ParseGo(t, goLanguage, source, true)
+			defer compactTree.Release()
+			routedAfter, fallbackAfter := gotreesitter.AdmissionCandidateCounters()
+			if routedAfter-routedBefore != 1 || fallbackAfter-fallbackBefore != 0 {
+				t.Fatalf("route counters delta=%d/%d, want 1/0; reason=%q",
+					routedAfter-routedBefore, fallbackAfter-fallbackBefore, gotreesitter.AdmissionCandidateLastFallbackReason())
+			}
+			if divergences := compactT3StructuralDivergences(compactTree.RootNode(), goLanguage, cTree.RootNode()); len(divergences) != 0 {
+				t.Fatalf("compact recovery diverges from C at %d node(s); first: %s",
+					len(divergences), compactT3FormatDivergence(divergences[0]))
+			}
+		})
+	}
+}
+
+// TestCompactT3JavaScriptRecoveryMutationDifferential checks a deterministic
+// one-byte neighborhood around every pinned JavaScript witness. A compact
+// result can publish only when its complete tree matches C. Unsupported
+// mutations must return to production through the existing fallback route.
+func TestCompactT3JavaScriptRecoveryMutationDifferential(t *testing.T) {
+	manifest := loadCompactT3WitnessManifest(t)
+	cLanguage, err := ParityCLanguage("javascript")
+	if err != nil {
+		t.Fatalf("load C oracle: %v", err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLanguage); err != nil {
+		t.Fatalf("set C oracle language: %v", err)
+	}
+	goLanguage := grammars.JavascriptLanguage()
+	if !goLanguage.CompactStrategy2ErrorRegionCertified || !goLanguage.CompactMissingTokenInsertionCertified {
+		t.Fatal("the exact JavaScript artifact lacks compact recovery certification")
+	}
+	compactParser := gotreesitter.NewParser(goLanguage)
+	compactParser.SetAdmissionCandidateRoute(true)
+	s3OnlyLanguage := *goLanguage
+	s3OnlyLanguage.CompactMissingTokenInsertionCertified = false
+	s3OnlyParser := gotreesitter.NewParser(&s3OnlyLanguage)
+	s3OnlyParser.SetAdmissionCandidateRoute(true)
+
+	var cases, routed, fallback, s3OnlyRouted, missingExpanded, missingContracted int
+	check := func(witnessID, mutation string, source []byte) {
+		t.Helper()
+		cases++
+		cTree := cParser.Parse(source, nil)
+		if cTree == nil || cTree.RootNode() == nil {
+			t.Fatalf("%s/%s: C oracle returned no root", witnessID, mutation)
+		}
+
+		routedBefore, fallbackBefore := gotreesitter.AdmissionCandidateCounters()
+		compactTree, parseErr := compactParser.Parse(source)
+		if parseErr != nil {
+			t.Fatalf("%s/%s: compact parse: %v", witnessID, mutation, parseErr)
+		}
+		if compactTree == nil || compactTree.RootNode() == nil {
+			t.Fatalf("%s/%s: compact parse returned no root", witnessID, mutation)
+		}
+		routedAfter, fallbackAfter := gotreesitter.AdmissionCandidateCounters()
+		compactRouted := false
+		switch {
+		case routedAfter-routedBefore == 1 && fallbackAfter-fallbackBefore == 0:
+			compactRouted = true
+			routed++
+			if divergences := compactT3StructuralDivergences(compactTree.RootNode(), goLanguage, cTree.RootNode()); len(divergences) != 0 {
+				t.Fatalf("%s/%s: routed compact tree diverges from C at %d node(s); first: %s; source=%q",
+					witnessID, mutation, len(divergences), compactT3FormatDivergence(divergences[0]), source)
+			}
+		case routedAfter-routedBefore == 0 && fallbackAfter-fallbackBefore == 1:
+			fallback++
+		default:
+			t.Fatalf("%s/%s: route counters delta=%d/%d, want 1/0 or 0/1",
+				witnessID, mutation, routedAfter-routedBefore, fallbackAfter-fallbackBefore)
+		}
+
+		s3RoutedBefore, s3FallbackBefore := gotreesitter.AdmissionCandidateCounters()
+		s3Tree, s3Err := s3OnlyParser.Parse(source)
+		if s3Err != nil {
+			t.Fatalf("%s/%s: S3-only compact parse: %v", witnessID, mutation, s3Err)
+		}
+		if s3Tree == nil || s3Tree.RootNode() == nil {
+			t.Fatalf("%s/%s: S3-only compact parse returned no root", witnessID, mutation)
+		}
+		s3RoutedAfter, s3FallbackAfter := gotreesitter.AdmissionCandidateCounters()
+		s3Routed := false
+		switch {
+		case s3RoutedAfter-s3RoutedBefore == 1 && s3FallbackAfter-s3FallbackBefore == 0:
+			s3Routed = true
+			s3OnlyRouted++
+			if divergences := compactT3StructuralDivergences(s3Tree.RootNode(), &s3OnlyLanguage, cTree.RootNode()); len(divergences) != 0 {
+				t.Fatalf("%s/%s: S3-only tree diverges from C at %d node(s); first: %s; source=%q",
+					witnessID, mutation, len(divergences), compactT3FormatDivergence(divergences[0]), source)
+			}
+		case s3RoutedAfter-s3RoutedBefore == 0 && s3FallbackAfter-s3FallbackBefore == 1:
+		default:
+			t.Fatalf("%s/%s: S3-only route counters delta=%d/%d, want 1/0 or 0/1",
+				witnessID, mutation, s3RoutedAfter-s3RoutedBefore, s3FallbackAfter-s3FallbackBefore)
+		}
+		if compactRouted && !s3Routed {
+			missingExpanded++
+		}
+		if !compactRouted && s3Routed {
+			missingContracted++
+		}
+
+		s3Tree.Release()
+		compactTree.Release()
+		cTree.Close()
+	}
+
+	replacements := []byte{'?', '#', ')', '}'}
+	insertions := []byte{'?', '#'}
+	for _, witness := range compactT3WitnessesForLanguage(manifest, "javascript") {
+		source := []byte(witness.SourceUTF8)
+		check(witness.ID, "original", source)
+		for offset := range source {
+			deleted := make([]byte, 0, len(source)-1)
+			deleted = append(deleted, source[:offset]...)
+			deleted = append(deleted, source[offset+1:]...)
+			check(witness.ID, fmt.Sprintf("delete-%d", offset), deleted)
+
+			for _, replacement := range replacements {
+				if source[offset] == replacement {
+					continue
+				}
+				replaced := append([]byte(nil), source...)
+				replaced[offset] = replacement
+				check(witness.ID, fmt.Sprintf("replace-%d-%02x", offset, replacement), replaced)
+			}
+		}
+		for offset := 0; offset <= len(source); offset++ {
+			for _, insertion := range insertions {
+				inserted := make([]byte, 0, len(source)+1)
+				inserted = append(inserted, source[:offset]...)
+				inserted = append(inserted, insertion)
+				inserted = append(inserted, source[offset:]...)
+				check(witness.ID, fmt.Sprintf("insert-%d-%02x", offset, insertion), inserted)
+			}
+		}
+	}
+	if routed == 0 || fallback == 0 {
+		t.Fatalf("mutation differential lacked both route outcomes: cases=%d routed=%d fallback=%d", cases, routed, fallback)
+	}
+	if missingExpanded != 0 || missingContracted != 0 {
+		t.Fatalf("T3 neighborhood crossed the S5 boundary: expanded=%d contracted=%d", missingExpanded, missingContracted)
+	}
+	t.Logf("JavaScript compact recovery mutation differential: cases=%d routed=%d fallback=%d S3-only=%d missing-expanded=%d missing-contracted=%d",
+		cases, routed, fallback, s3OnlyRouted, missingExpanded, missingContracted)
 }
 
 func loadCompactT3WitnessManifest(t *testing.T) compactT3WitnessManifest {

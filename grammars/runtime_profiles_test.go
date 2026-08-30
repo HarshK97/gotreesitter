@@ -59,10 +59,29 @@ func TestHTMLProfileCertifiesCompleteCompactRecovery(t *testing.T) {
 	if !lang.CompactStrategy2ErrorRegionCertified || !lang.CompactMissingTokenInsertionCertified {
 		t.Fatal("the HTML profile did not attach both compact recovery capabilities")
 	}
+	if lang.CompactRecoveryPlainFirstCertified {
+		t.Fatal("the HTML profile unexpectedly enabled plain-first recovery")
+	}
 	uncertified := &gotreesitter.Language{}
 	if attachBuiltinLanguageRuntimeProfile("html", sha256.Sum256([]byte("wrong html blob")), uncertified) ||
-		uncertified.CompactStrategy2ErrorRegionCertified || uncertified.CompactMissingTokenInsertionCertified {
+		uncertified.CompactStrategy2ErrorRegionCertified || uncertified.CompactMissingTokenInsertionCertified ||
+		uncertified.CompactRecoveryPlainFirstCertified {
 		t.Fatal("a mismatched HTML blob received compact recovery certification")
+	}
+}
+
+func TestJavaScriptProfileCertifiesCompactRecoveryFrontier(t *testing.T) {
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+	lang := JavascriptLanguage()
+	if !lang.CompactStrategy2ErrorRegionCertified || !lang.CompactMissingTokenInsertionCertified ||
+		!lang.CompactRecoveryPlainFirstCertified {
+		t.Fatal("the JavaScript profile did not attach its compact recovery capabilities")
+	}
+	uncertified := &gotreesitter.Language{}
+	if attachBuiltinLanguageRuntimeProfile("javascript", sha256.Sum256([]byte("wrong javascript blob")), uncertified) ||
+		uncertified.CompactStrategy2ErrorRegionCertified || uncertified.CompactMissingTokenInsertionCertified ||
+		uncertified.CompactRecoveryPlainFirstCertified {
+		t.Fatal("a mismatched JavaScript blob received compact recovery certification")
 	}
 }
 
@@ -134,6 +153,9 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	}
 	if lang.ExactStackNodeEquivalenceCertified {
 		t.Fatal("unknown runtime profile enabled exact stack-node equivalence")
+	}
+	if lang.CompactRecoveryPlainFirstCertified {
+		t.Fatal("unknown runtime profile enabled compact plain-first recovery")
 	}
 	if lang.LineContinuationEscapeByte != 0 {
 		t.Fatalf("unknown runtime profile set a line-continuation escape byte: %q", lang.LineContinuationEscapeByte)
