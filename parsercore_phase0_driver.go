@@ -92,6 +92,9 @@ type DiagnosticParserCorePrefixOptions struct {
 	// binds it only from an exact grammar-artifact capability.
 	allowCompactAcceptanceStructuralElection bool
 	allowConvergedSplitDropArtifact          bool
+	// captureLexerSkippedPrefixProvenance preserves exact DFA evidence only
+	// for an artifact that consumes it during accepted-tree tiling.
+	captureLexerSkippedPrefixProvenance bool
 	// allowCompactStrategy2ErrorRegion permits the generic scheduler to
 	// attempt native S3 recovery (error-region absorb and condense-resume)
 	// at a true no-table-action point instead of declining. Set only from
@@ -186,6 +189,17 @@ type DiagnosticParserCorePrefixOptions struct {
 	materializationSource                 []byte
 	materializationForceReplayParseStates bool
 	materializationContextSet             bool
+}
+
+func diagnosticParserCoreLexerSkippedPrefixLength(token Token, capture bool) uint16 {
+	if !capture || !token.lexerSkippedPrefix || token.lexerSkippedPrefixStart >= token.StartByte {
+		return 0
+	}
+	length := token.StartByte - token.lexerSkippedPrefixStart
+	if length > math.MaxUint16 {
+		return 0
+	}
+	return uint16(length)
 }
 
 type compactEOFRecoveryAdmissionState uint8
@@ -1665,6 +1679,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 	classified core.ClassifiedBoundary,
 	branchOrder uint64,
 	nextCleanPathLineage *uint16,
+	captureLexerSkippedPrefixProvenance bool,
 	allowRepetitionFork bool,
 	collectReceipts bool,
 	scratch *diagnosticParserCoreConflictScratch,
@@ -1719,6 +1734,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			scratch.actionOutputs, scratch.reductionOutputs, applyErr = applyParserCoreConflictActionInto(
 				scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, owner, classified, token,
 				action, ordinal, core.ForkOrder{Present: true, Value: trialOrder}, nextCleanPathLineage,
+				captureLexerSkippedPrefixProvenance,
 			)
 			if applyErr != nil {
 				return applyErr
@@ -1771,6 +1787,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 		scratch.actionOutputs, scratch.reductionOutputs, applyErr = applyParserCoreConflictActionInto(
 			scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, owner, classified, token,
 			primaryAction, 0, core.ForkOrder{}, nextCleanPathLineage,
+			captureLexerSkippedPrefixProvenance,
 		)
 		if applyErr != nil {
 			return applyErr
@@ -4553,8 +4570,9 @@ type diagnosticParserCoreAcceptedLeafSpan struct {
 }
 
 type diagnosticParserCoreAcceptedLeafCoverageScratch struct {
-	spans                []diagnosticParserCoreAcceptedLeafSpan
-	authenticatedAliases []*Node
+	spans                           []diagnosticParserCoreAcceptedLeafSpan
+	authenticatedAliases            []*Node
+	leadingLexerSkippedPrefixStarts []uint32
 }
 
 func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) reset() {
@@ -4573,6 +4591,78 @@ func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) reset() {
 		clear(scratch.authenticatedAliases)
 		scratch.authenticatedAliases = scratch.authenticatedAliases[:0]
 	}
+	if cap(scratch.leadingLexerSkippedPrefixStarts) > parserCoreMaxRetainedAcceptedLeafSpans {
+		scratch.leadingLexerSkippedPrefixStarts = nil
+	} else {
+		clear(scratch.leadingLexerSkippedPrefixStarts)
+		scratch.leadingLexerSkippedPrefixStarts = scratch.leadingLexerSkippedPrefixStarts[:0]
+	}
+}
+
+func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) prepareLexerSkippedPrefixes(subtrees int) {
+	if scratch == nil || subtrees <= 0 {
+		return
+	}
+	if cap(scratch.leadingLexerSkippedPrefixStarts) < subtrees+1 {
+		scratch.leadingLexerSkippedPrefixStarts = make([]uint32, subtrees+1)
+		return
+	}
+	scratch.leadingLexerSkippedPrefixStarts = scratch.leadingLexerSkippedPrefixStarts[:subtrees+1]
+	clear(scratch.leadingLexerSkippedPrefixStarts)
+}
+
+func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) recordLexerSkippedPrefix(
+	id core.SubtreeID,
+	view core.MaterializationSubtreeView,
+) {
+	if scratch == nil || !view.Terminal || !view.LexerSkippedPrefix ||
+		uint64(id) >= uint64(len(scratch.leadingLexerSkippedPrefixStarts)) {
+		return
+	}
+	scratch.leadingLexerSkippedPrefixStarts[id] = view.LexerSkippedPrefixStart + 1
+}
+
+func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) propagateLeadingLexerSkippedPrefix(
+	id core.SubtreeID,
+	startByte uint32,
+	children []core.SubtreeID,
+	nodesByID []*Node,
+) {
+	if scratch == nil || uint64(id) >= uint64(len(scratch.leadingLexerSkippedPrefixStarts)) {
+		return
+	}
+	for _, childID := range children {
+		if uint64(childID) >= uint64(len(nodesByID)) || uint64(childID) >= uint64(len(scratch.leadingLexerSkippedPrefixStarts)) {
+			return
+		}
+		child := nodesByID[childID]
+		if child == nil || child.startByte > startByte {
+			return
+		}
+		if child.startByte < startByte {
+			continue
+		}
+		if encoded := scratch.leadingLexerSkippedPrefixStarts[childID]; encoded != 0 {
+			scratch.leadingLexerSkippedPrefixStarts[id] = encoded
+			return
+		}
+		if child.endByte > startByte {
+			return
+		}
+	}
+}
+
+func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) childHasLexerSkippedPrefix(
+	id core.SubtreeID,
+	startByte, endByte uint32,
+	nodesByID []*Node,
+) bool {
+	if scratch == nil || startByte >= endByte || uint64(id) >= uint64(len(scratch.leadingLexerSkippedPrefixStarts)) ||
+		uint64(id) >= uint64(len(nodesByID)) || nodesByID[id] == nil || nodesByID[id].startByte != endByte {
+		return false
+	}
+	encoded := scratch.leadingLexerSkippedPrefixStarts[id]
+	return encoded != 0 && encoded-1 == startByte
 }
 
 func (scratch *diagnosticParserCoreAcceptedLeafCoverageScratch) append(
@@ -5248,19 +5338,39 @@ func diagnosticParserCoreAcceptedRootTrailingErrorExtraGap(root *Node) bool {
 // root, against a different boundary (the whole source, not a reduce's own
 // declared span) and is unaffected by this one.
 //
-// O(children) per call and allocation-free: entries are the slice
-// materializeVisit already built this call from already-materialized nodes
-// (nodesByID lookups done moments earlier); this only reads existing
-// uint32 spans and does not walk further into any child's own subtree.
+// The common path is O(children) and allocation-free. A certified non-trivia
+// gap adds one indexed lookup for the aligned raw child. The lookup admits only
+// an exact prefix whose start equals the prior coverage frontier and whose
+// terminal lineage starts at the next child boundary.
 func diagnosticParserCoreReduceChildrenTilingGap(startByte, endByte uint32, entries []stackEntry, source []byte) (gapStart, gapEnd uint32, gapped bool) {
+	return diagnosticParserCoreReduceChildrenTilingGapWithLexerProvenance(
+		startByte, endByte, entries, nil, source, nil, nil, false,
+	)
+}
+
+func diagnosticParserCoreReduceChildrenTilingGapWithLexerProvenance(
+	startByte, endByte uint32,
+	entries []stackEntry,
+	childIDs []core.SubtreeID,
+	source []byte,
+	coverage *diagnosticParserCoreAcceptedLeafCoverageScratch,
+	nodesByID []*Node,
+	allowLexerSkippedPrefix bool,
+) (gapStart, gapEnd uint32, gapped bool) {
 	lastEnd := startByte
-	for _, entry := range entries {
+	for index, entry := range entries {
 		child := stackEntryNode(entry)
 		if child == nil {
 			continue
 		}
 		if child.startByte > lastEnd && !diagnosticParserCoreGapIsTolerated(source[lastEnd:child.startByte]) {
-			return lastEnd, child.startByte, true
+			var childID core.SubtreeID
+			if index < len(childIDs) {
+				childID = childIDs[index]
+			}
+			if !allowLexerSkippedPrefix || !coverage.childHasLexerSkippedPrefix(childID, lastEnd, child.startByte, nodesByID) {
+				return lastEnd, child.startByte, true
+			}
 		}
 		if child.endByte > lastEnd {
 			lastEnd = child.endByte
@@ -5297,13 +5407,11 @@ func diagnosticParserCoreReduceChildrenTilingGap(startByte, endByte uint32, entr
 // hcl (12 instances) and doxygen (22 instances) -- both a different
 // mechanism from this class-e closure, neither touched by this predicate's
 // removal, and neither in scope here; they need their own adjudication,
-// same as the haskell residual. Retiring this predicate moves jsdoc from PASS to
-// FALLBACK on the 206-language admission scorecard (its own gap now
-// correctly declines at accepted-leaf-tiling-gap below); doxygen does not
-// regress -- verified directly, its gap sits at the derivation root
-// (isDerivationRootReduce, materializeDiagnosticParserCoreAcceptedSelection's
-// reduce visitor below), a position this predicate's retirement does not
-// touch.
+// same as the haskell residual. Retiring this predicate first moved JSDoc from
+// PASS to FALLBACK. The later exact-artifact route restores that case through
+// lexer skipped-prefix provenance in the wrapper above. This source-byte
+// predicate remains retired. Doxygen does not regress: its gap sits at the
+// derivation root, which this predicate does not check.
 //
 // A companion dispatch-time byte-continuity guard in dispatchPassActive
 // (declining before any shift crosses an unexplained gap, one site upstream
@@ -5494,8 +5602,11 @@ func materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization(compac
 		scratch.acceptedLeaves.reset()
 		acceptedLeaves = &scratch.acceptedLeaves
 	}
-	if !allowErrorRoot {
+	allowLexerSkippedPrefix := parser.language.CompactLexerSkippedPrefixTilingCertified
+	if !allowErrorRoot && !allowLexerSkippedPrefix {
 		acceptedLeaves = nil
+	} else if allowLexerSkippedPrefix {
+		acceptedLeaves.prepareLexerSkippedPrefixes(int(stats.Subtrees))
 	}
 	recoveryTerminalAlias := Symbol(0)
 	if scratch != nil && scratch.recoveryTerminalAliasCertified {
@@ -5507,12 +5618,17 @@ func materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization(compac
 				return errors.New("parser-core phase zero: compact subtree extent is outside source")
 			}
 			if acceptedLeaves != nil && view.Terminal {
-				hidden := !parser.isVisibleSymbol(Symbol(view.Symbol))
-				if view.Symbol == core.RecoveryErrorSymbol {
-					hidden = false
+				if allowLexerSkippedPrefix {
+					acceptedLeaves.recordLexerSkippedPrefix(id, view)
 				}
-				if err := acceptedLeaves.append(id, view, uint32(len(source)), hidden); err != nil {
-					return err
+				if allowErrorRoot {
+					hidden := !parser.isVisibleSymbol(Symbol(view.Symbol))
+					if view.Symbol == core.RecoveryErrorSymbol {
+						hidden = false
+					}
+					if err := acceptedLeaves.append(id, view, uint32(len(source)), hidden); err != nil {
+						return err
+					}
 				}
 			}
 			named := parser.isNamedSymbol(Symbol(view.Symbol))
@@ -5608,7 +5724,12 @@ func materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization(compac
 			// grammar root. Every internal reduce still passes the ordinary tiling
 			// check before materialization can publish it.
 			isDerivationRootReduce := parser.hasRootSymbol && Symbol(view.Symbol) == parser.rootSymbol
-			if gapStart, gapEnd, gapped := diagnosticParserCoreReduceChildrenTilingGap(view.StartByte, view.EndByte, entries, source); !isDerivationRootReduce && gapped {
+			if allowLexerSkippedPrefix {
+				acceptedLeaves.propagateLeadingLexerSkippedPrefix(id, view.StartByte, view.Children, nodesByID)
+			}
+			if gapStart, gapEnd, gapped := diagnosticParserCoreReduceChildrenTilingGapWithLexerProvenance(
+				view.StartByte, view.EndByte, entries, view.Children, source, acceptedLeaves, nodesByID, allowLexerSkippedPrefix,
+			); !isDerivationRootReduce && gapped {
 				return &diagnosticParserCoreDecline{
 					boundary: DiagnosticParserCoreAccept,
 					detail: fmt.Sprintf(
@@ -9416,6 +9537,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 	execution, err := executeDiagnosticParserCoreGenericConflictDetailed(
 		s.compact, owner, s.headers[cell.headerIndex], cell.headerIndex, cell.dispatchToken(s.token), cell.boundary,
 		s.branchOrder, &s.nextCleanPathLineage,
+		s.options.captureLexerSkippedPrefixProvenance,
 		cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFork,
 		s.fullReceipts(), &s.conflictScratch,
 	)
@@ -9623,6 +9745,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 		token := cells[0].dispatchToken(s.token)
 		heads, err := s.compact.ShiftOrdinaryClassifiedCohortWithLiveCondenseCandidatesOwned(owner, nil, s.classifiedBoundaries, core.Token{
 			Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, External: token.ExternalScannerToken,
+			LexerSkippedPrefixLength: diagnosticParserCoreLexerSkippedPrefixLength(token, s.options.captureLexerSkippedPrefixProvenance),
 		})
 		if err != nil {
 			return err
@@ -9645,6 +9768,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 			token := cell.dispatchToken(s.token)
 			shifted := core.Token{
 				Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, External: token.ExternalScannerToken,
+				LexerSkippedPrefixLength: diagnosticParserCoreLexerSkippedPrefixLength(token, s.options.captureLexerSkippedPrefixProvenance),
 			}
 			head, err := s.compact.ShiftClassifiedWithLiveCondenseCandidatesOwned(
 				owner, s.collectCondenseCandidates(cell.headerIndex),
@@ -9735,6 +9859,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 					core.Token{
 						Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte,
 						Extra: true, External: token.ExternalScannerToken,
+						LexerSkippedPrefixLength: diagnosticParserCoreLexerSkippedPrefixLength(token, s.options.captureLexerSkippedPrefixProvenance),
 					},
 					core.ForkOrder{},
 				)
@@ -9753,6 +9878,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 			heads, shiftErr := s.compact.ShiftExtraClassifiedCohortWithLiveCondenseCandidatesOwned(owner, nil, s.classifiedBoundaries, core.Token{
 				Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte,
 				Extra: true, External: token.ExternalScannerToken,
+				LexerSkippedPrefixLength: diagnosticParserCoreLexerSkippedPrefixLength(token, s.options.captureLexerSkippedPrefixProvenance),
 			})
 			if shiftErr != nil {
 				return shiftErr
@@ -10282,7 +10408,10 @@ func authenticatedParserCoreGoLanguage(scanner ExternalScanner) (*Language, erro
 func applyParserCorePrefixAction(compact *core.Core, head core.Head, token Token, action core.Action, ordinal int, fork core.ForkOrder) ([]core.Head, error) {
 	switch action.Type {
 	case core.ActionShift:
-		out, err := compact.Shift(head, core.Symbol(token.Symbol), ordinal, core.Token{Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, Extra: action.Extra, External: token.ExternalScannerToken}, fork)
+		out, err := compact.Shift(head, core.Symbol(token.Symbol), ordinal, core.Token{
+			Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte,
+			Extra: action.Extra, External: token.ExternalScannerToken,
+		}, fork)
 		return []core.Head{out}, err
 	case core.ActionReduce:
 		return compact.Reduce(head, core.Symbol(token.Symbol), ordinal, fork)
@@ -10306,11 +10435,16 @@ func applyParserCoreConflictActionInto(
 	ordinal int,
 	fork core.ForkOrder,
 	nextCleanPathLineage *uint16,
+	captureLexerSkippedPrefixProvenance bool,
 ) ([]diagnosticParserCoreActionOutput, []core.ReductionOutput, error) {
 	if action.Type != core.ActionReduce {
 		switch action.Type {
 		case core.ActionShift:
-			head, err := compact.ShiftClassifiedOwned(owner, classified, ordinal, core.Token{Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, Extra: action.Extra, External: token.ExternalScannerToken}, fork)
+			head, err := compact.ShiftClassifiedOwned(owner, classified, ordinal, core.Token{
+				Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte,
+				Extra: action.Extra, External: token.ExternalScannerToken,
+				LexerSkippedPrefixLength: diagnosticParserCoreLexerSkippedPrefixLength(token, captureLexerSkippedPrefixProvenance),
+			}, fork)
 			if err != nil {
 				return nil, reductionDst, err
 			}

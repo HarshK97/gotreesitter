@@ -779,6 +779,13 @@ type Language struct {
 	// Custom, adapted, and stale artifacts retain the false default.
 	CompactAcceptanceStructuralElectionCertified bool
 
+	// CompactLexerSkippedPrefixTilingCertified permits an internal compact
+	// reduction gap when the next accepted terminal carries exact DFA evidence
+	// for the complete skipped prefix. Exact built-in profiles set this only
+	// after locked-C parity proves the result for that grammar artifact.
+	// Custom, adapted, and stale artifacts retain the false default.
+	CompactLexerSkippedPrefixTilingCertified bool
+
 	// ExactStackNodeEquivalenceCertified preserves deep stack-node alternatives
 	// until generic result selection. Exact built-in profiles set this only when
 	// bounded equivalence can merge parity-relevant shapes. Custom, adapted, and

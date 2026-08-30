@@ -16,6 +16,7 @@ const (
 	jsdocProducerControl       = "/**\n * @param {string} name\n */\n"
 	jsdocProducerTriggerSHA256 = "8a1683a43035994f3abf03f2f9556b96514a745018c5373ff77d3127fb27d201"
 	jsdocProducerControlSHA256 = "0f4dbe6ca5d62b8c033c09ac26689c787a66298540c46b3af7a9760a7240b5ce"
+	jsdocUncertifiedGapRoute   = "fallback:compact route declined at accept_without_materialization: accepted-leaf-tiling-gap: compact subtree symbol=38 span=7..48 has an unaccounted byte range 27..31 not covered by any child"
 )
 
 func TestJsdocLexerSkipProvenanceRoutes(t *testing.T) {
@@ -33,7 +34,7 @@ func TestJsdocLexerSkipProvenanceRoutes(t *testing.T) {
 			name:             "multi_tag_trigger",
 			source:           []byte(jsdocProducerTrigger),
 			sha256:           jsdocProducerTriggerSHA256,
-			compactRoute:     "fallback:compact route declined at accept_without_materialization: accepted-leaf-tiling-gap: compact subtree symbol=38 span=7..48 has an unaccounted byte range 27..31 not covered by any child",
+			compactRoute:     "direct",
 			forestRoute:      "fallback:51:22:dead_end",
 			incrementalRoute: "fallback:external_scanner_unsupported",
 		},
@@ -81,6 +82,18 @@ func TestJsdocLexerSkipProvenanceRoutes(t *testing.T) {
 				t.Fatalf("compact route=%q, want %q", compactRoute, test.compactRoute)
 			}
 			t.Logf("compact route=%s digest=%s", compactRoute, compactDigest)
+			if test.name == "multi_tag_trigger" {
+				uncertified, err := LoadLanguage("jsdoc", BlobByName("jsdoc"))
+				if err != nil {
+					t.Fatalf("load uncertified JSDoc language: %v", err)
+				}
+				uncertified.CompactLexerSkippedPrefixTilingCertified = false
+				uncertifiedRoute, uncertifiedDigest := jsdocCompactRoute(t, uncertified, test.source, productionDigest)
+				if uncertifiedRoute != jsdocUncertifiedGapRoute {
+					t.Fatalf("uncertified compact route=%q, want %q", uncertifiedRoute, jsdocUncertifiedGapRoute)
+				}
+				t.Logf("uncertified compact route=%s digest=%s", uncertifiedRoute, uncertifiedDigest)
+			}
 
 			forestRoute, forestDigest := jsdocForestRoute(t, language, test.source, productionDigest)
 			if forestRoute != test.forestRoute {

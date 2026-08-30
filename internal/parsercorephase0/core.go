@@ -1008,6 +1008,14 @@ type externalPayloadProvenance struct {
 	end     CheckpointID
 }
 
+// lexerSkippedPrefixProvenance stores the exact start of one prefix that the
+// internal DFA skipped before it produced a terminal. Sparse storage keeps the
+// 44-byte subtree record unchanged for terminals that have no skipped prefix.
+type lexerSkippedPrefixProvenance struct {
+	payload SubtreeID
+	start   uint32
+}
+
 type subtreeExternalProvenanceState uint8
 
 const (
@@ -1041,6 +1049,9 @@ type Token struct {
 	EndByte   uint32
 	Extra     bool
 	External  bool
+	// LexerSkippedPrefixLength is the exact internal-DFA prefix length.
+	// Zero means that no bounded proof accompanies this terminal.
+	LexerSkippedPrefixLength uint16
 }
 
 // OrdinaryCohortShiftInput identifies one distinct scheduler head and its
@@ -1098,6 +1109,10 @@ type SubtreeView struct {
 	// Missing mirrors subtreeRecord.missing: a recovery-inserted zero-width
 	// terminal (C ts_subtree_missing).
 	Missing bool
+	// LexerSkippedPrefix proves that the internal DFA skipped the byte range
+	// [LexerSkippedPrefixStart, StartByte) before it produced this terminal.
+	LexerSkippedPrefix      bool
+	LexerSkippedPrefixStart uint32
 }
 
 // MaterializationSubtreeView is a callback-scoped borrowed view of one compact
@@ -1123,6 +1138,10 @@ type MaterializationSubtreeView struct {
 	// terminal (C ts_subtree_missing). Threaded to the public materializer so
 	// it can set the public node's own missing and has-error bits.
 	Missing bool
+	// LexerSkippedPrefix is exact terminal provenance from the internal DFA.
+	// It is false for reductions, external tokens, and synthetic terminals.
+	LexerSkippedPrefix      bool
+	LexerSkippedPrefixStart uint32
 }
 
 // Stats reports physical storage separately from semantic path counts. It is
@@ -1193,17 +1212,18 @@ type Core struct {
 	dropCohortLinkRefIndexes []uint32
 	dropCohortLinkRefJournal []dropCohortLinkRefMutation
 
-	subtrees           []subtreeRecord
-	externalProvenance []externalPayloadProvenance
-	children           []SubtreeID
-	fields             []FieldMapEntry
-	aliases            []Symbol
-	frontier           uint64
-	checkpoint         CheckpointID
-	checkpoints        checkpointInterner
-	boundaries         boundaryIndex
-	boundaryJournal    []boundaryMutation
-	nodeLineageJournal []nodeLineageMutation
+	subtrees             []subtreeRecord
+	externalProvenance   []externalPayloadProvenance
+	lexerSkippedPrefixes []lexerSkippedPrefixProvenance
+	children             []SubtreeID
+	fields               []FieldMapEntry
+	aliases              []Symbol
+	frontier             uint64
+	checkpoint           CheckpointID
+	checkpoints          checkpointInterner
+	boundaries           boundaryIndex
+	boundaryJournal      []boundaryMutation
+	nodeLineageJournal   []nodeLineageMutation
 	// alternativeSpillArena backs every AlternativeSet beyond
 	// alternativeSetInlineCapacity members, shared by nodeLineages and every
 	// diagnosticParserCoreHeader.altSet (parsercore_phase0_driver.go). It
@@ -1364,6 +1384,7 @@ type diagnosticOptions struct {
 
 type checkpoint struct {
 	nodes, nodeLineages, nodeCheckpoints, links, subtrees, externalProvenance int
+	lexerSkippedPrefixes                                                      int
 	children, fields, aliases                                                 int
 	dropCohortLinkRefIndexes                                                  int
 	dropCohortLinkRefJournal                                                  int
@@ -1479,9 +1500,10 @@ func (c *Core) markInto(mark *checkpoint) {
 	*mark = checkpoint{
 		nodes: len(c.nodes), nodeLineages: len(c.nodeLineages),
 		links: len(c.links), subtrees: len(c.subtrees),
-		nodeCheckpoints:    len(c.nodeCheckpoints),
-		externalProvenance: len(c.externalProvenance),
-		children:           len(c.children), fields: len(c.fields), aliases: len(c.aliases),
+		nodeCheckpoints:      len(c.nodeCheckpoints),
+		externalProvenance:   len(c.externalProvenance),
+		lexerSkippedPrefixes: len(c.lexerSkippedPrefixes),
+		children:             len(c.children), fields: len(c.fields), aliases: len(c.aliases),
 
 		dropCohortLinkRefIndexes: len(c.dropCohortLinkRefIndexes),
 		dropCohortLinkRefJournal: len(c.dropCohortLinkRefJournal),
@@ -1589,6 +1611,7 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 	c.links = c.links[:mark.links]
 	c.subtrees = c.subtrees[:mark.subtrees]
 	c.externalProvenance = c.externalProvenance[:mark.externalProvenance]
+	c.lexerSkippedPrefixes = c.lexerSkippedPrefixes[:mark.lexerSkippedPrefixes]
 	c.children = c.children[:mark.children]
 	c.fields = c.fields[:mark.fields]
 	c.aliases = c.aliases[:mark.aliases]
@@ -2061,6 +2084,7 @@ func (c *Core) Reset() error {
 	c.dropCohortLinkRefIndexes = c.dropCohortLinkRefIndexes[:0]
 	c.subtrees = c.subtrees[:0]
 	c.externalProvenance = c.externalProvenance[:0]
+	c.lexerSkippedPrefixes = c.lexerSkippedPrefixes[:0]
 	c.children = c.children[:0]
 	c.fields = c.fields[:0]
 	c.aliases = c.aliases[:0]
@@ -2634,7 +2658,7 @@ func (c *Core) appendDiagnosticPayload(head Head, state StateID, token Token, me
 	payload, err := c.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: token.Symbol, startByte: token.StartByte, endByte: token.EndByte,
 		extra: token.Extra, external: token.External, terminal: true,
-	})
+	}, token.LexerSkippedPrefixLength)
 	if err != nil {
 		return Head{}, err
 	}
@@ -5312,6 +5336,7 @@ func (c *Core) Subtree(id SubtreeID) (SubtreeView, error) {
 		StartByte: r.startByte, EndByte: r.endByte, Extra: r.extra, External: r.external, Terminal: r.terminal,
 		Missing: r.missing,
 	}
+	view.LexerSkippedPrefixStart, view.LexerSkippedPrefix = c.lexerSkippedPrefix(id)
 	view.Children = append(view.Children, c.children[r.firstChild:r.firstChild+r.childCount]...)
 	view.Fields = append(view.Fields, c.fields[r.firstField:r.firstField+r.fieldCount]...)
 	view.Aliases = append(view.Aliases, c.aliases[r.firstAlias:r.firstAlias+r.aliasCount]...)
@@ -5439,7 +5464,7 @@ func (c *Core) MaterializationView(id SubtreeID) (MaterializationSubtreeView, er
 	if err != nil {
 		return MaterializationSubtreeView{}, err
 	}
-	return MaterializationSubtreeView{
+	view := MaterializationSubtreeView{
 		Symbol:            record.symbol,
 		ProductionID:      record.productionID,
 		DynamicPrecedence: record.dynamicPrecedence,
@@ -5451,7 +5476,9 @@ func (c *Core) MaterializationView(id SubtreeID) (MaterializationSubtreeView, er
 		Terminal:          record.terminal,
 		Fragile:           record.fragile,
 		Missing:           record.missing,
-	}, nil
+	}
+	view.LexerSkippedPrefixStart, view.LexerSkippedPrefix = c.lexerSkippedPrefix(id)
+	return view, nil
 }
 
 // SubtreeArenaLen returns the number of subtree records currently allocated,
@@ -5679,10 +5706,21 @@ func (c *Core) appendSubtree(r subtreeRecord, children []SubtreeID, fields []Fie
 	return c.appendSubtreeRecord(r, children, fields, aliases)
 }
 
-func (c *Core) appendAuthenticatedTerminal(r subtreeRecord) (SubtreeID, error) {
+func (c *Core) appendAuthenticatedTerminal(
+	r subtreeRecord,
+	lexerSkippedPrefixLength uint16,
+) (SubtreeID, error) {
 	// The AST provenance ratchet requires every caller to pass a subtreeRecord
 	// literal with terminal:true. Publish the terminal once. Then append its
-	// sparse scanner proof when the current election supplied one.
+	// sparse scanner and lexer proofs when the current election supplied them.
+	if !r.terminal {
+		return 0, errors.New("parser-core phase zero: authenticated terminal is not terminal")
+	}
+	if lexerSkippedPrefixLength != 0 {
+		if r.external || uint32(lexerSkippedPrefixLength) > r.startByte {
+			return 0, errors.New("parser-core phase zero: invalid lexer skipped-prefix provenance")
+		}
+	}
 	payload, err := c.appendSubtreeRecord(r, nil, nil, nil)
 	if err != nil {
 		return 0, err
@@ -5697,7 +5735,29 @@ func (c *Core) appendAuthenticatedTerminal(r subtreeRecord) (SubtreeID, error) {
 			c.subtrees[payload-1].externalProvenanceState = subtreeExternalProvenanceExactHasExternal
 		}
 	}
+	if lexerSkippedPrefixLength != 0 {
+		c.lexerSkippedPrefixes = append(c.lexerSkippedPrefixes, lexerSkippedPrefixProvenance{
+			payload: payload,
+			start:   r.startByte - uint32(lexerSkippedPrefixLength),
+		})
+	}
 	return payload, nil
+}
+
+func (c *Core) lexerSkippedPrefix(payload SubtreeID) (uint32, bool) {
+	low, high := 0, len(c.lexerSkippedPrefixes)
+	for low < high {
+		mid := low + (high-low)/2
+		if c.lexerSkippedPrefixes[mid].payload < payload {
+			low = mid + 1
+		} else {
+			high = mid
+		}
+	}
+	if low >= len(c.lexerSkippedPrefixes) || c.lexerSkippedPrefixes[low].payload != payload {
+		return 0, false
+	}
+	return c.lexerSkippedPrefixes[low].start, true
 }
 
 func (c *Core) appendSubtreeRecord(r subtreeRecord, children []SubtreeID, fields []FieldMapEntry, aliases []Symbol) (SubtreeID, error) {

@@ -2698,6 +2698,7 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 		"link":                   reflect.TypeFor[linkRecord](),
 		"subtree":                reflect.TypeFor[subtreeRecord](),
 		"external-provenance":    reflect.TypeFor[externalPayloadProvenance](),
+		"lexer-skipped-prefix":   reflect.TypeFor[lexerSkippedPrefixProvenance](),
 		"drop-cohort-action":     reflect.TypeFor[dropCohortActionIdentity](),
 		"drop-cohort-record":     reflect.TypeFor[dropCohortRecord](),
 		"drop-cohort-member":     reflect.TypeFor[dropCohortMember](),
@@ -2738,6 +2739,14 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 	}
 	if got := unsafe.Sizeof(externalPayloadProvenance{}); got != 12 {
 		t.Fatalf("externalPayloadProvenance size = %d, want 12", got)
+	}
+	if got := unsafe.Sizeof(lexerSkippedPrefixProvenance{}); got != 8 {
+		t.Fatalf("lexerSkippedPrefixProvenance size = %d, want 8", got)
+	}
+	// Store the bounded prefix length in Token's existing tail padding. Every
+	// compact shift copies this value, including grammars that do not use it.
+	if got := unsafe.Sizeof(Token{}); got != 16 {
+		t.Fatalf("Token size = %d, want 16", got)
 	}
 }
 

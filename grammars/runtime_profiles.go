@@ -25,6 +25,7 @@ type builtinLanguageRuntimeProfile struct {
 	compactEOFAcceptNoActionSiblings    bool
 	compactPrimaryAcceptDerivation      bool
 	compactAcceptanceStructuralElection bool
+	compactLexerSkippedPrefixTiling     bool
 	exactStackNodeEquivalence           bool
 	compactStrategy2ErrorRegion         bool
 	compactMissingTokenInsertion        bool
@@ -90,6 +91,13 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	},
 	"robot": {
 		blobSHA256: mustRuntimeProfileSHA256("25075ecf5323eeb88af4f71b55f51867cef38a277aaa60f01b879ee8abb4c74f"),
+	},
+	// The internal DFA skips each JSDoc line decoration before it produces the
+	// next tag token. The compact materializer admits the resulting interior
+	// gap only when the accepted terminal carries that exact prefix evidence.
+	"jsdoc": {
+		blobSHA256:                      mustRuntimeProfileSHA256("e5688e60d41d6ef2d0922de7687b597de0c880761064e9e7b994d401c5508312"),
+		compactLexerSkippedPrefixTiling: true,
 	},
 	// C-oracle parity certifies the complete compact recovery competition for
 	// this exact artifact against the ten pinned HTML witnesses.
@@ -691,6 +699,10 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	}
 	if profile.compactAcceptanceStructuralElection && !lang.CompactAcceptanceStructuralElectionCertified {
 		lang.CompactAcceptanceStructuralElectionCertified = true
+		changed = true
+	}
+	if profile.compactLexerSkippedPrefixTiling && !lang.CompactLexerSkippedPrefixTilingCertified {
+		lang.CompactLexerSkippedPrefixTilingCertified = true
 		changed = true
 	}
 	if profile.exactStackNodeEquivalence && !lang.ExactStackNodeEquivalenceCertified {
