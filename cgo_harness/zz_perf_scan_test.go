@@ -1550,6 +1550,53 @@ func TestPerfScanMissingCorpusPinsStaticOracleIdentityUnit(t *testing.T) {
 	}
 }
 
+func TestPerfScanEmptyCorpusPinsStaticOracleIdentityUnit(t *testing.T) {
+	corpusRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(corpusRoot, "go"), 0o755); err != nil {
+		t.Fatalf("create empty corpus: %v", err)
+	}
+	cfg := perfScanConfig{
+		CorpusRoot: corpusRoot,
+		Axes:       []string{perfScanAxisFull},
+	}
+	want := perfScanTestOracleIdentity("go")
+	buildCalls := 0
+	closeCalls := 0
+	row := perfScanMeasureLanguageWithStaticOracleBuilder(t, "go", cfg, nil, func(language string) (*staticCPerfOracle, error) {
+		buildCalls++
+		if language != "go" {
+			t.Fatalf("static oracle language = %q, want go", language)
+		}
+		return &staticCPerfOracle{
+			identity: *want,
+			cleanup:  func() { closeCalls++ },
+		}, nil
+	})
+	if row.Status != "no_corpus_files" {
+		t.Fatalf("empty corpus status = %q, want no_corpus_files: %s", row.Status, row.Detail)
+	}
+	if row.Oracle == nil || row.Oracle.Common != want.Common ||
+		row.Oracle.Language.Language != want.Language.Language ||
+		row.Oracle.Language.GrammarCommit != want.Language.GrammarCommit ||
+		row.Oracle.Language.BuildKeySHA256 != want.Language.BuildKeySHA256 ||
+		row.Oracle.Language.ArtifactSHA256 != want.Language.ArtifactSHA256 {
+		t.Fatalf("empty corpus lost locked static C identity: got=%+v want=%+v", row.Oracle, want)
+	}
+	if buildCalls != 1 || closeCalls != 1 {
+		t.Fatalf("static oracle lifecycle builds=%d closes=%d, want 1/1", buildCalls, closeCalls)
+	}
+	if row.FilesSelected != 0 || row.FilesMeasured != 0 || len(row.Files) != 0 {
+		t.Fatalf("identity preparation widened measurement scope: %+v", row)
+	}
+	board, err := perfScanOracleBoardFromRows([]*perfScanLanguage{row})
+	if err != nil {
+		t.Fatalf("assemble empty-corpus oracle board: %v", err)
+	}
+	if len(board.Languages) != 1 || board.Languages[0].Language != "go" {
+		t.Fatalf("empty-corpus oracle board = %+v", board)
+	}
+}
+
 func TestPerfScanMissingCorpusFailsClosedOnStaticOracleErrorUnit(t *testing.T) {
 	cfg := perfScanConfig{CorpusRoot: filepath.Join(t.TempDir(), "missing")}
 	row := perfScanMeasureLanguageWithStaticOracleBuilder(t, "go", cfg, nil, func(string) (*staticCPerfOracle, error) {
