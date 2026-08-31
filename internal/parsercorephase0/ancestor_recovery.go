@@ -3,17 +3,19 @@ package parsercorephase0
 import (
 	"errors"
 	"fmt"
+	"math"
 )
 
 // StackSummaryMaxDepth matches tree-sitter's MAX_SUMMARY_DEPTH. Compact S4
-// never inspects or mutates a predecessor beyond this bound.
+// crosses at most this many non-extra payloads. Extra payloads do not consume
+// summary depth and stay bounded by stackSummaryMaxVisitedNodes.
 const StackSummaryMaxDepth = 16
 
 const stackSummaryMaxVisitedNodes = 4096
 
-// StackSummaryCandidate authenticates one action-bearing predecessor state.
-// Depth counts predecessor links and preserves the original compact S3 probe
-// contract. The scheduler performs cost comparison and election separately.
+// StackSummaryCandidate authenticates one ordered predecessor summary entry.
+// Depth counts non-extra payloads, exactly like tree-sitter's stack summary.
+// The scheduler performs cost comparison before it looks up an action.
 //
 // The fields stay private because owner, generation, and source identity are
 // one capability. RecoverToAncestorStateOwned rejects copied candidates after
@@ -24,10 +26,12 @@ type StackSummaryCandidate struct {
 	source     NodeID
 	state      StateID
 	byteOffset uint32
+	linkDepth  uint16
 	depth      uint8
 }
 
-// Depth returns the predecessor-link depth of this candidate.
+// Depth returns the C stack-summary depth of this candidate. Extra payloads do
+// not increase this value.
 func (c StackSummaryCandidate) Depth() int { return int(c.depth) }
 
 // State returns the parser state recorded for this candidate.
@@ -46,12 +50,20 @@ type stackSummaryStateKey struct {
 	depth uint8
 }
 
-// StackSummaryCandidates enumerates every action-bearing predecessor state in
-// depth-major and stable link-insertion order. It visits the complete graph to
-// maxDepth and deduplicates metadata by (depth, state). Path deduplication does
-// not authorize mutation: RecoverToAncestorStateOwned re-enumerates paths and
-// requires exactly one match for the elected pair.
-func (c *Core) StackSummaryCandidates(head Head, lookahead Symbol, maxDepth int) ([]StackSummaryCandidate, error) {
+type stackSummaryWalkItem struct {
+	node      NodeID
+	linkDepth uint16
+}
+
+// StackSummaryCandidates enumerates every predecessor summary entry in
+// depth-major and stable link-insertion order. It increments depth only for a
+// non-extra payload and deduplicates metadata by (depth, state), matching C's
+// stack summary. It does not look up actions. The caller must apply C's cost
+// and live-version guards before it tests the entry's action row.
+//
+// Path deduplication does not authorize mutation. RecoverToAncestorStateOwned
+// re-enumerates paths and requires exactly one match for the elected pair.
+func (c *Core) StackSummaryCandidates(head Head, maxDepth int) ([]StackSummaryCandidate, error) {
 	if maxDepth <= 0 {
 		return nil, nil
 	}
@@ -65,16 +77,29 @@ func (c *Core) StackSummaryCandidates(head Head, lookahead Symbol, maxDepth int)
 		return nil, err
 	}
 
-	frontier := []NodeID{head.Node}
+	var levels [StackSummaryMaxDepth + 1][]stackSummaryWalkItem
+	levels[0] = append(levels[0], stackSummaryWalkItem{node: head.Node})
 	visited := map[stackSummaryNodeKey]struct{}{{node: head.Node}: {}}
 	seen := make(map[stackSummaryStateKey]struct{})
 	var candidates []StackSummaryCandidate
-	for depth := 1; depth <= maxDepth && len(frontier) != 0; depth++ {
-		next := make([]NodeID, 0, len(frontier))
-		for _, id := range frontier {
-			node, err := c.node(id)
+	for depth := 0; depth <= maxDepth; depth++ {
+		level := &levels[depth]
+		for cursor := 0; cursor < len(*level); cursor++ {
+			item := (*level)[cursor]
+			node, err := c.node(item.node)
 			if err != nil {
 				return nil, err
+			}
+			if item.linkDepth != 0 {
+				stateKey := stackSummaryStateKey{state: node.state, depth: uint8(depth)}
+				if _, ok := seen[stateKey]; !ok {
+					seen[stateKey] = struct{}{}
+					candidates = append(candidates, StackSummaryCandidate{
+						owner: c, generation: c.classificationPhase, source: head.Node,
+						state: node.state, byteOffset: node.byteOffset,
+						linkDepth: item.linkDepth, depth: uint8(depth),
+					})
+				}
 			}
 			var inline [inlineAdjacencyCapacity]linkRecord
 			links, err := c.publishedNodeLinksInto(inline[:0], *node)
@@ -82,10 +107,24 @@ func (c *Core) StackSummaryCandidates(head Head, lookahead Symbol, maxDepth int)
 				return nil, err
 			}
 			for _, link := range links {
-				if link.prev == 0 || link.prev >= id {
+				if link.prev == 0 || link.prev >= item.node {
 					return nil, errors.New("parser-core phase zero: stack-summary predecessor does not decrease")
 				}
-				key := stackSummaryNodeKey{node: link.prev, depth: uint8(depth)}
+				payload, err := c.subtree(link.payload)
+				if err != nil {
+					return nil, err
+				}
+				nextDepth := depth
+				if !payload.extra {
+					if depth == maxDepth {
+						continue
+					}
+					nextDepth++
+				}
+				if item.linkDepth == math.MaxUint16 {
+					return nil, errors.New("parser-core phase zero: stack-summary link depth overflow")
+				}
+				key := stackSummaryNodeKey{node: link.prev, depth: uint8(nextDepth)}
 				if _, ok := visited[key]; ok {
 					continue
 				}
@@ -93,31 +132,11 @@ func (c *Core) StackSummaryCandidates(head Head, lookahead Symbol, maxDepth int)
 				if len(visited) > stackSummaryMaxVisitedNodes {
 					return nil, errors.New("parser-core phase zero: stack-summary visited-node cap")
 				}
-				next = append(next, link.prev)
-
-				ancestor, err := c.node(link.prev)
-				if err != nil {
-					return nil, err
-				}
-				stateKey := stackSummaryStateKey{state: ancestor.state, depth: uint8(depth)}
-				if _, ok := seen[stateKey]; ok {
-					continue
-				}
-				seen[stateKey] = struct{}{}
-				row, err := c.tables.Actions(ancestor.state, lookahead)
-				if err != nil {
-					return nil, err
-				}
-				if row.Len() == 0 {
-					continue
-				}
-				candidates = append(candidates, StackSummaryCandidate{
-					owner: c, generation: c.classificationPhase, source: head.Node,
-					state: ancestor.state, byteOffset: ancestor.byteOffset, depth: uint8(depth),
+				levels[nextDepth] = append(levels[nextDepth], stackSummaryWalkItem{
+					node: link.prev, linkDepth: item.linkDepth + 1,
 				})
 			}
 		}
-		frontier = next
 	}
 	return candidates, nil
 }
@@ -200,7 +219,7 @@ func (c *Core) recoverToAncestorStateUncheckpointed(candidate StackSummaryCandid
 	if candidate.generation == 0 || candidate.generation != c.classificationPhase {
 		return Head{}, errors.New("parser-core phase zero: stale stack-summary candidate")
 	}
-	if candidate.source == 0 || candidate.depth == 0 || candidate.depth > StackSummaryMaxDepth {
+	if candidate.source == 0 || candidate.linkDepth == 0 || candidate.depth > StackSummaryMaxDepth || candidate.linkDepth >= stackSummaryMaxVisitedNodes {
 		return Head{}, errors.New("parser-core phase zero: invalid stack-summary candidate")
 	}
 	if _, err := c.node(candidate.source); err != nil {
@@ -294,43 +313,36 @@ func (c *Core) recoverToAncestorStateUncheckpointed(candidate StackSummaryCandid
 
 func (c *Core) uniqueAncestorRecoveryPath(candidate StackSummaryCandidate) ([]linkRecord, NodeID, error) {
 	wantDepth := int(candidate.depth)
-	var route [StackSummaryMaxDepth]linkRecord
-	var selected [StackSummaryMaxDepth]linkRecord
+	route := make([]linkRecord, 0, int(candidate.linkDepth))
+	var selected []linkRecord
 	var selectedTarget NodeID
-	var completePaths uint64
+	var matchingPaths uint64
 	matches := 0
 	steps := 0
 	const maxSteps = stackSummaryMaxVisitedNodes * StackSummaryMaxDepth
 
 	var walk func(NodeID, int) error
 	walk = func(id NodeID, depth int) error {
-		if depth == wantDepth {
-			completePaths++
-			if completePaths > c.limits.MaxPopPaths {
+		node, err := c.node(id)
+		if err != nil {
+			return err
+		}
+		if len(route) != 0 && depth == wantDepth && node.state == candidate.state {
+			matchingPaths++
+			if matchingPaths > c.limits.MaxPopPaths {
 				return errors.New("parser-core phase zero: ancestor recovery pop enumeration cap")
-			}
-			target, err := c.node(id)
-			if err != nil {
-				return err
-			}
-			if target.state != candidate.state {
-				return nil
 			}
 			matches++
 			if matches > 1 {
 				return errors.New("parser-core phase zero: ancestor recovery candidate has ambiguous pop paths")
 			}
-			if target.byteOffset != candidate.byteOffset {
+			if node.byteOffset != candidate.byteOffset {
 				return errors.New("parser-core phase zero: stale stack-summary candidate position")
 			}
-			copy(selected[:wantDepth], route[:wantDepth])
-			selectedTarget = id
-			return nil
-		}
-
-		node, err := c.node(id)
-		if err != nil {
-			return err
+			if len(route) == int(candidate.linkDepth) {
+				selected = append(selected[:0], route...)
+				selectedTarget = id
+			}
 		}
 		var inline [inlineAdjacencyCapacity]linkRecord
 		links, err := c.publishedNodeLinksInto(inline[:0], *node)
@@ -338,17 +350,29 @@ func (c *Core) uniqueAncestorRecoveryPath(candidate StackSummaryCandidate) ([]li
 			return err
 		}
 		for _, link := range links {
+			if link.prev == 0 || link.prev >= id {
+				return errors.New("parser-core phase zero: ancestor recovery predecessor does not decrease")
+			}
+			payload, err := c.subtree(link.payload)
+			if err != nil {
+				return err
+			}
+			nextDepth := depth
+			if !payload.extra {
+				if depth == wantDepth {
+					continue
+				}
+				nextDepth++
+			}
 			steps++
 			if steps > maxSteps {
 				return errors.New("parser-core phase zero: ancestor recovery traversal cap")
 			}
-			if link.prev == 0 || link.prev >= id {
-				return errors.New("parser-core phase zero: ancestor recovery predecessor does not decrease")
-			}
-			route[depth] = link
-			if err := walk(link.prev, depth+1); err != nil {
+			route = append(route, link)
+			if err := walk(link.prev, nextDepth); err != nil {
 				return err
 			}
+			route = route[:len(route)-1]
 		}
 		return nil
 	}
@@ -358,5 +382,8 @@ func (c *Core) uniqueAncestorRecoveryPath(candidate StackSummaryCandidate) ([]li
 	if matches == 0 {
 		return nil, 0, errors.New("parser-core phase zero: stack-summary candidate has no exact pop path")
 	}
-	return append([]linkRecord(nil), selected[:wantDepth]...), selectedTarget, nil
+	if selectedTarget == 0 || len(selected) != int(candidate.linkDepth) {
+		return nil, 0, errors.New("parser-core phase zero: stale stack-summary candidate link depth")
+	}
+	return selected, selectedTarget, nil
 }

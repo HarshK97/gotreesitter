@@ -9,7 +9,7 @@ import (
 	"unsafe"
 )
 
-func newAncestorRecoveryTestCore(t testing.TB, tables *fakeTable, limits Limits) *Core {
+func newAncestorRecoveryTestCore(t testing.TB, tables TableView, limits Limits) *Core {
 	t.Helper()
 	if limits.MaxDerivations == 0 {
 		limits.MaxDerivations = 32
@@ -23,6 +23,27 @@ func newAncestorRecoveryTestCore(t testing.TB, tables *fakeTable, limits Limits)
 	}
 	compact.diagnostics.foldSamePredecessorShallowPayloads = false
 	return compact
+}
+
+type ancestorRecoveryActionCountingTable struct {
+	*fakeTable
+	actionReads []StateID
+}
+
+func (t *ancestorRecoveryActionCountingTable) Actions(state StateID, symbol Symbol) (ActionRow, error) {
+	t.actionReads = append(t.actionReads, state)
+	return t.fakeTable.Actions(state, symbol)
+}
+
+func ancestorRecoveryCandidateForState(t testing.TB, candidates []StackSummaryCandidate, state StateID) StackSummaryCandidate {
+	t.Helper()
+	for _, candidate := range candidates {
+		if candidate.State() == state {
+			return candidate
+		}
+	}
+	t.Fatalf("missing stack-summary state %d in %+v", state, candidates)
+	return StackSummaryCandidate{}
 }
 
 func appendAncestorRecoveryPayload(t testing.TB, compact *Core, symbol Symbol, startByte, endByte uint32, extra bool) SubtreeID {
@@ -78,7 +99,7 @@ func TestStackSummaryCandidatesVisitFanoutInStableDepthOrder(t *testing.T) {
 	}
 
 	before := captureSchedulerTransactionState(compact)
-	candidates, err := compact.StackSummaryCandidates(head, lookahead, 2)
+	candidates, err := compact.StackSummaryCandidates(head, 2)
 	if err != nil {
 		t.Fatalf("StackSummaryCandidates: %v", err)
 	}
@@ -118,11 +139,113 @@ func TestStackSummaryCandidatesEnforceDepthAndRecordSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if candidates, err := compact.StackSummaryCandidates(seed, 9, 0); err != nil || candidates != nil {
+	if candidates, err := compact.StackSummaryCandidates(seed, 0); err != nil || candidates != nil {
 		t.Fatalf("zero-depth candidates=%v err=%v, want nil", candidates, err)
 	}
-	if _, err := compact.StackSummaryCandidates(seed, 9, StackSummaryMaxDepth+1); err == nil || !strings.Contains(err.Error(), "exceeds limit") {
+	if _, err := compact.StackSummaryCandidates(seed, StackSummaryMaxDepth+1); err == nil || !strings.Contains(err.Error(), "exceeds limit") {
 		t.Fatalf("over-depth error=%v", err)
+	}
+}
+
+func TestStackSummaryCandidatesPreserveActionlessCostGateOrder(t *testing.T) {
+	const lookahead = Symbol(9)
+	tables := &ancestorRecoveryActionCountingTable{fakeTable: &fakeTable{actions: map[tableCell][]Action{
+		{state: 21, symbol: lookahead}: {{Type: ActionShift, State: 31}},
+	}}}
+	compact := newAncestorRecoveryTestCore(t, tables, Limits{})
+	seed, err := compact.Seed(21, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actionless := appendAncestorRecoveryHead(t, compact, seed, 11,
+		appendAncestorRecoveryPayload(t, compact, 1, 0, 1, false))
+	head := appendAncestorRecoveryHead(t, compact, actionless, 30,
+		appendAncestorRecoveryPayload(t, compact, 2, 1, 2, false))
+
+	candidates, err := compact.StackSummaryCandidates(head, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 || candidates[0].State() != 11 || candidates[1].State() != 21 {
+		t.Fatalf("summary order=%+v, want actionless state 11 before actionable state 21", candidates)
+	}
+	if len(tables.actionReads) != 0 {
+		t.Fatalf("summary enumeration read actions for states %v", tables.actionReads)
+	}
+
+	bestLiveCost := uint32(100)
+	costs := map[StateID]uint32{11: 200, 21: 50}
+	blocked := false
+	elected := StateID(0)
+	for _, candidate := range candidates {
+		if bestLiveCost < costs[candidate.State()] {
+			blocked = true
+			break
+		}
+		row, rowErr := compact.Actions(candidate.State(), lookahead)
+		if rowErr != nil {
+			t.Fatal(rowErr)
+		}
+		if row.Len() != 0 {
+			elected = candidate.State()
+			break
+		}
+	}
+	if !blocked || elected != 0 || len(tables.actionReads) != 0 {
+		t.Fatalf("cost-first scan blocked=%t elected=%d action_reads=%v", blocked, elected, tables.actionReads)
+	}
+}
+
+func TestStackSummaryCandidatesTraverseExtrasWithoutConsumingDepth(t *testing.T) {
+	compact := newAncestorRecoveryTestCore(t, &fakeTable{}, Limits{})
+	seed, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := appendAncestorRecoveryPayload(t, compact, 1, 0, 1, false)
+	head := appendAncestorRecoveryHead(t, compact, seed, 2, child)
+	const extraCount = StackSummaryMaxDepth + 4
+	extras := make([]SubtreeID, 0, extraCount)
+	for index := 0; index < extraCount; index++ {
+		extra := appendAncestorRecoveryPayload(t, compact, Symbol(index+2), uint32(index+1), uint32(index+2), true)
+		extras = append(extras, extra)
+		head = appendAncestorRecoveryHead(t, compact, head, StateID(index+3), extra)
+	}
+
+	candidates, err := compact.StackSummaryCandidates(head, StackSummaryMaxDepth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != extraCount+1 {
+		t.Fatalf("summary entry count=%d, want %d", len(candidates), extraCount+1)
+	}
+	candidate := ancestorRecoveryCandidateForState(t, candidates, 1)
+	if candidate.Depth() != 1 || candidate.linkDepth != extraCount+1 {
+		t.Fatalf("target depth=%d link_depth=%d, want 1/%d", candidate.Depth(), candidate.linkDepth, extraCount+1)
+	}
+
+	var recovered Head
+	err = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		var innerErr error
+		recovered, innerErr = compact.RecoverToAncestorStateOwned(owner, candidate)
+		return innerErr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := compact.Derivations(recovered)
+	if err != nil || len(paths) != 1 || len(paths[0].Payloads) != extraCount+1 {
+		t.Fatalf("recovered derivations=%+v err=%v", paths, err)
+	}
+	if !reflect.DeepEqual(paths[0].Payloads[1:], extras) {
+		t.Fatalf("trailing extras=%v, want %v", paths[0].Payloads[1:], extras)
+	}
+	errorView, err := compact.Subtree(paths[0].Payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errorView.Symbol != ErrorRegionSymbol || !reflect.DeepEqual(errorView.Children, []SubtreeID{child}) {
+		t.Fatalf("ERROR view=%+v, want one non-extra child", errorView)
 	}
 }
 
@@ -156,7 +279,7 @@ func TestAncestorStateWithActionExistsShortCircuitsBeforeDeeperCorruption(t *tes
 	if err != nil || !exists {
 		t.Fatalf("compatibility probe exists=%t err=%v, want early true", exists, err)
 	}
-	if _, err := compact.StackSummaryCandidates(head, lookahead, 2); err == nil || !strings.Contains(err.Error(), "out of range") {
+	if _, err := compact.StackSummaryCandidates(head, 2); err == nil || !strings.Contains(err.Error(), "out of range") {
 		t.Fatalf("strict enumerator error=%v, want malformed deeper adjacency", err)
 	}
 }
@@ -171,8 +294,10 @@ func TestAncestorStateWithActionExistsPreservesSilentVisitedCap(t *testing.T) {
 	compact.nodes = make([]nodeRecord, predecessorCount+1)
 	compact.nodeLineages = make([]nodeLineageRecord, predecessorCount+1)
 	compact.links = make([]linkRecord, predecessorCount)
+	compact.subtrees = []subtreeRecord{{terminal: true}}
 	for index := range compact.links {
 		compact.links[index].prev = NodeID(index + 1)
+		compact.links[index].payload = 1
 		if index+1 < len(compact.links) {
 			compact.links[index].next = LinkID(index + 2)
 		}
@@ -184,7 +309,7 @@ func TestAncestorStateWithActionExistsPreservesSilentVisitedCap(t *testing.T) {
 	if err != nil || exists {
 		t.Fatalf("compatibility cap result exists=%t err=%v, want false nil", exists, err)
 	}
-	if _, err := compact.StackSummaryCandidates(head, 9, 1); err == nil || !strings.Contains(err.Error(), "visited-node cap") {
+	if _, err := compact.StackSummaryCandidates(head, 1); err == nil || !strings.Contains(err.Error(), "visited-node cap") {
 		t.Fatalf("strict enumerator error=%v, want visited-node cap", err)
 	}
 }
@@ -216,7 +341,7 @@ func TestRecoverToAncestorStateRejectsAmbiguousDeduplicatedCandidate(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidates, err := compact.StackSummaryCandidates(head, lookahead, 1)
+	candidates, err := compact.StackSummaryCandidates(head, 1)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("deduplicated candidates=%+v err=%v, want one", candidates, err)
 	}
@@ -247,7 +372,7 @@ func TestRecoverToAncestorStateRejectsLimitsAndRollsBackPublication(t *testing.T
 	}
 	head := appendAncestorRecoveryHead(t, compact, seed, 3,
 		appendAncestorRecoveryPayload(t, compact, 1, 0, 1, false))
-	candidates, err := compact.StackSummaryCandidates(head, lookahead, 1)
+	candidates, err := compact.StackSummaryCandidates(head, 1)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("candidates=%+v err=%v, want one", candidates, err)
 	}
@@ -281,7 +406,7 @@ func TestRecoverToAncestorStateOuterRollbackRestoresArenasAndJournal(t *testing.
 	}
 	head := appendAncestorRecoveryHead(t, compact, seed, 3,
 		appendAncestorRecoveryPayload(t, compact, 1, 0, 1, false))
-	candidates, err := compact.StackSummaryCandidates(head, lookahead, 1)
+	candidates, err := compact.StackSummaryCandidates(head, 1)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("candidates=%+v err=%v, want one", candidates, err)
 	}
@@ -318,7 +443,7 @@ func TestRecoverToAncestorStateRejectsStaleOwnerAndCandidate(t *testing.T) {
 	}
 	head := appendAncestorRecoveryHead(t, compact, seed, 3,
 		appendAncestorRecoveryPayload(t, compact, 1, 0, 1, false))
-	candidates, err := compact.StackSummaryCandidates(head, lookahead, 1)
+	candidates, err := compact.StackSummaryCandidates(head, 1)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("candidates=%+v err=%v, want one", candidates, err)
 	}
@@ -369,10 +494,11 @@ func TestRecoverToAncestorStateRepushesTrailingExtrasOutsideError(t *testing.T) 
 	head := appendAncestorRecoveryHead(t, compact, seed, 2, child)
 	head = appendAncestorRecoveryHead(t, compact, head, 3, firstExtra)
 	head = appendAncestorRecoveryHead(t, compact, head, 4, secondExtra)
-	candidates, err := compact.StackSummaryCandidates(head, lookahead, 3)
-	if err != nil || len(candidates) != 1 {
-		t.Fatalf("candidates=%+v err=%v, want one", candidates, err)
+	candidates, err := compact.StackSummaryCandidates(head, 3)
+	if err != nil || len(candidates) != 3 {
+		t.Fatalf("candidates=%+v err=%v, want three summary entries", candidates, err)
 	}
+	candidate := ancestorRecoveryCandidateForState(t, candidates, 1)
 	before, err := compact.Stats(head)
 	if err != nil {
 		t.Fatal(err)
@@ -381,7 +507,7 @@ func TestRecoverToAncestorStateRepushesTrailingExtrasOutsideError(t *testing.T) 
 	var recovered Head
 	err = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
 		var innerErr error
-		recovered, innerErr = compact.RecoverToAncestorStateOwned(owner, candidates[0])
+		recovered, innerErr = compact.RecoverToAncestorStateOwned(owner, candidate)
 		return innerErr
 	})
 	if err != nil {
