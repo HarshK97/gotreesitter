@@ -2,6 +2,7 @@ package parsercorephase0
 
 import (
 	"errors"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -122,6 +123,69 @@ func TestStackSummaryCandidatesEnforceDepthAndRecordSize(t *testing.T) {
 	}
 	if _, err := compact.StackSummaryCandidates(seed, 9, StackSummaryMaxDepth+1); err == nil || !strings.Contains(err.Error(), "exceeds limit") {
 		t.Fatalf("over-depth error=%v", err)
+	}
+}
+
+func TestAncestorStateWithActionExistsShortCircuitsBeforeDeeperCorruption(t *testing.T) {
+	const lookahead = Symbol(9)
+	tables := &fakeTable{actions: map[tableCell][]Action{
+		{state: 11, symbol: lookahead}: {{Type: ActionShift, State: 31}},
+	}}
+	compact := newAncestorRecoveryTestCore(t, tables, Limits{})
+	seed, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actionParent := appendAncestorRecoveryHead(t, compact, seed, 11,
+		appendAncestorRecoveryPayload(t, compact, 1, 0, 1, false))
+	brokenParent := appendAncestorRecoveryHead(t, compact, seed, 12,
+		appendAncestorRecoveryPayload(t, compact, 2, 0, 1, false))
+	topPayload := appendAncestorRecoveryPayload(t, compact, 3, 1, 2, false)
+	key := compact.shiftedBoundaryKey(30, 2)
+	head, err := compact.condense(key, linkInput{prev: actionParent.Node, payload: topPayload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err = compact.condense(key, linkInput{prev: brokenParent.Node, payload: topPayload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact.nodes[brokenParent.Node-1].firstLink = math.MaxUint32
+
+	exists, err := compact.AncestorStateWithActionExists(head, lookahead, 2)
+	if err != nil || !exists {
+		t.Fatalf("compatibility probe exists=%t err=%v, want early true", exists, err)
+	}
+	if _, err := compact.StackSummaryCandidates(head, lookahead, 2); err == nil || !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("strict enumerator error=%v, want malformed deeper adjacency", err)
+	}
+}
+
+func TestAncestorStateWithActionExistsPreservesSilentVisitedCap(t *testing.T) {
+	const predecessorCount = 4096
+	compact := newAncestorRecoveryTestCore(t, &fakeTable{}, Limits{
+		MaxNodes:            predecessorCount + 1,
+		MaxLinks:            predecessorCount,
+		MaxLinksPerBoundary: predecessorCount,
+	})
+	compact.nodes = make([]nodeRecord, predecessorCount+1)
+	compact.nodeLineages = make([]nodeLineageRecord, predecessorCount+1)
+	compact.links = make([]linkRecord, predecessorCount)
+	for index := range compact.links {
+		compact.links[index].prev = NodeID(index + 1)
+		if index+1 < len(compact.links) {
+			compact.links[index].next = LinkID(index + 2)
+		}
+	}
+	head := Head{Node: predecessorCount + 1}
+	compact.nodes[head.Node-1] = nodeRecord{firstLink: 1, linkCount: predecessorCount}
+
+	exists, err := compact.AncestorStateWithActionExists(head, 9, 1)
+	if err != nil || exists {
+		t.Fatalf("compatibility cap result exists=%t err=%v, want false nil", exists, err)
+	}
+	if _, err := compact.StackSummaryCandidates(head, 9, 1); err == nil || !strings.Contains(err.Error(), "visited-node cap") {
+		t.Fatalf("strict enumerator error=%v, want visited-node cap", err)
 	}
 }
 

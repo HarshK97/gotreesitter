@@ -122,11 +122,62 @@ func (c *Core) StackSummaryCandidates(head Head, lookahead Symbol, maxDepth int)
 	return candidates, nil
 }
 
-// AncestorStateWithActionExists preserves the S3 compatibility probe. It now
-// delegates to the complete candidate enumerator and reports only existence.
+// AncestorStateWithActionExists preserves the S3 compatibility probe. Keep
+// its short-circuit and silent observation-cap behavior separate from the S4
+// enumerator. Existing production callers depend on this diagnostic result.
 func (c *Core) AncestorStateWithActionExists(head Head, lookahead Symbol, maxDepth int) (bool, error) {
-	candidates, err := c.StackSummaryCandidates(head, lookahead, maxDepth)
-	return len(candidates) != 0, err
+	if maxDepth <= 0 {
+		return false, nil
+	}
+	const maxVisitedNodes = 4096
+	frontier := []NodeID{head.Node}
+	visited := map[NodeID]bool{head.Node: true}
+	for depth := 1; depth <= maxDepth && len(frontier) > 0; depth++ {
+		var next []NodeID
+		for _, id := range frontier {
+			node, err := c.node(id)
+			if err != nil {
+				return false, err
+			}
+			count := node.linkCount
+			if count == 0 {
+				continue
+			}
+			if uint64(count) > uint64(c.limits.MaxLinks) || uint64(count) > uint64(c.limits.MaxLinksPerBoundary) {
+				return false, errors.New("parser-core phase zero: recorded link count exceeds configured limit")
+			}
+			linkID := LinkID(node.firstLink)
+			for remaining := count; remaining > 0; remaining-- {
+				if linkID == 0 || uint64(linkID) > uint64(len(c.links)) {
+					return false, errors.New("parser-core phase zero: ancestor adjacency out of range")
+				}
+				link := c.links[linkID-1]
+				if link.prev != 0 && !visited[link.prev] {
+					visited[link.prev] = true
+					if len(visited) > maxVisitedNodes {
+						return false, nil
+					}
+					next = append(next, link.prev)
+				}
+				linkID = link.next
+			}
+		}
+		for _, id := range next {
+			ancestor, err := c.node(id)
+			if err != nil {
+				return false, err
+			}
+			row, err := c.tables.Actions(ancestor.state, lookahead)
+			if err != nil {
+				return false, err
+			}
+			if row.Len() > 0 {
+				return true, nil
+			}
+		}
+		frontier = next
+	}
+	return false, nil
 }
 
 // RecoverToAncestorStateOwned performs the S4 stack mutation for one elected
