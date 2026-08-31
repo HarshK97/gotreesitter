@@ -3212,6 +3212,210 @@ func setReduceNodeDynamicPrecedence(n *Node, entries []stackEntry, start, end in
 	}
 }
 
+type cRawSubtreeCompareFrame struct {
+	left  rawStackWalkEntry
+	right rawStackWalkEntry
+}
+
+type cRawSubtreeCompareHeader struct {
+	symbol          Symbol
+	childCount      int
+	childCountExact bool
+	canDescend      bool
+}
+
+func cRawSubtreeHeaderForCompare(arena *nodeArena, item rawStackWalkEntry) (cRawSubtreeCompareHeader, bool) {
+	if !cRawSubtreeEntrySupported(item.entry) {
+		return cRawSubtreeCompareHeader{}, false
+	}
+	ref := stackEntryRawShapeRef(item.entry)
+	if item.shapeRefKnown {
+		ref = item.shapeRef
+	}
+	if ref != 0 {
+		shape, ok := arena.rawShapeForRef(ref)
+		if !ok {
+			return cRawSubtreeCompareHeader{}, false
+		}
+		return cRawSubtreeCompareHeader{
+			symbol:          shape.symbol,
+			childCount:      shape.childCount(),
+			childCountExact: true,
+			canDescend:      true,
+		}, true
+	}
+	childCount := stackEntryNodeChildCount(item.entry)
+	return cRawSubtreeCompareHeader{
+		symbol:          stackEntryNodeSymbol(item.entry),
+		childCount:      childCount,
+		childCountExact: childCount == 0,
+		canDescend:      childCount == 0,
+	}, true
+}
+
+func cRawSubtreeChildrenForCompare(arena *nodeArena, shape *rawShape) ([]rawShapeChild, bool) {
+	if arena == nil || shape == nil || shape.childCount() == 0 || shape.childRange == 0 {
+		return nil, false
+	}
+	slabIndex := shape.childRange.slabIndex()
+	if slabIndex < 0 || slabIndex >= len(arena.rawShapeChildSlabs) {
+		return nil, false
+	}
+	slab := &arena.rawShapeChildSlabs[slabIndex]
+	start64 := (uint64(shape.childRange) >> 16) & uint64(^uint32(0))
+	if start64 > uint64(slab.used) || start64 > uint64(len(slab.data)) {
+		return nil, false
+	}
+	start := int(start64)
+	count := shape.childCount()
+	if count > slab.used-start || count > len(slab.data)-start {
+		return nil, false
+	}
+	return slab.data[start : start+count], true
+}
+
+func cRawSubtreeChildForCompare(arena *nodeArena, item rawStackWalkEntry, index int) (rawStackWalkEntry, bool) {
+	shape, parentRef, ok := rawShapeForStackWalkEntry(arena, item)
+	if !ok {
+		return rawStackWalkEntry{}, false
+	}
+	children, ok := cRawSubtreeChildrenForCompare(arena, shape)
+	if !ok {
+		return rawStackWalkEntry{}, false
+	}
+	if index < 0 || index >= len(children) {
+		return rawStackWalkEntry{}, false
+	}
+	child := children[index]
+	childRef := child.shapeRef()
+	if childRef != 0 && childRef >= parentRef {
+		return rawStackWalkEntry{}, false
+	}
+	entry := child.entry()
+	return rawStackWalkEntry{
+		entry:         entry,
+		shapeRef:      childRef,
+		shapeRefKnown: true,
+	}, stackEntryHasNode(entry)
+}
+
+func cRawSubtreeEntrySupported(entry stackEntry) bool {
+	if !stackEntryHasNode(entry) {
+		return false
+	}
+	switch entry.kind {
+	case stackEntryKindNode, stackEntryKindNoTreeNode, stackEntryKindCompactFullLeaf, stackEntryKindPendingParent:
+		return true
+	default:
+		return false
+	}
+}
+
+func cRawSubtreeItemsShareSnapshot(arena *nodeArena, left, right rawStackWalkEntry) (shared, valid bool) {
+	if left.entry.node != right.entry.node || left.entry.kind != right.entry.kind {
+		return false, true
+	}
+	if !cRawSubtreeEntrySupported(left.entry) || !cRawSubtreeEntrySupported(right.entry) {
+		return true, false
+	}
+	if left.shapeRefKnown || right.shapeRefKnown {
+		if !left.shapeRefKnown || !right.shapeRefKnown || left.shapeRef != right.shapeRef {
+			return false, true
+		}
+		if left.shapeRef == 0 {
+			// A captured zero does not identify a non-leaf snapshot. The live
+			// payload can have changed since either parent captured its edge.
+			return true, stackEntryNodeChildCount(left.entry) == 0
+		}
+		shape, ok := arena.rawShapeForRef(left.shapeRef)
+		if !ok {
+			return true, false
+		}
+		if _, ok := cRawSubtreeChildrenForCompare(arena, shape); !ok {
+			return true, false
+		}
+		return true, true
+	}
+	ref := stackEntryRawShapeRef(left.entry)
+	if ref == 0 {
+		// Both roots name the same current payload. This is the Go equivalent
+		// of comparing the same C Subtree value, even without a sidecar.
+		return true, true
+	}
+	shape, ok := arena.rawShapeForRef(ref)
+	if !ok {
+		return true, false
+	}
+	if _, ok := cRawSubtreeChildrenForCompare(arena, shape); !ok {
+		return true, false
+	}
+	return true, true
+}
+
+// compareRawStackEntriesCExact ports ts_subtree_compare. It compares symbols,
+// then child counts, then children from left to right. It returns complete=false
+// when a distinct non-leaf lacks captured raw topology or the work limit would
+// be exceeded. A caller must decline the exact-C route in that case.
+func compareRawStackEntriesCExact(arena *nodeArena, left, right stackEntry, workLimit int) (cmp int, complete bool) {
+	if workLimit <= 0 || !stackEntryHasNode(left) || !stackEntryHasNode(right) {
+		return 0, false
+	}
+	frames := []cRawSubtreeCompareFrame{{
+		left:  rawStackWalkEntry{entry: left},
+		right: rawStackWalkEntry{entry: right},
+	}}
+	scheduled := 1
+	for len(frames) > 0 {
+		last := len(frames) - 1
+		frame := frames[last]
+		frames[last] = cRawSubtreeCompareFrame{}
+		frames = frames[:last]
+
+		if shared, valid := cRawSubtreeItemsShareSnapshot(arena, frame.left, frame.right); shared {
+			if !valid {
+				return 0, false
+			}
+			continue
+		}
+		leftHeader, leftOK := cRawSubtreeHeaderForCompare(arena, frame.left)
+		rightHeader, rightOK := cRawSubtreeHeaderForCompare(arena, frame.right)
+		if !leftOK || !rightOK {
+			return 0, false
+		}
+		if leftHeader.symbol != rightHeader.symbol {
+			if leftHeader.symbol < rightHeader.symbol {
+				return -1, true
+			}
+			return 1, true
+		}
+		if !leftHeader.childCountExact || !rightHeader.childCountExact {
+			return 0, false
+		}
+		if leftHeader.childCount != rightHeader.childCount {
+			if leftHeader.childCount < rightHeader.childCount {
+				return -1, true
+			}
+			return 1, true
+		}
+		if leftHeader.childCount == 0 {
+			continue
+		}
+		if !leftHeader.canDescend || !rightHeader.canDescend || leftHeader.childCount > workLimit-scheduled {
+			return 0, false
+		}
+		scheduled += leftHeader.childCount
+		for i := leftHeader.childCount - 1; i >= 0; i-- {
+			leftChild, leftChildOK := cRawSubtreeChildForCompare(arena, frame.left, i)
+			rightChild, rightChildOK := cRawSubtreeChildForCompare(arena, frame.right, i)
+			if !leftChildOK || !rightChildOK {
+				return 0, false
+			}
+			frames = append(frames, cRawSubtreeCompareFrame{left: leftChild, right: rightChild})
+		}
+	}
+	return 0, true
+}
+
 func (p *Parser) compareRawStackEntries(arena *nodeArena, a, b stackEntry) int {
 	return p.compareRawStackEntriesRec(arena, a, b, 0)
 }
