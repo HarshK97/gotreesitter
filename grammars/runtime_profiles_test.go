@@ -491,12 +491,15 @@ func TestBuiltinErlangPackedGSSVersionOrderIssue984Tree(t *testing.T) {
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
 
 	builtin := ErlangLanguage()
-	copyLanguage := *builtin
+	fresh, err := LoadLanguage("erlang", BlobByName("erlang"))
+	if err != nil {
+		t.Fatalf("load fresh Erlang language: %v", err)
+	}
 	for _, test := range []struct {
 		name     string
 		language *gotreesitter.Language
 	}{
-		{name: "language_copy", language: &copyLanguage},
+		{name: "fresh_decode", language: fresh},
 		{name: "cached_builtin", language: builtin},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -534,10 +537,13 @@ func TestBuiltinErlangPackedGSSVersionOrderPreservesLinearRecovery(t *testing.T)
 		"  catch\n" +
 		"  end.\n"
 	builtin := ErlangLanguage()
-	linear := *builtin
+	linear, err := LoadLanguage("erlang", BlobByName("erlang"))
+	if err != nil {
+		t.Fatalf("load fresh Erlang language: %v", err)
+	}
 	linear.CompactPackedGSSVersionOrderCertified = false
 	var sexprs [2]string
-	for i, language := range []*gotreesitter.Language{builtin, &linear} {
+	for i, language := range []*gotreesitter.Language{builtin, linear} {
 		parser := gotreesitter.NewParser(language)
 		tree, err := parser.Parse([]byte(source))
 		if err != nil {
