@@ -2869,10 +2869,16 @@ func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, expectedEOFB
 		}
 		switch act.Type {
 		case ParseActionReduce:
+			if workCountInstrumentationEnabled {
+				workCountTopologyRecordAction(s, tok, act, 0)
+			}
 			if semanticPhaseTraceActive() {
 				semanticPhaseTraceRecordActionExecution(p, s, tok, act, 0, "eof-prefix-reduce", false) // semantic-phase-assembly: EOF-prefix action-execution seam
 			}
 			p.applyAction(nil, s, act, tok, &anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, false, nil)
+			if workCountInstrumentationEnabled {
+				workCountTopologyRecordActionResult(s)
+			}
 			if p.rejectUndrainedPendingForkStacks(s) {
 				return false
 			}
@@ -2880,10 +2886,16 @@ func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, expectedEOFB
 				return false
 			}
 		case ParseActionAccept:
+			if workCountInstrumentationEnabled {
+				workCountTopologyRecordAction(s, tok, act, 0)
+			}
 			if semanticPhaseTraceActive() {
 				semanticPhaseTraceRecordActionExecution(p, s, tok, act, 0, "eof-prefix-accept", false)
 			}
 			s.accepted = true
+			if workCountInstrumentationEnabled {
+				workCountTopologyRecordActionResult(s)
+			}
 			return true
 		default:
 			return false
@@ -2986,6 +2998,9 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 		}
 		for _, cut := range trailingEOFSuffixCuts(entries, firstDrop, node) {
 			prefix := s.cloneWithScratch(gssScratch)
+			if workCountInstrumentationEnabled {
+				workCountTopologyRecordVersionCopy(s, &prefix)
+			}
 			if !prefix.truncate(cut) {
 				continue
 			}
@@ -4731,6 +4746,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	arena.audit = nil
 	scratch.merge.arena = arena
 	scratch.merge.parser = p
+	if workCountInstrumentationEnabled {
+		workCountTopologySetParseContext(p, arena, trackChildErrors)
+	}
 	if scratch.audit.enabled || scratch.audit.equivEnabled {
 		scratch.merge.audit = &scratch.audit
 	}
