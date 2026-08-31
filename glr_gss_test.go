@@ -231,6 +231,142 @@ func TestGLRStackToGSS(t *testing.T) {
 	}
 }
 
+func TestConflictForkBaseSharesOriginalGSSHead(t *testing.T) {
+	var scratch gssScratch
+	original := glrStack{
+		entries:      []stackEntry{{state: 1}, {state: 2}, {state: 3}},
+		cacheEntries: true,
+	}
+
+	base := original.conflictForkBase(&scratch)
+	first := base.cloneWithScratch(&scratch)
+	second := base.cloneWithScratch(&scratch)
+
+	if original.gss.head == nil {
+		t.Fatal("original GSS head is nil")
+	}
+	if base.gss.head != original.gss.head || first.gss.head != original.gss.head || second.gss.head != original.gss.head {
+		t.Fatalf("fork heads differ: original=%p base=%p first=%p second=%p", original.gss.head, base.gss.head, first.gss.head, second.gss.head)
+	}
+	if original.entries == nil {
+		t.Fatal("original dense entries were discarded during promotion")
+	}
+	if first.entries != nil || second.entries != nil {
+		t.Fatalf("fork clones retained dense entries: first=%d second=%d", len(first.entries), len(second.entries))
+	}
+}
+
+func TestConflictForkBaseReconvergenceRetainsDivergentLinks(t *testing.T) {
+	var scratch gssScratch
+	original := glrStack{
+		entries:      []stackEntry{{state: 1}, {state: 2}},
+		cacheEntries: true,
+	}
+	base := original.conflictForkBase(&scratch)
+	fork := base.cloneWithScratch(&scratch)
+	shared := original.gss.head
+
+	original.push(7, &Node{symbol: 11, startByte: 0, endByte: 1, flags: nodeFlagNamed}, nil, &scratch)
+	fork.push(7, &Node{symbol: 12, startByte: 0, endByte: 1, flags: nodeFlagNamed}, nil, &scratch)
+	if original.gss.head.prev != shared || fork.gss.head.prev != shared {
+		t.Fatalf("divergent heads lost shared predecessor: original=%p fork=%p shared=%p", original.gss.head.prev, fork.gss.head.prev, shared)
+	}
+
+	if !gssMainMerge(&original, &fork) {
+		t.Fatal("reconverged stacks did not merge")
+	}
+	if got := original.gss.head.linkCount(); got != 2 {
+		t.Fatalf("reconverged link count = %d, want 2", got)
+	}
+	seen := make(map[Symbol]bool, 2)
+	for i := 0; i < original.gss.head.linkCount(); i++ {
+		prev, entry := original.gss.head.link(i)
+		if prev != shared {
+			t.Fatalf("link %d predecessor = %p, want shared head %p", i, prev, shared)
+		}
+		seen[stackEntryNodeSymbol(entry)] = true
+	}
+	for _, symbol := range []Symbol{11, 12} {
+		if !seen[symbol] {
+			t.Fatalf("reconverged links lost symbol %d", symbol)
+		}
+	}
+}
+
+func TestConflictForkBaseKeepsDenseAndGSSMainPathSynchronized(t *testing.T) {
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+	original := newGLRStackWithScratch(1, &entryScratch)
+	original.push(2, &Node{symbol: 10, endByte: 2}, &entryScratch, &gssScratch)
+	original.push(3, &Node{symbol: 11, endByte: 4}, &entryScratch, &gssScratch)
+	_ = original.conflictForkBase(&gssScratch)
+
+	assertDenseGSSMainPathEqual(t, &original)
+	original.push(4, &Node{symbol: 12, endByte: 6}, &entryScratch, &gssScratch)
+	assertDenseGSSMainPathEqual(t, &original)
+	if !original.truncateBeforePush(2) {
+		t.Fatal("truncateBeforePush(2) = false")
+	}
+	original.push(5, &Node{symbol: 13, endByte: 7}, &entryScratch, &gssScratch)
+	assertDenseGSSMainPathEqual(t, &original)
+	if !original.truncate(2) {
+		t.Fatal("truncate(2) = false")
+	}
+	assertDenseGSSMainPathEqual(t, &original)
+}
+
+func TestConflictForkBaseAllocationIsDepthBounded(t *testing.T) {
+	const (
+		depth     = 64
+		forkCount = 32
+	)
+	entries := make([]stackEntry, depth)
+	for i := range entries {
+		entries[i].state = StateID(i + 1)
+	}
+	original := glrStack{entries: entries, cacheEntries: true}
+	var scratch gssScratch
+	usedBefore := scratch.usedTotal
+
+	base := original.conflictForkBase(&scratch)
+	if got := scratch.usedTotal - usedBefore; got != depth {
+		t.Fatalf("promotion GSS nodes = %d, want depth %d", got, depth)
+	}
+	usedAfterPromotion := scratch.usedTotal
+	bytesAfterPromotion := scratch.allocatedBytes
+	for i := 0; i < forkCount; i++ {
+		fork := base.cloneWithScratch(&scratch)
+		if fork.gss.head != original.gss.head {
+			t.Fatalf("fork %d head = %p, want %p", i, fork.gss.head, original.gss.head)
+		}
+	}
+	if scratch.usedTotal != usedAfterPromotion {
+		t.Fatalf("clone GSS nodes changed from %d to %d", usedAfterPromotion, scratch.usedTotal)
+	}
+	if scratch.allocatedBytes != bytesAfterPromotion {
+		t.Fatalf("clone GSS bytes changed from %d to %d", bytesAfterPromotion, scratch.allocatedBytes)
+	}
+}
+
+func assertDenseGSSMainPathEqual(t *testing.T, stack *glrStack) {
+	t.Helper()
+	if stack.gss.head == nil || stack.entries == nil {
+		t.Fatalf("stack lacks synchronized forms: head=%p entries=%d", stack.gss.head, len(stack.entries))
+	}
+	materialized := stack.gss.materialize(nil)
+	if len(materialized) != len(stack.entries) {
+		t.Fatalf("stack depth differs: dense=%d GSS=%d", len(stack.entries), len(materialized))
+	}
+	for i := range materialized {
+		if materialized[i] != stack.entries[i] {
+			t.Fatalf("stack entry %d differs: dense=%+v GSS=%+v", i, stack.entries[i], materialized[i])
+		}
+	}
+	if got, want := stack.byteOffset, stackByteOffset(stack.entries); got != want {
+		t.Fatalf("byte offset = %d, want %d", got, want)
+	}
+}
+
 func TestGSSStackMaterializePanicsOnCorruptDepth(t *testing.T) {
 	head := &gssNode{entry: stackEntry{state: 2}, depth: 3}
 	head.prev = &gssNode{entry: stackEntry{state: 1}, depth: 1}

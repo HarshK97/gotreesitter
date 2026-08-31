@@ -6468,7 +6468,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 					continue
 				}
-				base := *s
+				base := s.conflictForkBase(&scratch.gss)
 				if p.glrTrace {
 					p.traceParseFork(currentState, actions)
 				}
