@@ -68,6 +68,255 @@ func setSyntheticPostReducePackingSafeEOF(t *testing.T, parser *Parser, states .
 	}
 }
 
+func cExactCompareLeaf(symbol Symbol) stackEntry {
+	return newStackEntryNode(1, &Node{symbol: symbol, flags: nodeFlagNamed})
+}
+
+func cExactCompareParent(t *testing.T, parser *Parser, arena *nodeArena, symbol Symbol, children ...stackEntry) stackEntry {
+	t.Helper()
+	node := &Node{symbol: symbol, flags: nodeFlagNamed}
+	node.rawShape = parser.captureRawShape(nil, arena, symbol, 0, children, 0, len(children))
+	if node.rawShape == 0 {
+		t.Fatal("raw parent shape was not captured")
+	}
+	return newStackEntryNode(1, node)
+}
+
+func TestCompareRawStackEntriesCExactUsesCPreorder(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	left := cExactCompareParent(t, parser, arena, 10,
+		cExactCompareLeaf(2),
+		cExactCompareLeaf(9),
+	)
+	right := cExactCompareParent(t, parser, arena, 10,
+		cExactCompareLeaf(3),
+		cExactCompareLeaf(1),
+	)
+
+	cmp, complete := compareRawStackEntriesCExact(arena, left, right, 8)
+	if !complete || cmp != -1 {
+		t.Fatalf("C exact comparison = %d, complete=%t; want -1, true", cmp, complete)
+	}
+	cmp, complete = compareRawStackEntriesCExact(arena, right, left, 8)
+	if !complete || cmp != 1 {
+		t.Fatalf("reverse C exact comparison = %d, complete=%t; want 1, true", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCExactUsesChildCountBeforeChildren(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	left := cExactCompareParent(t, parser, arena, 10, cExactCompareLeaf(9))
+	right := cExactCompareParent(t, parser, arena, 10, cExactCompareLeaf(1), cExactCompareLeaf(1))
+
+	cmp, complete := compareRawStackEntriesCExact(arena, left, right, 8)
+	if !complete || cmp != -1 {
+		t.Fatalf("C exact comparison = %d, complete=%t; want -1, true", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCExactIgnoresSpansAndHashShortcuts(t *testing.T) {
+	leftNode := &Node{symbol: 7, startByte: 1, endByte: 2, flags: nodeFlagNamed}
+	rightNode := &Node{symbol: 7, startByte: 20, endByte: 40, flags: nodeFlagNamed}
+	cmp, complete := compareRawStackEntriesCExact(nil, newStackEntryNode(1, leftNode), newStackEntryNode(1, rightNode), 1)
+	if !complete || cmp != 0 {
+		t.Fatalf("span-only comparison = %d, complete=%t; want 0, true", cmp, complete)
+	}
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	left := cExactCompareParent(t, parser, arena, 10, cExactCompareLeaf(2))
+	right := cExactCompareParent(t, parser, arena, 10, cExactCompareLeaf(3))
+	cmp, complete = compareRawStackEntriesCExact(arena, left, right, 4)
+	if !complete || cmp != -1 {
+		t.Fatalf("distinct raw children comparison = %d, complete=%t; want -1, true", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCExactUsesCapturedShapeSnapshot(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	sharedChild := &Node{symbol: 9, flags: nodeFlagNamed}
+	sharedChild.rawShape = parser.captureRawShape(nil, arena, 9, 0, []stackEntry{cExactCompareLeaf(2)}, 0, 1)
+	if sharedChild.rawShape == 0 {
+		t.Fatal("first child shape was not captured")
+	}
+	left := cExactCompareParent(t, parser, arena, 10, newStackEntryNode(1, sharedChild))
+
+	sharedChild.rawShape = parser.captureRawShape(nil, arena, 9, 0, []stackEntry{cExactCompareLeaf(3)}, 0, 1)
+	if sharedChild.rawShape == 0 {
+		t.Fatal("second child shape was not captured")
+	}
+	right := cExactCompareParent(t, parser, arena, 10, newStackEntryNode(1, sharedChild))
+
+	cmp, complete := compareRawStackEntriesCExact(arena, left, right, 8)
+	if !complete || cmp != -1 {
+		t.Fatalf("captured-snapshot comparison = %d, complete=%t; want -1, true", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCExactHasNoDepthCutoff(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	left := cExactCompareLeaf(2)
+	right := cExactCompareLeaf(3)
+	for i := 0; i < maxTreeWalkDepth+16; i++ {
+		left = cExactCompareParent(t, parser, arena, 10, left)
+		right = cExactCompareParent(t, parser, arena, 10, right)
+	}
+
+	cmp, complete := compareRawStackEntriesCExact(arena, left, right, 2*(maxTreeWalkDepth+16)+4)
+	if !complete || cmp != -1 {
+		t.Fatalf("deep C exact comparison = %d, complete=%t; want -1, true", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCExactFailsClosedWithoutRawTopology(t *testing.T) {
+	child := &Node{symbol: 2, flags: nodeFlagNamed}
+	shared := &Node{symbol: 10, flags: nodeFlagNamed, children: []*Node{child}}
+	sharedLeft := newStackEntryNode(1, shared)
+	sharedRight := newStackEntryNode(9, shared)
+	if cmp, complete := compareRawStackEntriesCExact(nil, sharedLeft, sharedRight, 1); !complete || cmp != 0 {
+		t.Fatalf("shared shapeless comparison = %d, complete=%t; want 0, true", cmp, complete)
+	}
+
+	left := newStackEntryNode(1, &Node{symbol: 10, flags: nodeFlagNamed, children: []*Node{child}})
+	right := newStackEntryNode(1, &Node{symbol: 10, flags: nodeFlagNamed, children: []*Node{child}})
+	if cmp, complete := compareRawStackEntriesCExact(nil, left, right, 8); complete || cmp != 0 {
+		t.Fatalf("distinct shapeless comparison = %d, complete=%t; want 0, false", cmp, complete)
+	}
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	shaped := cExactCompareParent(t, parser, arena, 10, cExactCompareLeaf(2))
+	if cmp, complete := compareRawStackEntriesCExact(arena, shaped, right, 8); complete || cmp != 0 {
+		t.Fatalf("one-sided topology comparison = %d, complete=%t; want 0, false", cmp, complete)
+	}
+
+	invalid := &Node{symbol: 10, flags: nodeFlagNamed, rawShape: ^rawShapeRef(0)}
+	if cmp, complete := compareRawStackEntriesCExact(nil, newStackEntryNode(1, invalid), cExactCompareLeaf(10), 8); complete || cmp != 0 {
+		t.Fatalf("invalid-shape comparison = %d, complete=%t; want 0, false", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCExactFailsClosedAtWorkLimit(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	left := cExactCompareParent(t, parser, arena, 10, cExactCompareLeaf(2), cExactCompareLeaf(3))
+	right := cExactCompareParent(t, parser, arena, 10, cExactCompareLeaf(2), cExactCompareLeaf(3))
+
+	cmp, complete := compareRawStackEntriesCExact(arena, left, right, 2)
+	if complete || cmp != 0 {
+		t.Fatalf("bounded C exact comparison = %d, complete=%t; want 0, false", cmp, complete)
+	}
+	cmp, complete = compareRawStackEntriesCExact(arena, left, right, 3)
+	if !complete || cmp != 0 {
+		t.Fatalf("exact-bound C comparison = %d, complete=%t; want 0, true", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCExactRejectsForwardShapeReference(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	leftChild := cExactCompareParent(t, parser, arena, 9, cExactCompareLeaf(2))
+	left := cExactCompareParent(t, parser, arena, 10, leftChild)
+	rightChild := cExactCompareParent(t, parser, arena, 9, cExactCompareLeaf(2))
+	right := cExactCompareParent(t, parser, arena, 10, rightChild)
+
+	leftNode := stackEntryNode(left)
+	leftShape, ok := arena.rawShapeForRef(leftNode.rawShape)
+	if !ok {
+		t.Fatal("left root shape is unavailable")
+	}
+	children := arena.rawShapeChildren(leftShape)
+	if len(children) != 1 {
+		t.Fatalf("left root child count = %d, want 1", len(children))
+	}
+	children[0].packedEntry.state = StateID(leftNode.rawShape)
+
+	cmp, complete := compareRawStackEntriesCExact(arena, left, right, 8)
+	if complete || cmp != 0 {
+		t.Fatalf("forward-reference comparison = %d, complete=%t; want 0, false", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCExactRejectsMalformedSharedSnapshot(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	shared := &Node{symbol: 9, flags: nodeFlagNamed, rawShape: ^rawShapeRef(0)}
+	left := cExactCompareParent(t, parser, arena, 10, newStackEntryNode(1, shared))
+	right := cExactCompareParent(t, parser, arena, 10, newStackEntryNode(1, shared))
+
+	cmp, complete := compareRawStackEntriesCExact(arena, left, right, 8)
+	if complete || cmp != 0 {
+		t.Fatalf("shared malformed snapshot comparison = %d, complete=%t; want 0, false", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCExactRejectsMalformedChildRange(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	left := cExactCompareParent(t, parser, arena, 10, cExactCompareLeaf(2))
+	right := cExactCompareParent(t, parser, arena, 10, cExactCompareLeaf(2))
+	leftShape, ok := arena.rawShapeForRef(stackEntryNode(left).rawShape)
+	if !ok {
+		t.Fatal("left root shape is unavailable")
+	}
+	leftShape.childRange = rawShapeChildRange((uint64(1) << 48) | (uint64(^uint32(0)) << 16) | 1)
+
+	cmp, complete := compareRawStackEntriesCExact(arena, left, right, 8)
+	if complete || cmp != 0 {
+		t.Fatalf("malformed child-range comparison = %d, complete=%t; want 0, false", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCExactRejectsCapturedZeroForSharedNonLeaf(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	shared := &Node{
+		symbol:   9,
+		flags:    nodeFlagNamed,
+		children: []*Node{{symbol: 2, flags: nodeFlagNamed}},
+	}
+	left := cExactCompareParent(t, parser, arena, 10, newStackEntryNode(1, shared))
+	right := cExactCompareParent(t, parser, arena, 10, newStackEntryNode(1, shared))
+
+	cmp, complete := compareRawStackEntriesCExact(arena, left, right, 8)
+	if complete || cmp != 0 {
+		t.Fatalf("captured-zero shared non-leaf comparison = %d, complete=%t; want 0, false", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCExactRejectsUnsupportedSharedPayload(t *testing.T) {
+	entry := cExactCompareLeaf(7)
+	entry.kind = ^uint32(0)
+	cmp, complete := compareRawStackEntriesCExact(nil, entry, entry, 1)
+	if complete || cmp != 0 {
+		t.Fatalf("unsupported shared payload comparison = %d, complete=%t; want 0, false", cmp, complete)
+	}
+
+	left := cExactCompareLeaf(7)
+	right := cExactCompareLeaf(7)
+	left.kind = ^uint32(0)
+	right.kind = ^uint32(0)
+	cmp, complete = compareRawStackEntriesCExact(nil, left, right, 1)
+	if complete || cmp != 0 {
+		t.Fatalf("unsupported distinct payload comparison = %d, complete=%t; want 0, false", cmp, complete)
+	}
+}
+
 func TestFastVisibleReduceFromGSSDeclinesMultiLinkSpan(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
