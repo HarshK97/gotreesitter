@@ -173,6 +173,9 @@ func (n *gssNode) appendExtraLinkWithLimitAndOwner(link gssMainLink, linkLimit i
 		unsafe.Slice(n.extraLinks, capacity)[count] = link
 		n.extraLinkCount++
 		workCountRecordGraphLinkAddition()
+		if workCountInstrumentationEnabled {
+			workCountTopologyRecordLinkInsert(n, link.prev, count+1, false) // work-count-assembly: topology alternate-link-reuse seam
+		}
 		workCountRecordAlternatePredecessorLinkAppended() // work-count-assembly: alternate predecessor append-reuse seam
 		workCountRecordGSSMutation()                      // work-count-assembly: GSS mutation append-reuse seam
 		return
@@ -198,6 +201,9 @@ func (n *gssNode) appendExtraLinkWithLimitAndOwner(link gssMainLink, linkLimit i
 		owner.packedLinkBytes += delta
 	}
 	workCountRecordGraphLinkAddition()
+	if workCountInstrumentationEnabled {
+		workCountTopologyRecordLinkInsert(n, link.prev, count+1, false) // work-count-assembly: topology alternate-link-grow seam
+	}
 	workCountRecordAlternatePredecessorLinkAppended() // work-count-assembly: alternate predecessor append-grow seam
 	workCountRecordGSSMutation()                      // work-count-assembly: GSS mutation append-grow seam
 }
@@ -854,6 +860,12 @@ func (s *gssStack) pushEntry(entry stackEntry, scratch *gssScratch) {
 		depth = s.head.depth + 1
 	}
 	n := scratch.allocNode(entry, s.head, depth)
+	if workCountInstrumentationEnabled {
+		workCountTopologyRecordNodeAllocation(n)
+		if s.head != nil {
+			workCountTopologyRecordLinkInsert(n, s.head, 0, true) // work-count-assembly: topology primary-link seam
+		}
+	}
 	if s.head != nil {
 		workCountRecordGraphLinkAddition()
 	}
