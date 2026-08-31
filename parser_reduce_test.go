@@ -160,6 +160,56 @@ func TestCompareRawStackEntriesCExactUsesCapturedShapeSnapshot(t *testing.T) {
 	}
 }
 
+func TestCompareRawStackEntriesCExactSupportsZeroChildReceipts(t *testing.T) {
+	left := cExactCompareLeaf(2)
+	right := cExactCompareLeaf(3)
+	stackEntryNode(left).rawShape = rawShapeZeroChildRef
+	stackEntryNode(right).rawShape = rawShapeZeroChildRef
+	if cmp, complete := compareRawStackEntriesCExact(nil, left, right, 1); !complete || cmp != -1 {
+		t.Fatalf("zero-child receipt comparison = %d, complete=%t; want -1, true", cmp, complete)
+	}
+
+	shared := &Node{symbol: 9, flags: nodeFlagNamed, rawShape: rawShapeZeroChildRef}
+	sharedEntry := newStackEntryNode(1, shared)
+	if cmp, complete := compareRawStackEntriesCExact(nil, sharedEntry, sharedEntry, 1); !complete || cmp != 0 {
+		t.Fatalf("shared zero-child receipt = %d, complete=%t; want 0, true", cmp, complete)
+	}
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	leftParent := cExactCompareParent(t, parser, arena, 10, sharedEntry)
+	rightParent := cExactCompareParent(t, parser, arena, 10, sharedEntry)
+	if cmp, complete := compareRawStackEntriesCExact(arena, leftParent, rightParent, 3); !complete || cmp != 0 {
+		t.Fatalf("captured zero-child receipt = %d, complete=%t; want 0, true", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCapturedZeroUsesLiveChildrenWithoutMutation(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	leftChild := &Node{
+		symbol:   9,
+		flags:    nodeFlagNamed,
+		children: []*Node{{symbol: 2, flags: nodeFlagNamed}},
+	}
+	rightChild := &Node{
+		symbol:   9,
+		flags:    nodeFlagNamed,
+		children: []*Node{{symbol: 3, flags: nodeFlagNamed}},
+	}
+	left := cExactCompareParent(t, parser, arena, 10, newStackEntryNode(1, leftChild))
+	right := cExactCompareParent(t, parser, arena, 10, newStackEntryNode(1, rightChild))
+
+	if cmp := parser.compareRawStackEntries(arena, left, right); cmp != -1 {
+		t.Fatalf("ordinary captured-zero comparison = %d, want -1", cmp)
+	}
+	if leftChild.rawShape != 0 || rightChild.rawShape != 0 {
+		t.Fatalf("ordinary comparison mutated child refs to %d/%d", leftChild.rawShape, rightChild.rawShape)
+	}
+}
+
 func TestCompareRawStackEntriesCExactHasNoDepthCutoff(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()

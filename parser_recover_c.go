@@ -3470,7 +3470,7 @@ func (p *Parser) cSelectReplacementParentEntry(arena *nodeArena, existing, candi
 	if existingCost > 0 {
 		return cParentEntryUseCandidate
 	}
-	if p.language != nil && p.language.CompactPackedGSSVersionOrderCertified {
+	if p.compactPackedGSSVersionOrderEnabled() {
 		cmp, complete := compareRawStackEntriesCExact(arena, candidate, existing, cExactParentSelectionWorkLimit)
 		if !complete {
 			return cParentEntrySelectionIncomplete

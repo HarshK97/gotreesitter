@@ -3055,11 +3055,10 @@ func rawStackWalkChildAt(arena *nodeArena, item rawStackWalkEntry, i int) (rawSt
 			shapeRefKnown: true,
 		}, stackEntryHasNode(entry)
 	}
-	if item.shapeRefKnown {
-		// A captured zero or invalid reference is authoritative. Do not
-		// follow a later mutable node shape through the packed entry.
-		return rawStackWalkEntry{}, false
-	}
+	// The ordinary comparator historically followed the live child when a
+	// captured edge carried zero or an invalid ref. Preserve that order without
+	// rewriting the shared Node.rawShape field. The exact C comparator uses its
+	// separate cRawSubtreeChildForCompare path and still fails closed.
 	if node := stackEntryNode(item.entry); node != nil {
 		child, ok := nodeChildEntryAtNoMaterialize(node, i)
 		return rawStackWalkEntry{entry: child}, ok
@@ -3243,6 +3242,14 @@ func cRawSubtreeHeaderForCompare(arena *nodeArena, item rawStackWalkEntry) (cRaw
 	if item.shapeRefKnown {
 		ref = item.shapeRef
 	}
+	if ref == rawShapeZeroChildRef {
+		return cRawSubtreeCompareHeader{
+			symbol:          stackEntryNodeSymbol(item.entry),
+			childCount:      0,
+			childCountExact: true,
+			canDescend:      true,
+		}, true
+	}
 	if ref != 0 {
 		shape, ok := arena.rawShapeForRef(ref)
 		if !ok {
@@ -3338,6 +3345,9 @@ func cRawSubtreeItemsShareSnapshot(arena *nodeArena, left, right rawStackWalkEnt
 			// payload can have changed since either parent captured its edge.
 			return true, stackEntryNodeChildCount(left.entry) == 0
 		}
+		if left.shapeRef == rawShapeZeroChildRef {
+			return true, true
+		}
 		shape, ok := arena.rawShapeForRef(left.shapeRef)
 		if !ok {
 			return true, false
@@ -3351,6 +3361,9 @@ func cRawSubtreeItemsShareSnapshot(arena *nodeArena, left, right rawStackWalkEnt
 	if ref == 0 {
 		// Both roots name the same current payload. This is the Go equivalent
 		// of comparing the same C Subtree value, even without a sidecar.
+		return true, true
+	}
+	if ref == rawShapeZeroChildRef {
 		return true, true
 	}
 	shape, ok := arena.rawShapeForRef(ref)

@@ -1476,10 +1476,24 @@ func cRecoveryBaselineStack(arena *nodeArena, start StateID, visibleNodes int) g
 	return s
 }
 
+func activateCompactPackedGSSVersionOrderForTest(parser *Parser, arena *nodeArena) {
+	if parser == nil || parser.language == nil {
+		return
+	}
+	merge := &glrMergeScratch{
+		language:                    parser.language,
+		packedGSSVersionOrderActive: true,
+		arena:                       arena,
+		parser:                      parser,
+	}
+	parser.mergeScratch = merge
+}
+
 func TestCSelectReplacementParentEntryUsesExactCOrderWhenCertified(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
 	parser := &Parser{language: &Language{CompactPackedGSSVersionOrderCertified: true}}
+	activateCompactPackedGSSVersionOrderForTest(parser, arena)
 
 	existing := cExactCompareParent(t, parser, arena, 10,
 		cExactCompareLeaf(3),
@@ -1500,6 +1514,7 @@ func TestCSelectReplacementParentEntryUsesExactCOrderWhenCertified(t *testing.T)
 
 func TestCSelectReplacementParentEntryRetainsExactEqualIncumbent(t *testing.T) {
 	parser := &Parser{language: &Language{CompactPackedGSSVersionOrderCertified: true}}
+	activateCompactPackedGSSVersionOrderForTest(parser, nil)
 	existing := newStackEntryNode(1, &Node{
 		symbol:    7,
 		flags:     nodeFlagNamed,
@@ -1542,6 +1557,7 @@ func TestCAppendActionReductionVersionsStopsOnIncompleteExactSelection(t *testin
 	parser.language.CompactPackedGSSVersionOrderCertified = true
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
+	activateCompactPackedGSSVersionOrderForTest(parser, arena)
 
 	child := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
 	newShapelessParent := func() *Node {
@@ -1555,6 +1571,11 @@ func TestCAppendActionReductionVersionsStopsOnIncompleteExactSelection(t *testin
 	if got := parser.cSelectReplacementParentEntry(arena, leftEntry, rightEntry); got != cParentEntrySelectionIncomplete {
 		t.Fatalf("certified shapeless selection = %d, want incomplete", got)
 	}
+	parser.mergeScratch.packedGSSVersionOrderActive = false
+	if got := parser.cSelectReplacementParentEntry(arena, leftEntry, rightEntry); got != cParentEntryRetainExisting {
+		t.Fatalf("inactive certified selection = %d, want retain-existing", got)
+	}
+	parser.mergeScratch.packedGSSVersionOrderActive = true
 	parser.language.CompactPackedGSSVersionOrderCertified = false
 	if got := parser.cSelectReplacementParentEntry(arena, leftEntry, rightEntry); got != cParentEntryRetainExisting {
 		t.Fatalf("ordinary shapeless selection = %d, want retain-existing", got)
