@@ -119,17 +119,11 @@ jobs:
       - name: Route-equality seed corpus regression (required)
         run: |
           set -euo pipefail
-          GOMAXPROCS=1 go test . -run '^FuzzAdmissionRouteEquality$' -count=1 -v
+          GOMAXPROCS=1 go test . -run '^(FuzzAdmissionRouteEquality|TestAdmissionRouteEqualityLockedCExceptions)$' -count=1 -v
 
       - name: Route-equality bounded live fuzzing, 45s (advisory)
-        # Non-blocking, mirroring the grammargen_visibility job's pattern
-        # below for a known, currently-open backlog: live mutation finds a
-        # false-clean divergence in the compact route's root-reduce leaf-
-        # tiling exemption in seconds, on any curated language, independent
-        # of this PR's changes (see the FuzzAdmissionRouteEquality doc
-        # comment in fuzz_admission_route_equality_test.go and this
-        # tranche's spore for the full root-cause writeup). Promote this
-        # step to blocking once that follow-up lands.
+        # Keep this non-blocking until clean-cache, per-language soaks bound
+        # the workload and reproduce or retire the reported Haskell residual.
         run: |
           set +e
           GOMAXPROCS=1 go test . -run '^$' -fuzz '^FuzzAdmissionRouteEquality$' -fuzztime=45s
@@ -137,13 +131,13 @@ jobs:
           set -e
 
           if [ "$status" -ne 0 ]; then
-            echo "::warning::route-equality live fuzzing found a divergence (status ${status}); informational until the known root-reduce leaf-tiling exemption gap is fixed (see fuzz_admission_route_equality_test.go)."
+            echo "::warning::route-equality live fuzzing found a divergence (status ${status}); informational until the clean-cache promotion gate completes."
             {
               echo "### Admission Route-Equality Live Fuzzing"
               echo
               echo "\`go test . -run '^\$' -fuzz FuzzAdmissionRouteEquality -fuzztime=45s\` exited with status \`${status}\`."
               echo
-              echo "This step is informational until the documented root-reduce leaf-tiling exemption gap is fixed."
+              echo "This step is informational until clean-cache, per-language promotion soaks complete."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -855,7 +849,7 @@ jobs:
             --test-parallel 1 \
             --c-ref-build-jobs 1 \
             --timeout 20m \
-            --run '^(TestCompactT3OracleAdjudication|TestCompactT3JavaScriptRecoveryProfileCharacterization|TestCompactT3JavaScriptRecoveryRouteSeedOracleParity|TestCompactT3JavaScriptRecoveryMutationDifferential|TestCompactJavaScriptS5RecoveryMutationDifferential)$'
+            --run '^(TestCompactT3OracleAdjudication|TestCompactT3JavaScriptRecoveryProfileCharacterization|TestCompactT3JavaScriptRecoveryRouteSeedOracleParity|TestCompactT3JavaScriptRecoveryMutationDifferential|TestCompactJavaScriptS5RecoveryMutationDifferential|TestCompactRouteLockedCExceptions)$'
 
   # merge-event-census-cgo runs stage M0 of spec.merge-time-election.v1: the
   # census that counts stack-merge events on both sides and breaks production's

@@ -1,0 +1,68 @@
+{
+  "schema": "compact-route-locked-c-exceptions-v1",
+  "version": 1,
+  "tracking_issue": "https://github.com/odvcencio/gotreesitter/issues/984",
+  "witness_count": 2,
+  "witnesses": [
+    {
+      "id": "erlang_issue984_no_newline",
+      "language": "erlang",
+      "source_utf8": "000\"0A!A \"A\"=0:A0!)A\"0%0000",
+      "source_bytes": 27,
+      "source_sha256": "ad9482f4aabfc3f348a20f6071a2732dcf0473d87b61fa8df4f960e84d4b1ab4",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_module": "github.com/tree-sitter/go-tree-sitter",
+        "binding_version": "v0.25.0",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_version": "0.25.1",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/WhatsApp/tree-sitter-erlang",
+        "grammar_commit": "1d78195c4fbb1fc027eb3e4220427f1eb8bfc89e",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "361e3332e8d16e13df8621dc9d599be36ce045b23567543b421b551b8ca68085"
+      },
+      "expected": {
+        "c_has_error": false,
+        "compact_has_error": false,
+        "production_has_error": false,
+        "compact_c_deep_sha256": "93429d2e59861512ce66b0d09a095889b67b640cda8bb916c61b93ba4195811e",
+        "production_deep_sha256": "f530ee827cfa989ca778f3187874d5e92d4cbad2582a05d6326c53f179e182e3",
+        "compact_root_children": 6,
+        "production_root_children": 4
+      }
+    },
+    {
+      "id": "erlang_issue984_trailing_newline",
+      "language": "erlang",
+      "source_utf8": "000\"0A!A \"A\"=0:A0!)A\"0%0000\n",
+      "source_bytes": 28,
+      "source_sha256": "8498d7be6e53209fab56a0a9af04a3b26940ec901d31b85da22a8faf6b3f3db6",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_module": "github.com/tree-sitter/go-tree-sitter",
+        "binding_version": "v0.25.0",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_version": "0.25.1",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/WhatsApp/tree-sitter-erlang",
+        "grammar_commit": "1d78195c4fbb1fc027eb3e4220427f1eb8bfc89e",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "361e3332e8d16e13df8621dc9d599be36ce045b23567543b421b551b8ca68085"
+      },
+      "expected": {
+        "c_has_error": false,
+        "compact_has_error": false,
+        "production_has_error": false,
+        "compact_c_deep_sha256": "dcfdecf279b3537deb52c3a47d5a7a7f3ef66085f6b1a4249156618c26cd718e",
+        "production_deep_sha256": "0d785c786fc75c9e24bb516ca017a7ab345891fd890a99158da0b750b158d461",
+        "compact_root_children": 6,
+        "production_root_children": 4
+      }
+    }
+  ]
+}
