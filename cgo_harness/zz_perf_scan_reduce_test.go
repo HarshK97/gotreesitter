@@ -304,7 +304,11 @@ func perfScanReduceScoreboardsForMode(paths []string, lockPath, lockSHA string, 
 				return nil, fmt.Errorf("shard %s language %q file %q classification: %w", shardPath, lang, file.Path, err)
 			}
 		}
-		reportClosure := perfScanReportClosureStatus(row.Status)
+		if perfScanReportClosureStatus(row.Status) && row.Oracle != nil &&
+			(row.Status == "no_static_c_oracle" || shard.Oracle == nil) {
+			return nil, fmt.Errorf("shard %s typed closure status %q contradicts a language oracle identity", shardPath, row.Status)
+		}
+		reportClosure := perfScanReportClosureRow(row)
 		if reportClosure {
 			if mode != perfScanReduceModeReport {
 				return nil, fmt.Errorf("shard %s status %q is authenticated failure evidence only in report mode", shardPath, row.Status)
@@ -398,7 +402,7 @@ func perfScanReduceScoreboardsForMode(paths []string, lockPath, lockSHA string, 
 	}
 	for _, lang := range wantLanguages {
 		row := rowsByLang[lang]
-		if mode != perfScanReduceModeReport || !perfScanReportClosureStatus(row.Status) {
+		if mode != perfScanReduceModeReport || !perfScanReportClosureRow(row) {
 			perfScanRefreshLanguageAggregates(row, outputConfig)
 		}
 		board.Languages = append(board.Languages, row)
@@ -425,6 +429,10 @@ func perfScanReportClosureStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func perfScanReportClosureRow(row *perfScanLanguage) bool {
+	return row != nil && row.Oracle == nil && perfScanReportClosureStatus(row.Status)
 }
 
 func perfScanValidateReportClosureShard(shard *perfScanScoreboard) error {
@@ -824,6 +832,35 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("no corpus retains authenticated static oracle identity", func(t *testing.T) {
+		paths := makeInputs(t, func(_ *perfScanScoreboard, pythonShard *perfScanScoreboard) {
+			row := pythonShard.Languages[0]
+			row.Status = "no_corpus"
+			row.Detail = "no corpus directory at /corpus/corpus_sources/python"
+			row.FilesSelected = 0
+			row.FilesMeasured = 0
+			row.BytesMeasured = 0
+			row.Files = nil
+			row.Axes = map[string]*perfScanLangAxis{}
+			row.FullParseSplit = nil
+			pythonShard.FullParseSplit = nil
+			gate := perfScanEvaluateHardGate(pythonShard)
+			pythonShard.Gate = &gate
+		})
+		board, err := reduce(paths)
+		if err != nil {
+			t.Fatalf("reduce authenticated no-corpus evidence: %v", err)
+		}
+		if board.Oracle == nil || len(board.Oracle.Languages) != 2 || board.Languages[1].Oracle == nil {
+			t.Fatalf("reduced no-corpus identity = %+v", board.Oracle)
+		}
+		for _, finding := range board.Gate.Failures {
+			if finding.Kind == "oracle" {
+				t.Fatalf("authenticated no-corpus row produced an oracle defect: %+v", finding)
+			}
+		}
+	})
 
 	t.Run("typed C admission timeout remains authenticated failing evidence", func(t *testing.T) {
 		paths := makeInputs(t, func(_ *perfScanScoreboard, pythonShard *perfScanScoreboard) {
