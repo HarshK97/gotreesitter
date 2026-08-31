@@ -4483,7 +4483,11 @@ func gssMainAddLinkSeenMutate(scratch *glrMergeScratch, n *gssNode, prev *gssNod
 		}
 		return false
 	}
-	n.appendExtraLink(gssMainLink{prev: prev, entry: entry})
+	var owner *gssScratch
+	if scratch != nil {
+		owner = scratch.gssOwner
+	}
+	n.appendExtraLinkWithOwner(gssMainLink{prev: prev, entry: entry}, owner)
 	n.hash = 0
 	return true
 }
