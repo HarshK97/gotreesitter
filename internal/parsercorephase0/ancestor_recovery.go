@@ -316,7 +316,7 @@ func (c *Core) uniqueAncestorRecoveryPath(candidate StackSummaryCandidate) ([]li
 	route := make([]linkRecord, 0, int(candidate.linkDepth))
 	var selected []linkRecord
 	var selectedTarget NodeID
-	var matchingPaths uint64
+	var completePaths uint64
 	matches := 0
 	steps := 0
 	const maxSteps = stackSummaryMaxVisitedNodes * StackSummaryMaxDepth
@@ -327,22 +327,27 @@ func (c *Core) uniqueAncestorRecoveryPath(candidate StackSummaryCandidate) ([]li
 		if err != nil {
 			return err
 		}
-		if len(route) != 0 && depth == wantDepth && node.state == candidate.state {
-			matchingPaths++
-			if matchingPaths > c.limits.MaxPopPaths {
+		// C stops each pop path at the first node with the requested subtree
+		// depth. Count that path before the goal-state filter.
+		if depth == wantDepth {
+			completePaths++
+			if completePaths > c.limits.MaxPopPaths {
 				return errors.New("parser-core phase zero: ancestor recovery pop enumeration cap")
 			}
-			matches++
-			if matches > 1 {
-				return errors.New("parser-core phase zero: ancestor recovery candidate has ambiguous pop paths")
+			if len(route) != 0 && node.state == candidate.state {
+				matches++
+				if matches > 1 {
+					return errors.New("parser-core phase zero: ancestor recovery candidate has ambiguous pop paths")
+				}
+				if node.byteOffset != candidate.byteOffset {
+					return errors.New("parser-core phase zero: stale stack-summary candidate position")
+				}
+				if len(route) == int(candidate.linkDepth) {
+					selected = append(selected[:0], route...)
+					selectedTarget = id
+				}
 			}
-			if node.byteOffset != candidate.byteOffset {
-				return errors.New("parser-core phase zero: stale stack-summary candidate position")
-			}
-			if len(route) == int(candidate.linkDepth) {
-				selected = append(selected[:0], route...)
-				selectedTarget = id
-			}
+			return nil
 		}
 		var inline [inlineAdjacencyCapacity]linkRecord
 		links, err := c.publishedNodeLinksInto(inline[:0], *node)

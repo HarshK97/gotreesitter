@@ -360,6 +360,56 @@ func TestRecoverToAncestorStateRejectsAmbiguousDeduplicatedCandidate(t *testing.
 	assertTransactionJournalClean(t, compact)
 }
 
+func TestRecoverToAncestorStateCountsNonmatchingPopPathsAgainstCap(t *testing.T) {
+	compact := newAncestorRecoveryTestCore(t, &fakeTable{}, Limits{
+		MaxPopPaths: 1, MaxLinksPerBoundary: 3,
+	})
+	left, err := compact.Seed(7, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	middle, err := compact.Seed(8, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := compact.Seed(9, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := appendAncestorRecoveryPayload(t, compact, 1, 0, 1, false)
+	key := compact.shiftedBoundaryKey(30, 1)
+	head, err := compact.condense(key, linkInput{prev: left.Node, payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err = compact.condense(key, linkInput{prev: middle.Node, payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err = compact.condense(key, linkInput{prev: right.Node, payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := compact.StackSummaryCandidates(head, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := ancestorRecoveryCandidateForState(t, candidates, 7)
+
+	before := captureSchedulerTransactionState(compact)
+	err = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		_, innerErr := compact.RecoverToAncestorStateOwned(owner, candidate)
+		return innerErr
+	})
+	if err == nil || !strings.Contains(err.Error(), "pop enumeration cap") {
+		t.Fatalf("recovery error=%v, want pop enumeration cap", err)
+	}
+	if after := captureSchedulerTransactionState(compact); !reflect.DeepEqual(after, before) {
+		t.Fatalf("capped recovery changed storage: before=%+v after=%+v", before, after)
+	}
+	assertTransactionJournalClean(t, compact)
+}
+
 func TestRecoverToAncestorStateRejectsLimitsAndRollsBackPublication(t *testing.T) {
 	const lookahead = Symbol(9)
 	tables := &fakeTable{actions: map[tableCell][]Action{
