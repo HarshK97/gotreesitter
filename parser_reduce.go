@@ -948,6 +948,7 @@ func (p *Parser) pushOrExtendErrorNode(s *glrStack, state StateID, tok Token, no
 
 	errNode := newLeafNodeInArena(arena, errorSymbol, true,
 		tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+	p.stampCompactPackedGSSZeroChildReceipt(&errNode.rawShape)
 	errNode.setHasError(true)
 	if trackChildErrors != nil {
 		*trackChildErrors = true
@@ -974,6 +975,7 @@ func (p *Parser) pushLexErrorRunLeaf(s *glrStack, state StateID, tok Token, node
 	}
 	leaf := newLeafNodeInArena(arena, errorSymbol, true,
 		tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+	p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 	leaf.setHasError(true)
 
 	if s != nil {
@@ -992,6 +994,7 @@ func (p *Parser) pushLexErrorRunLeaf(s *glrStack, state StateID, tok Token, node
 			// cErrRegionPostAbsorb, parser_recover_c.go).
 			pre := p.cErrRegionPreAbsorb(top)
 			top.children = append(top.children, leaf)
+			invalidateRawShapeAfterChildMutation(top)
 			top.endByte = tok.EndByte
 			top.endPoint = tok.EndPoint
 			top.setHasError(true)
@@ -1439,6 +1442,7 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 		// Fold the unparseable current token into the ERROR span.
 		tokLeaf := newLeafNodeInArena(arena, tok.Symbol, p.isNamedSymbol(tok.Symbol),
 			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+		p.stampCompactPackedGSSZeroChildReceipt(&tokLeaf.rawShape)
 		tokLeaf.setHasError(true)
 		tokLeaf.setExternalScannerToken(tok.ExternalScannerToken)
 		errChildren = append(errChildren, tokLeaf)
@@ -1581,12 +1585,15 @@ func (p *Parser) materializeAnonymousChildrenForRecoveredError(source []byte, n 
 		}
 		startPoint := advancePointByBytes(n.startPoint, source[int(n.startByte):pos])
 		endPoint := advancePointByBytes(startPoint, source[pos:pos+1])
-		children = append(children, newLeafNodeInArena(arena, tokSym, false, uint32(pos), uint32(pos+1), startPoint, endPoint))
+		leaf := newLeafNodeInArena(arena, tokSym, false, uint32(pos), uint32(pos+1), startPoint, endPoint)
+		p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
+		children = append(children, leaf)
 	}
 	if len(children) == 0 {
 		return
 	}
 	n.children = children
+	invalidateRawShapeAfterChildMutation(n)
 	n.setNamed(true)
 	n.setHasError(true)
 	nodeBumpEquivVersionBeforePublication(n)
@@ -2543,6 +2550,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		extra := act.Extra
 		if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
 			leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
+			p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 			leaf.setExtra(extra)
 			leaf.setExternalScannerToken(tok.ExternalScannerToken)
 			leaf.setLexerSkippedPrefixAtSourceStart(tok.lexerSkippedPrefix && tok.lexerSkippedPrefixStart == 0)
@@ -2552,6 +2560,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		} else {
 			leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named,
 				tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+			p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 			leaf.setExtra(extra)
 			leaf.setExternalScannerToken(tok.ExternalScannerToken)
 			leaf.setLexerSkippedPrefixAtSourceStart(tok.lexerSkippedPrefix && tok.lexerSkippedPrefixStart == 0)
@@ -2565,6 +2574,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 	} else if p.canCompactFullShiftLeaf(act, tok) {
 		leaf := newCompactFullLeafInArena(arena, tok.Symbol, named,
 			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+		p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 		if cp, ok := p.currentExternalCompactFullLeafCheckpointRef(arena, tok); ok {
 			leaf.checkpoint = cp
 			leaf.hasCheckpoint = true
@@ -2633,6 +2643,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		}
 		leaf := newLeafNodeInArena(arena, tok.Symbol, named,
 			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+		p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 		if isMissing {
 			leaf.setMissing(true)
 			leaf.setHasError(true)
@@ -3417,35 +3428,52 @@ func compareRawStackEntriesCExact(arena *nodeArena, left, right stackEntry, work
 }
 
 func (p *Parser) compareRawStackEntries(arena *nodeArena, a, b stackEntry) int {
-	return p.compareRawStackEntriesRec(arena, a, b, 0)
+	return p.compareRawStackWalkEntriesRec(
+		arena,
+		rawStackWalkEntry{entry: a},
+		rawStackWalkEntry{entry: b},
+		0,
+	)
 }
 
-func (p *Parser) compareRawStackEntriesRec(arena *nodeArena, a, b stackEntry, depth int) int {
+func rawStackWalkEntryRef(item rawStackWalkEntry) rawShapeRef {
+	if item.shapeRefKnown {
+		return item.shapeRef
+	}
+	return stackEntryRawShapeRef(item.entry)
+}
+
+func rawStackWalkEntryHeader(arena *nodeArena, item rawStackWalkEntry) (symbol Symbol, childCount int, exact bool) {
+	ref := rawStackWalkEntryRef(item)
+	if ref == rawShapeZeroChildRef {
+		return stackEntryNodeSymbol(item.entry), 0, true
+	}
+	if shape, _, ok := rawShapeForStackWalkEntry(arena, item); ok {
+		return shape.symbol, shape.childCount(), true
+	}
+	return stackEntryNodeSymbol(item.entry), stackEntryNodeChildCount(item.entry), false
+}
+
+func (p *Parser) compareRawStackWalkEntriesRec(arena *nodeArena, a, b rawStackWalkEntry, depth int) int {
 	if depth > maxTreeWalkDepth {
 		return 0
 	}
-	if stackEntryHasNode(a) != stackEntryHasNode(b) {
-		if !stackEntryHasNode(a) {
+	if stackEntryHasNode(a.entry) != stackEntryHasNode(b.entry) {
+		if !stackEntryHasNode(a.entry) {
 			return -1
 		}
 		return 1
 	}
-	if !stackEntryHasNode(a) {
+	if !stackEntryHasNode(a.entry) {
 		return 0
 	}
-	aShape, aHasShape := rawShapeForStackEntry(arena, a)
-	bShape, bHasShape := rawShapeForStackEntry(arena, b)
-	if aHasShape != bHasShape {
+	as, ac, aHasHeader := rawStackWalkEntryHeader(arena, a)
+	bs, bc, bHasHeader := rawStackWalkEntryHeader(arena, b)
+	if aHasHeader != bHasHeader {
 		// A one-sided sidecar means the exact raw comparison lacks data. Fall
 		// back to materialized/pending views below instead of inventing order.
-		aHasShape = false
-		bHasShape = false
-	}
-	as, bs := stackEntryNodeSymbol(a), stackEntryNodeSymbol(b)
-	ac, bc := stackEntryNodeChildCount(a), stackEntryNodeChildCount(b)
-	if aHasShape && bHasShape {
-		as, bs = aShape.symbol, bShape.symbol
-		ac, bc = aShape.childCount(), bShape.childCount()
+		as, bs = stackEntryNodeSymbol(a.entry), stackEntryNodeSymbol(b.entry)
+		ac, bc = stackEntryNodeChildCount(a.entry), stackEntryNodeChildCount(b.entry)
 	}
 	if as != bs {
 		if as < bs {
@@ -3454,9 +3482,9 @@ func (p *Parser) compareRawStackEntriesRec(arena *nodeArena, a, b stackEntry, de
 		return 1
 	}
 	if p.symbolIsGeneratedRepeatAux(as) &&
-		stackEntryNodeStartByte(a) == stackEntryNodeStartByte(b) &&
-		stackEntryNodeEndByte(a) != stackEntryNodeEndByte(b) {
-		if stackEntryNodeEndByte(a) < stackEntryNodeEndByte(b) {
+		stackEntryNodeStartByte(a.entry) == stackEntryNodeStartByte(b.entry) &&
+		stackEntryNodeEndByte(a.entry) != stackEntryNodeEndByte(b.entry) {
+		if stackEntryNodeEndByte(a.entry) < stackEntryNodeEndByte(b.entry) {
 			return -1
 		}
 		return 1
@@ -3468,8 +3496,8 @@ func (p *Parser) compareRawStackEntriesRec(arena *nodeArena, a, b stackEntry, de
 		return 1
 	}
 	for i := 0; i < ac; i++ {
-		achild, aok := rawStackEntryChildAt(arena, a, i)
-		bchild, bok := rawStackEntryChildAt(arena, b, i)
+		achild, aok := rawStackWalkChildAt(arena, a, i)
+		bchild, bok := rawStackWalkChildAt(arena, b, i)
 		if aok != bok {
 			if !aok {
 				return -1
@@ -3479,12 +3507,12 @@ func (p *Parser) compareRawStackEntriesRec(arena *nodeArena, a, b stackEntry, de
 		if !aok {
 			continue
 		}
-		if rawStackEntryChildPairHashEqual(arena, achild, bchild) {
+		if rawStackWalkChildPairHashEqual(arena, achild, bchild) {
 			// Bottom-up fingerprint match (see the raw-shape hash /
 			// rawShapeComputeContentHash): this child's subtree is treated as
 			// interchangeable with its counterpart under the same
 			// negligible-collision hash tradeoff documented on
-			// rawStackEntryChildPairHashEqual, so the recursive comparison
+			// rawStackWalkChildPairHashEqual, so the recursive comparison
 			// below is skipped rather than re-walked. This is what keeps this
 			// comparison (used both for raw-shape tie-break ordering and, via
 			// the forest link-cap eviction path, for scoring every new
@@ -3496,7 +3524,7 @@ func (p *Parser) compareRawStackEntriesRec(arena *nodeArena, a, b stackEntry, de
 			// statement.
 			continue
 		}
-		cmp := p.compareRawStackEntriesRec(arena, achild, bchild, depth+1)
+		cmp := p.compareRawStackWalkEntriesRec(arena, achild, bchild, depth+1)
 		if cmp != 0 {
 			return cmp
 		}
@@ -3504,8 +3532,8 @@ func (p *Parser) compareRawStackEntriesRec(arena *nodeArena, a, b stackEntry, de
 	return 0
 }
 
-// rawStackEntryChildPairHashEqual reports whether a and b are TREATED AS
-// equal (cmp==0) under compareRawStackEntriesRec, in O(1) and without walking
+// rawStackWalkChildPairHashEqual reports whether a and b are TREATED AS
+// equal (cmp==0) under compareRawStackWalkEntriesRec, in O(1) and without walking
 // their subtrees. This is not a proof of equality — it is a probabilistic
 // shortcut: it requires BOTH sides to carry a captured raw shape with
 // matching symbol, child count, and shape hash (see
@@ -3522,29 +3550,29 @@ func (p *Parser) compareRawStackEntriesRec(arena *nodeArena, a, b stackEntry, de
 // treated as interchangeable for ambiguity/ordering purposes. It can never
 // affect memory safety — this result only feeds comparison/ordering
 // decisions, never indexing, allocation, or bounds. The span check exists
-// because compareRawStackEntriesRec's "generated repeat aux" tie-break reads
+// because compareRawStackWalkEntriesRec's "generated repeat aux" tie-break reads
 // the live entry's own span rather than shape data; requiring equal spans
 // here falsifies that tie-break's precondition
 // (stackEntryNodeEndByte(a) != stackEntryNodeEndByte(b)), so skipping is safe
 // whether or not the symbol is a generated-repeat-aux nonterminal.
-func rawStackEntryChildPairHashEqual(arena *nodeArena, a, b stackEntry) bool {
+func rawStackWalkChildPairHashEqual(arena *nodeArena, a, b rawStackWalkEntry) bool {
 	if arena == nil {
 		return false
 	}
-	aShape, aHasShape := rawShapeForStackEntry(arena, a)
+	aShape, aRef, aHasShape := rawShapeForStackWalkEntry(arena, a)
 	if !aHasShape {
 		return false
 	}
-	bShape, bHasShape := rawShapeForStackEntry(arena, b)
+	bShape, bRef, bHasShape := rawShapeForStackWalkEntry(arena, b)
 	if !bHasShape {
 		return false
 	}
-	aHash, aHashOK := arena.rawShapeHash(stackEntryRawShapeRef(a))
-	bHash, bHashOK := arena.rawShapeHash(stackEntryRawShapeRef(b))
+	aHash, aHashOK := arena.rawShapeHash(aRef)
+	bHash, bHashOK := arena.rawShapeHash(bRef)
 	if !aHashOK || !bHashOK || aShape.symbol != bShape.symbol || aShape.childCount() != bShape.childCount() || aHash != bHash {
 		return false
 	}
-	return stackEntryNodeStartByte(a) == stackEntryNodeStartByte(b) && stackEntryNodeEndByte(a) == stackEntryNodeEndByte(b)
+	return stackEntryNodeStartByte(a.entry) == stackEntryNodeStartByte(b.entry) && stackEntryNodeEndByte(a.entry) == stackEntryNodeEndByte(b.entry)
 }
 
 func (p *Parser) symbolIsGeneratedRepeatAux(sym Symbol) bool {
@@ -3556,31 +3584,6 @@ func (p *Parser) symbolIsGeneratedRepeatAux(sym Symbol) bool {
 		return false
 	}
 	return p.language.SymbolMetadata[idx].GeneratedRepeatAux
-}
-
-func rawStackEntryChildAt(arena *nodeArena, entry stackEntry, i int) (stackEntry, bool) {
-	if shape, ok := rawShapeForStackEntry(arena, entry); ok {
-		children := arena.rawShapeChildren(shape)
-		if i < 0 || i >= len(children) {
-			return stackEntry{}, false
-		}
-		child := children[i]
-		childEntry := child.entry()
-		if ref := child.shapeRef(); ref != 0 {
-			if n := stackEntryNode(childEntry); n != nil {
-				n.rawShape = ref
-			}
-		}
-		return childEntry, stackEntryHasNode(childEntry)
-	}
-	if node := stackEntryNode(entry); node != nil {
-		return nodeChildEntryAtNoMaterialize(node, i)
-	}
-	if parent := stackEntryPendingParent(entry); parent != nil {
-		child := parent.childEntry(arena, i)
-		return child, stackEntryHasNode(child)
-	}
-	return stackEntry{}, false
 }
 
 func rawShapeForStackEntry(arena *nodeArena, entry stackEntry) (*rawShape, bool) {
@@ -4071,6 +4074,10 @@ func (p *Parser) tryFastUnaryCollapseFromGSS(s *glrStack, act ParseAction, tok T
 	if head.prev == nil {
 		return false
 	}
+	var rawShape rawShapeRef
+	if p.compactPackedGSSVersionOrderEnabled() {
+		rawShape = p.captureRawShape(gssScratch, arena, act.Symbol, act.ProductionID, []stackEntry{head.entry}, 0, 1)
+	}
 	collapsed, _ := p.collapseUnaryChildForReductionWithRule(act, arena, child)
 	if collapsed == nil {
 		return false
@@ -4089,6 +4096,7 @@ func (p *Parser) tryFastUnaryCollapseFromGSS(s *glrStack, act ParseAction, tok T
 	collapsed.productionID = act.ProductionID
 	collapsed.preGotoState = topState
 	collapsed.parseState = targetState
+	collapsed.rawShape = rawShape
 	nodeBumpEquivVersionMetadata(collapsed)
 	if !s.truncateBeforePush(targetDepth) {
 		s.dead = true
@@ -4392,7 +4400,16 @@ func (p *Parser) applyReduceActionFromGSS(source []byte, s *glrStack, act ParseA
 }
 
 func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, _ []stackEntry, deferParentLinks bool, trackChildErrors bool) {
-	forks := p.selectedReduceWindowsFromGSS(arena, act, s, int(act.ChildCount), maxStacksPerMergeKey)
+	var forks []reduceFork
+	if p.compactPackedGSSVersionOrderEnabled() {
+		// The certified action-cell transaction keeps its source version
+		// unchanged while these outputs are built. Enumerate every pop slice in
+		// C's iterator-wave order; the transaction then groups and selects the
+		// same-pop candidates before it publishes physical versions.
+		forks = cWaveReduceWindowsFromGSS(s, int(act.ChildCount))
+	} else {
+		forks = p.selectedReduceWindowsFromGSS(arena, act, s, int(act.ChildCount), maxStacksPerMergeKey)
+	}
 	if perfCountersEnabled {
 		perfRecordReduceForkCall(len(forks))
 	}
@@ -4583,6 +4600,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, 
 		childStart = time.Now()
 	}
 	var childBuf [8]*Node
+	var rawBuf [8]stackEntry
 	symbolMeta := p.language.SymbolMetadata
 	n := s.gss.head
 	for i := childCount - 1; i >= 0; i-- {
@@ -4601,6 +4619,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, 
 			return false
 		}
 		childBuf[i] = child
+		rawBuf[i] = n.entry
 		n = n.prev
 	}
 	if n == nil {
@@ -4627,6 +4646,11 @@ func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, 
 		parentStart = time.Now()
 	}
 	parent := p.newReduceParentNode(arena, act.Symbol, named, children, nil, nil, act.ProductionID, deferParentLinks, trackChildErrors)
+	rawWindow := rawBuf[:childCount]
+	if p.compactPackedGSSVersionOrderEnabled() {
+		parent.rawShape = p.captureRawShape(gssScratch, arena, act.Symbol, act.ProductionID, rawWindow, 0, len(rawWindow))
+	}
+	setReduceNodeDynamicPrecedence(parent, rawWindow, 0, len(rawWindow), act)
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), nil, nil, reduceChildPathFastGSS)
 	if timing != nil {
 		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()

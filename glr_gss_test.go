@@ -750,6 +750,356 @@ func TestGSSEntryHashIncludesDynamicPrecedence(t *testing.T) {
 	}
 }
 
+func TestCertifiedCStackLinkPayloadEquivalence(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	language := &Language{CompactPackedGSSVersionOrderCertified: true}
+	parser := &Parser{language: language}
+	scratch := &glrMergeScratch{
+		language:                    language,
+		packedGSSVersionOrderActive: true,
+		arena:                       arena,
+		parser:                      parser,
+	}
+
+	parent := func(start uint32, rawSymbol Symbol, childSymbols ...Symbol) stackEntry {
+		children := make([]*Node, 0, len(childSymbols))
+		rawChildren := make([]stackEntry, 0, len(childSymbols))
+		for _, childSymbol := range childSymbols {
+			child := newLeafNodeInArena(arena, childSymbol, true, start, start+2, Point{}, Point{Column: 2})
+			children = append(children, child)
+			rawChildren = append(rawChildren, newStackEntryNode(1, child))
+		}
+		node := newParentNodeInArena(arena, 40, true, children, nil, 0)
+		node.startByte = start
+		node.endByte = start + 2
+		node.rawShape = parser.captureRawShape(nil, arena, rawSymbol, 0, rawChildren, 0, len(rawChildren))
+		return newStackEntryNode(7, node)
+	}
+
+	left := parent(10, 40, 1)
+	right := parent(10, 40, 2)
+	ordinary := &glrMergeScratch{language: &Language{}, arena: arena, parser: parser}
+	if stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(ordinary, left, right) {
+		t.Fatal("ordinary link comparison lost its deep child check")
+	}
+	inactive := *scratch
+	inactive.packedGSSVersionOrderActive = false
+	if cStackLinkPayloadsEquivalentAtOffsets(&inactive, left, right, 5, true, 5, true) {
+		t.Fatal("certified capability activated outside a fresh full parse")
+	}
+	if !cStackLinkPayloadsEquivalentAtOffsets(scratch, left, right, 5, true, 5, true) {
+		t.Fatal("certified C comparison rejected equal shallow subtree fields")
+	}
+
+	shifted := parent(20, 40, 3)
+	if !cStackLinkPayloadsEquivalentAtOffsets(scratch, left, shifted, 5, true, 15, true) {
+		t.Fatal("certified C comparison used absolute spans instead of padding and size")
+	}
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, left, shifted, 5, true, 14, true) {
+		t.Fatal("certified C comparison ignored a padding mismatch")
+	}
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, left, shifted, 11, true, 15, true) {
+		t.Fatal("certified C comparison accepted a padding underflow")
+	}
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, left, shifted, 5, false, 15, true) {
+		t.Fatal("certified C comparison accepted an unauthenticated predecessor offset")
+	}
+	differentSize := parent(20, 40, 4)
+	stackEntryNode(differentSize).endByte++
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, left, differentSize, 5, true, 15, true) {
+		t.Fatal("certified C comparison ignored a subtree size mismatch")
+	}
+	differentExtra := parent(20, 40, 5)
+	stackEntryNode(differentExtra).setExtra(true)
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, left, differentExtra, 5, true, 15, true) {
+		t.Fatal("certified C comparison ignored an extra-flag mismatch")
+	}
+	differentChildren := parent(20, 40, 6, 7)
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, left, differentChildren, 5, true, 15, true) {
+		t.Fatal("certified C comparison ignored a child-count mismatch")
+	}
+	differentSymbol := parent(20, 41, 8)
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, left, differentSymbol, 5, true, 15, true) {
+		t.Fatal("certified C comparison ignored a raw-symbol mismatch")
+	}
+
+	leftWrapper := newLeafNodeInArena(arena, 50, true, 10, 12, Point{}, Point{Column: 2})
+	leftWrapper.rawShape = parser.captureRawShape(nil, arena, 70, 0, []stackEntry{newStackEntryNode(1, leftWrapper)}, 0, 1)
+	rightWrapper := newLeafNodeInArena(arena, 51, true, 20, 22, Point{}, Point{Column: 2})
+	rightWrapper.rawShape = parser.captureRawShape(nil, arena, 70, 0, []stackEntry{newStackEntryNode(1, rightWrapper)}, 0, 1)
+	if !cStackLinkPayloadsEquivalentAtOffsets(scratch, newStackEntryNode(8, leftWrapper), newStackEntryNode(8, rightWrapper), 5, true, 15, true) {
+		t.Fatal("certified C comparison rejected equal invisible-wrapper headers")
+	}
+
+	unknownLeft := newStackEntryNode(8, &Node{symbol: 80, startByte: 10, endByte: 12})
+	unknownRight := newStackEntryNode(8, &Node{symbol: 80, startByte: 20, endByte: 22})
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, unknownLeft, unknownRight, 5, true, 15, true) {
+		t.Fatal("certified C comparison accepted unknown raw headers")
+	}
+}
+
+func TestCertifiedCStackLinkZeroArityReceiptsCoverLeafKinds(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	language := &Language{CompactPackedGSSVersionOrderCertified: true}
+	scratch := &glrMergeScratch{language: language, packedGSSVersionOrderActive: true, arena: arena, parser: &Parser{language: language}}
+
+	checkpoint := externalScannerCheckpointRef{}
+	withReceipt := func(entry stackEntry) stackEntry {
+		setStackEntryRawShapeRef(&entry, rawShapeZeroChildRef)
+		return entry
+	}
+	cases := map[string][2]stackEntry{
+		"node": {
+			withReceipt(newStackEntryNode(1, newLeafNodeInArena(arena, 10, true, 5, 7, Point{}, Point{Column: 2}))),
+			withReceipt(newStackEntryNode(1, newLeafNodeInArena(arena, 10, true, 5, 7, Point{}, Point{Column: 2}))),
+		},
+		"no-tree": {
+			withReceipt(newStackEntryNoTreeNode(1, newNoTreeLeafNodeInArena(arena, 11, true, 5, 7, Point{}, Point{Column: 2}))),
+			withReceipt(newStackEntryNoTreeNode(1, newNoTreeLeafNodeInArena(arena, 11, true, 5, 7, Point{}, Point{Column: 2}))),
+		},
+		"compact-full": {
+			withReceipt(newStackEntryCompactFullLeaf(1, newCompactFullLeafInArena(arena, 12, true, 5, 7, Point{}, Point{Column: 2}))),
+			withReceipt(newStackEntryCompactFullLeaf(1, newCompactFullLeafInArena(arena, 12, true, 5, 7, Point{}, Point{Column: 2}))),
+		},
+		"compact-checkpoint": {
+			withReceipt(newStackEntryCompactCheckpointLeaf(1, newCompactCheckpointLeafInArena(arena, 13, true, 5, 7, checkpoint))),
+			withReceipt(newStackEntryCompactCheckpointLeaf(1, newCompactCheckpointLeafInArena(arena, 13, true, 5, 7, checkpoint))),
+		},
+	}
+	for name, pair := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := stackEntryRawShapeRef(pair[0]); got != rawShapeZeroChildRef {
+				t.Fatalf("left raw-shape ref = %d, want zero-child receipt", got)
+			}
+			if got := stackEntryRawShapeRef(pair[1]); got != rawShapeZeroChildRef {
+				t.Fatalf("right raw-shape ref = %d, want zero-child receipt", got)
+			}
+			if !cStackLinkPayloadsEquivalentAtOffsets(scratch, pair[0], pair[1], 5, true, 5, true) {
+				t.Fatal("certified C comparison rejected equal leaves")
+			}
+		})
+	}
+}
+
+func TestCertifiedCStackLinkPendingParentUsesRawHeader(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	language := &Language{CompactPackedGSSVersionOrderCertified: true}
+	parser := &Parser{language: language}
+	scratch := &glrMergeScratch{language: language, packedGSSVersionOrderActive: true, arena: arena, parser: parser}
+
+	makePending := func(start uint32, childSymbol Symbol, fieldID FieldID) stackEntry {
+		child := newLeafNodeInArena(arena, childSymbol, true, start, start+2, Point{}, Point{Column: 2})
+		childEntry := newStackEntryNode(1, child)
+		parent := newPendingParentInArena(arena, 90, true, 0, []stackEntry{childEntry}, start, start+2, Point{}, Point{Column: 2}, false)
+		parent.setChildFieldEntry(arena, 0, fieldID, fieldSourceDirect)
+		parent.rawShape = parser.captureRawShape(nil, arena, 90, 0, []stackEntry{childEntry}, 0, 1)
+		return newStackEntryPendingParent(7, parent)
+	}
+
+	left := makePending(10, 1, 1)
+	right := makePending(20, 2, 2)
+	ordinary := &glrMergeScratch{language: &Language{}, arena: arena, parser: parser}
+	if stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(ordinary, left, right) {
+		t.Fatal("ordinary comparison ignored pending children and fields")
+	}
+	if !cStackLinkPayloadsEquivalentAtOffsets(scratch, left, right, 5, true, 15, true) {
+		t.Fatal("certified C comparison rejected equal pending raw headers")
+	}
+
+	materializedLeftEntry := left
+	materializedRightEntry := right
+	if materializeStackEntryPendingParent(arena, &materializedLeftEntry, materializeForFinalTree) == nil ||
+		materializeStackEntryPendingParent(arena, &materializedRightEntry, materializeForFinalTree) == nil {
+		t.Fatal("pending parent materialization failed")
+	}
+	if !cStackLinkPayloadsEquivalentAtOffsets(scratch, materializedLeftEntry, materializedRightEntry, 5, true, 15, true) {
+		t.Fatal("certified C comparison changed after pending materialization")
+	}
+}
+
+func TestCertifiedCStackLinkRejectsCrossArenaRawRefCollision(t *testing.T) {
+	language := &Language{CompactPackedGSSVersionOrderCertified: true}
+	parser := &Parser{language: language}
+	makeRawRef := func(arena *nodeArena, start uint32) rawShapeRef {
+		child := newLeafNodeInArena(arena, 1, true, 10, 12, Point{}, Point{Column: 2})
+		child.startByte = start
+		child.endByte = start + 2
+		return parser.captureRawShape(nil, arena, 40, 0, []stackEntry{newStackEntryNode(1, child)}, 0, 1)
+	}
+	factories := map[string]func(*nodeArena, uint32, rawShapeRef) stackEntry{
+		"node": func(arena *nodeArena, start uint32, ref rawShapeRef) stackEntry {
+			node := newLeafNodeInArena(arena, 40, true, start, start+2, Point{}, Point{Column: 2})
+			node.rawShape = ref
+			return newStackEntryNode(7, node)
+		},
+		"no-tree": func(arena *nodeArena, start uint32, ref rawShapeRef) stackEntry {
+			node := newNoTreeLeafNodeInArena(arena, 40, true, start, start+2, Point{}, Point{Column: 2})
+			node.rawShape = ref
+			return newStackEntryNoTreeNode(7, node)
+		},
+		"compact-checkpoint": func(arena *nodeArena, start uint32, ref rawShapeRef) stackEntry {
+			leaf := newCompactCheckpointLeafInArena(arena, 40, true, start, start+2, externalScannerCheckpointRef{})
+			leaf.rawShape = ref
+			return newStackEntryCompactCheckpointLeaf(7, leaf)
+		},
+		"compact-full": func(arena *nodeArena, start uint32, ref rawShapeRef) stackEntry {
+			leaf := newCompactFullLeafInArena(arena, 40, true, start, start+2, Point{}, Point{Column: 2})
+			leaf.rawShape = ref
+			return newStackEntryCompactFullLeaf(7, leaf)
+		},
+		"pending": func(arena *nodeArena, start uint32, ref rawShapeRef) stackEntry {
+			child := newLeafNodeInArena(arena, 1, true, start, start+2, Point{}, Point{Column: 2})
+			parent := newPendingParentInArena(arena, 40, true, 0, []stackEntry{newStackEntryNode(1, child)}, start, start+2, Point{}, Point{Column: 2}, false)
+			parent.rawShape = ref
+			return newStackEntryPendingParent(7, parent)
+		},
+	}
+	for name, factory := range factories {
+		t.Run(name, func(t *testing.T) {
+			leftArena := newNodeArena(arenaClassFull)
+			rightArena := newNodeArena(arenaClassFull)
+			left := factory(leftArena, 10, makeRawRef(leftArena, 10))
+			right := factory(rightArena, 10, makeRawRef(rightArena, 10))
+			rightPeer := factory(rightArena, 10, makeRawRef(rightArena, 10))
+			if leftRef, rightRef := stackEntryRawShapeRef(left), stackEntryRawShapeRef(right); leftRef != rightRef || !rawShapeRefIsArenaBacked(leftRef) {
+				t.Fatalf("test refs = (%d, %d), want equal arena-backed refs", leftRef, rightRef)
+			}
+			scratch := &glrMergeScratch{language: language, packedGSSVersionOrderActive: true, arena: rightArena, parser: parser}
+			if cStackLinkPayloadsEquivalentAtOffsets(scratch, left, right, 5, true, 5, true) {
+				t.Fatal("certified C comparison accepted a cross-arena raw-ref collision")
+			}
+			if !cStackLinkPayloadsEquivalentAtOffsets(scratch, right, rightPeer, 5, true, 5, true) {
+				t.Fatal("certified C comparison rejected current-arena raw refs")
+			}
+		})
+	}
+}
+
+func TestCertifiedCStackLinkAcceptsOnlyActiveTransientParents(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	language := &Language{CompactPackedGSSVersionOrderCertified: true}
+	transient := &transientParentScratch{}
+	reduce := &reduceBuildScratch{transientParents: transient}
+	parser := &Parser{
+		language:      language,
+		reduceScratch: reduce,
+	}
+	scratch := &glrMergeScratch{language: language, packedGSSVersionOrderActive: true, arena: arena, parser: parser}
+
+	makeParent := func(start uint32, childSymbol Symbol) stackEntry {
+		child := newLeafNodeInArena(arena, childSymbol, true, start, start+2, Point{}, Point{Column: 2})
+		childEntry := newStackEntryNode(1, child)
+		parent := transient.allocParent(arena, 40, true, []*Node{child}, 0, false)
+		parent.rawShape = parser.captureRawShape(nil, arena, 40, 0, []stackEntry{childEntry}, 0, 1)
+		return newStackEntryNode(7, parent)
+	}
+	left := makeParent(10, 1)
+	right := makeParent(20, 2)
+	if !cStackLinkPayloadsEquivalentAtOffsets(scratch, left, right, 5, true, 15, true) {
+		t.Fatal("certified C comparison rejected active transient parents")
+	}
+	for i := range transient.slabs {
+		transient.slabs[i].used = 0
+	}
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, left, right, 5, true, 15, true) {
+		t.Fatal("certified C comparison accepted inactive transient slots")
+	}
+}
+
+func TestCertifiedCStackLinkExternalScannerEndState(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	stateful := newC26lCheckpointScanner()
+	language := &Language{CompactPackedGSSVersionOrderCertified: true, ExternalScanner: stateful}
+	if !arena.setExternalScannerCheckpointIdentityForLanguage(language) {
+		t.Fatal("arena rejected external-scanner identity")
+	}
+	scratch := &glrMergeScratch{language: language, packedGSSVersionOrderActive: true, arena: arena, parser: &Parser{language: language}}
+
+	externalLeaf := func(startState, endState byte) stackEntry {
+		node := newLeafNodeInArena(arena, 60, true, 30, 32, Point{}, Point{Column: 2})
+		node.rawShape = rawShapeZeroChildRef
+		node.setExternalScannerToken(true)
+		if !arena.recordExternalScannerLeafCheckpoint(node, []byte{startState}, []byte{endState}) {
+			t.Fatalf("record external checkpoint %d", endState)
+		}
+		return newStackEntryNode(9, node)
+	}
+	externalA := externalLeaf(1, 2)
+	externalSame := externalLeaf(9, 2)
+	externalDifferent := externalLeaf(1, 3)
+	if !cStackLinkPayloadsEquivalentAtOffsets(scratch, externalA, externalSame, 30, true, 30, true) {
+		t.Fatal("certified C comparison used scanner start state")
+	}
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, externalA, externalDifferent, 30, true, 30, true) {
+		t.Fatal("certified C comparison ignored an external scanner state mismatch")
+	}
+	missingCheckpoint := newLeafNodeInArena(arena, 60, true, 30, 32, Point{}, Point{Column: 2})
+	missingCheckpoint.rawShape = rawShapeZeroChildRef
+	missingCheckpoint.setExternalScannerToken(true)
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, externalA, newStackEntryNode(9, missingCheckpoint), 30, true, 30, true) {
+		t.Fatal("certified C comparison accepted an unauthenticated external scanner state")
+	}
+
+	compactCheckpoint := arena.recordExternalScannerCompactCheckpoint([]byte{1}, []byte{2})
+	compact := newCompactCheckpointLeafInArena(arena, 60, true, 30, 32, compactCheckpoint)
+	compact.rawShape = rawShapeZeroChildRef
+	compact.setExternalScannerToken(true)
+	if cStackLinkPayloadsEquivalentAtOffsets(scratch, externalA, newStackEntryCompactCheckpointLeaf(9, compact), 30, true, 30, true) {
+		t.Fatal("certified C comparison trusted an ambiguous compact-checkpoint tag")
+	}
+
+	statelessLanguage := &Language{CompactPackedGSSVersionOrderCertified: true, ExternalScanner: &capabilityExternalScanner{}}
+	statelessScratch := &glrMergeScratch{language: statelessLanguage, packedGSSVersionOrderActive: true, arena: arena, parser: &Parser{language: statelessLanguage}}
+	statelessExternal := newLeafNodeInArena(arena, 61, true, 30, 32, Point{}, Point{Column: 2})
+	statelessExternal.rawShape = rawShapeZeroChildRef
+	statelessExternal.setExternalScannerToken(true)
+	statelessPlain := newLeafNodeInArena(arena, 61, true, 30, 32, Point{}, Point{Column: 2})
+	statelessPlain.rawShape = rawShapeZeroChildRef
+	if !cStackLinkPayloadsEquivalentAtOffsets(statelessScratch, newStackEntryNode(9, statelessExternal), newStackEntryNode(9, statelessPlain), 30, true, 30, true) {
+		t.Fatal("certified C comparison rejected equal stateless empty states")
+	}
+
+	wrappedExternal := newLeafNodeInArena(arena, 62, true, 30, 32, Point{}, Point{Column: 2})
+	wrappedExternal.setExternalScannerToken(true)
+	wrappedExternal.rawShape = (&Parser{}).captureRawShape(nil, arena, 70, 0, []stackEntry{newStackEntryNode(1, wrappedExternal)}, 0, 1)
+	wrappedPlain := newLeafNodeInArena(arena, 63, true, 30, 32, Point{}, Point{Column: 2})
+	wrappedPlain.rawShape = (&Parser{}).captureRawShape(nil, arena, 70, 0, []stackEntry{newStackEntryNode(1, wrappedPlain)}, 0, 1)
+	if !cStackLinkPayloadsEquivalentAtOffsets(scratch, newStackEntryNode(9, wrappedExternal), newStackEntryNode(9, wrappedPlain), 30, true, 30, true) {
+		t.Fatal("certified C comparison treated a collapsed wrapper as an external leaf")
+	}
+}
+
+func TestCertifiedCStackLinkPreflightAndMutationPredicatesAgree(t *testing.T) {
+	language := &Language{CompactPackedGSSVersionOrderCertified: true}
+	parser := &Parser{language: language}
+	scratch := &glrMergeScratch{language: language, packedGSSVersionOrderActive: true, arena: newNodeArena(arenaClassFull), parser: parser}
+
+	leftPrev := &gssNode{entry: newStackEntryNode(1, newLeafNodeInArena(scratch.arena, 1, true, 0, 5, Point{}, Point{Column: 5})), depth: 1}
+	rightPrev := &gssNode{entry: newStackEntryNode(1, newLeafNodeInArena(scratch.arena, 1, true, 0, 15, Point{}, Point{Column: 15})), depth: 1}
+	makeParent := func(start uint32, childSymbol Symbol) stackEntry {
+		child := newLeafNodeInArena(scratch.arena, childSymbol, true, start, start+2, Point{}, Point{Column: 2})
+		parent := newParentNodeInArena(scratch.arena, 40, true, []*Node{child}, nil, 0)
+		parent.rawShape = parser.captureRawShape(nil, scratch.arena, 40, 0, []stackEntry{newStackEntryNode(1, child)}, 0, 1)
+		return newStackEntryNode(7, parent)
+	}
+	left := makeParent(10, 2)
+	right := makeParent(20, 3)
+
+	preflight := acquirePreflightForScratch(scratch)
+	want := preflight.linkPayloadsEquivalent(leftPrev, left, rightPrev, right)
+	got := stackLinkPayloadsEquivalentWithScratch(scratch, leftPrev, left, rightPrev, right)
+	if got != want || !got {
+		t.Fatalf("equal predicate preflight=%t mutation=%t, want both true", want, got)
+	}
+
+	rightPrev.entry = newStackEntryNode(1, &Node{symbol: 1, startByte: 0, endByte: 14})
+	want = preflight.linkPayloadsEquivalent(leftPrev, left, rightPrev, right)
+	got = stackLinkPayloadsEquivalentWithScratch(scratch, leftPrev, left, rightPrev, right)
+	if got != want || got {
+		t.Fatalf("padding-mismatch predicate preflight=%t mutation=%t, want both false", want, got)
+	}
+}
+
 func TestGSSMainAddLinkAtCapRejectsUnsafeEquivalentReplacement(t *testing.T) {
 	head := &gssNode{
 		entry: newStackEntryNode(10, &Node{symbol: 20, startByte: 1, endByte: 2, flags: nodeFlagNamed, dynamicPrecedence: 1}),

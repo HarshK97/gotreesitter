@@ -2736,6 +2736,7 @@ func newLeafNodeInArena(arena *nodeArena, sym Symbol, named bool, startByte, end
 	n.startPoint = startPoint
 	n.endPoint = endPoint
 	n.childIndex = -1
+	n.rawShape = 0
 	n.ownerArena = arena
 	arena.leafNodesConstructed++
 	workCountRecordLeafConstruction()

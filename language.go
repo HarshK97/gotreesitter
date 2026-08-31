@@ -799,13 +799,14 @@ type Language struct {
 	// stale artifacts retain bounded equivalence unless callers opt in.
 	ExactStackNodeEquivalenceCertified bool
 
-	// CompactPackedGSSVersionOrderCertified permits the compact parser to use
-	// C's physical stack-version transaction order for packed graph-structured
-	// stack reductions. The transaction includes action-slot ownership,
-	// same-round scheduling, bounded wave-order pop traversal, and packed-child
-	// election. Exact built-in profiles set this only after locked-C receipts and
-	// memory-budget tests certify the complete bundle. Custom, adapted, and stale
-	// artifacts retain the false default.
+	// CompactPackedGSSVersionOrderCertified permits the compact fresh-full route
+	// to use C's physical stack-version transaction order for packed graph-
+	// structured stack reductions. The transaction includes action-slot ownership,
+	// same-round scheduling, bounded wave-order pop traversal, C-equivalent link
+	// packing, boundary packing, and packed-child election. Exact built-in
+	// profiles set this only after locked-C receipts and memory-budget tests
+	// certify the complete bundle. Custom, adapted, and stale artifacts retain
+	// the false default.
 	CompactPackedGSSVersionOrderCertified bool
 
 	// CompactStrategy2ErrorRegionCertified permits the compact fresh-full route

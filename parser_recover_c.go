@@ -4524,6 +4524,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	if leafVisible {
 		leaf = newLeafNodeInArena(arena, tok.Symbol, tok.Symbol == errorSymbol || p.isNamedSymbol(tok.Symbol),
 			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+		p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 		// C marks the enclosing ERROR node as erroneous. Keep ordinary leaves
 		// clean when the region has direct internal-lexer provenance.
 		clearLeafError := v.cRec.clearsOrdinaryLeafErrors() &&
@@ -4561,6 +4562,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 		if top == rec.openErr {
 			pre := p.cErrRegionPreAbsorb(rec.openErr)
 			rec.openErr.children = appendLeaf(rec.openErr.children)
+			invalidateRawShapeAfterChildMutation(rec.openErr)
 			rec.openErr.endByte = tok.EndByte
 			rec.openErr.endPoint = tok.EndPoint
 			nodeBumpEquivVersion(rec.openErr)
@@ -4602,6 +4604,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 				pre := p.cErrRegionPreAbsorb(rec.openErr)
 				rec.openErr.children = append(rec.openErr.children, extras...)
 				rec.openErr.children = appendLeaf(rec.openErr.children)
+				invalidateRawShapeAfterChildMutation(rec.openErr)
 				rec.openErr.endByte = tok.EndByte
 				rec.openErr.endPoint = tok.EndPoint
 				nodeBumpEquivVersion(rec.openErr)

@@ -4,7 +4,28 @@ import "unsafe"
 
 type rawShapeRef uint32
 
-const rawShapeRefIndexBits = 20
+const (
+	rawShapeRefIndexBits = 20
+	rawShapeRefArenaBase = rawShapeRef(1 << rawShapeRefIndexBits)
+	// The child range stores its count in 16 bits. Reserve the saturated value
+	// as unknown so a larger raw child array can never collide with it.
+	rawShapeMaxExactChildCount = int(^uint16(0)) - 1
+)
+
+// rawShapeZeroChildRef authenticates C Subtree.child_count == 0 without an
+// arena allocation. Arena-backed refs start at rawShapeRefArenaBase, so this
+// value cannot alias a stored raw shape. Zero remains unknown or elided.
+const rawShapeZeroChildRef rawShapeRef = 1
+
+func invalidateRawShapeAfterChildMutation(node *Node) {
+	if node != nil {
+		node.rawShape = 0
+	}
+}
+
+func rawShapeRefIsArenaBacked(ref rawShapeRef) bool {
+	return ref >= rawShapeRefArenaBase
+}
 
 type rawShape struct {
 	// The child count is encoded in the range's low 16 bits, so do not store it
@@ -233,7 +254,7 @@ func (s *rawShape) childCount() int {
 }
 
 func (a *nodeArena) rawShapeForRef(ref rawShapeRef) (*rawShape, bool) {
-	if a == nil || ref == 0 {
+	if a == nil || !rawShapeRefIsArenaBacked(ref) {
 		return nil, false
 	}
 	slabIdx := int(uint32(ref)>>rawShapeRefIndexBits) - 1
@@ -337,11 +358,11 @@ func (a *nodeArena) rawShapeChildrenForNode(node *Node) []rawShapeChild {
 // recovery event, and every subsequent stack (GLR fork clones, C-recovery
 // version-spawns) shares that node by pointer — clone()/cloneWithScratch()
 // and recovery's *stacks mutation never deep-copy prior GSS structure. So a
-// shapeless node is only ever compared against ITSELF (compareRawStackEntriesRec
+// shapeless node is only ever compared against ITSELF (compareRawStackWalkEntriesRec
 // recursing to the identical object on both sides, trivially symmetric),
 // never against a different object at the same tree position. The
 // comparison's one-sided-shape fallback (parser_reduce.go
-// compareRawStackEntriesRec, the aHasShape != bHasShape branch, falling back
+// compareRawStackWalkEntriesRec, the aHasShape != bHasShape branch, falling back
 // to materialized childCount/symbol) is NOT proven sign-preserving in
 // isolation — TestRawShapeElisionAbstractComparisonFallbackCanFlipSign
 // constructs an artificial asymmetric pair where it does flip sign — but a
@@ -366,14 +387,17 @@ func (p *Parser) captureRawShape(gssScratch *gssScratch, arena *nodeArena, symbo
 	if arena == nil || start < 0 || end < start || end > len(entries) {
 		return 0
 	}
-	if gssScratch.mayElideRawShape() {
-		return 0
-	}
 	count := 0
 	for i := start; i < end; i++ {
 		if stackEntryHasNode(entries[i]) {
 			count++
 		}
+	}
+	if count == 0 && p.compactPackedGSSVersionOrderEnabled() {
+		return rawShapeZeroChildRef
+	}
+	if gssScratch.mayElideRawShape() || count > rawShapeMaxExactChildCount {
+		return 0
 	}
 	if count == 0 {
 		return 0
@@ -384,12 +408,6 @@ func (p *Parser) captureRawShape(gssScratch *gssScratch, arena *nodeArena, symbo
 	}
 	shape.symbol = symbol
 	shape.productionID = productionID
-	if count > 0xffff {
-		count = 0xffff
-	}
-	if count == 0 {
-		return ref
-	}
 	childRange := arena.allocRawShapeChildren(count)
 	children := arena.rawShapeChildren(&rawShape{childRange: childRange})
 	out := 0
@@ -532,21 +550,28 @@ func rawStackEntriesContainShape(arena *nodeArena, entries []stackEntry) bool {
 }
 
 func rawStackEntryContainsShape(arena *nodeArena, entry stackEntry, depth int) bool {
+	return rawStackWalkEntryContainsShape(arena, rawStackWalkEntry{entry: entry}, depth)
+}
+
+func rawStackWalkEntryContainsShape(arena *nodeArena, item rawStackWalkEntry, depth int) bool {
 	if depth > maxTreeWalkDepth {
 		return false
 	}
-	if shape, ok := rawShapeForStackEntry(arena, entry); ok {
+	childCount := stackEntryNodeChildCount(item.entry)
+	if shape, _, ok := rawShapeForStackWalkEntry(arena, item); ok {
 		if shape.childCount() > 0 {
 			return true
 		}
+		childCount = shape.childCount()
+	} else if rawStackWalkEntryRef(item) == rawShapeZeroChildRef {
+		childCount = 0
 	}
-	childCount := stackEntryNodeChildCount(entry)
 	for i := 0; i < childCount; i++ {
-		child, ok := rawStackEntryChildAt(arena, entry, i)
+		child, ok := rawStackWalkChildAt(arena, item, i)
 		if !ok {
 			continue
 		}
-		if rawStackEntryContainsShape(arena, child, depth+1) {
+		if rawStackWalkEntryContainsShape(arena, child, depth+1) {
 			return true
 		}
 	}

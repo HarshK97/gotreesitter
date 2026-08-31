@@ -82,6 +82,70 @@ func TestReclaimRawShapeStorageClearsArenaPayloadRefs(t *testing.T) {
 	}
 }
 
+func TestCaptureRawShapeZeroCountPrecedesElision(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	scratch := &gssScratch{singleStackMode: true}
+	language := &Language{CompactPackedGSSVersionOrderCertified: true}
+	parser := &Parser{
+		language: language,
+		mergeScratch: &glrMergeScratch{
+			language:                    language,
+			packedGSSVersionOrderActive: true,
+		},
+	}
+	ref := parser.captureRawShape(scratch, arena, 12, 0, nil, 0, 0)
+	if ref != rawShapeZeroChildRef {
+		t.Fatalf("epsilon raw-shape ref = %d, want zero-child receipt", ref)
+	}
+	if got := (&Parser{}).captureRawShape(scratch, arena, 12, 0, nil, 0, 0); got != 0 {
+		t.Fatalf("ordinary epsilon raw-shape ref = %d, want unknown", got)
+	}
+}
+
+func TestPublicAndErrorLeavesDoNotCarryParserRawShapeReceipts(t *testing.T) {
+	leaf := NewLeafNode(1, true, 0, 1, Point{}, Point{Column: 1})
+	if leaf.rawShape != 0 {
+		t.Fatalf("public leaf raw-shape ref = %d, want 0", leaf.rawShape)
+	}
+	arena := newNodeArena(arenaClassFull)
+	tree := parseErrorTreeWithArena([]byte("x"), &Language{}, arena)
+	defer tree.Release()
+	if root := tree.RootNode(); root == nil || root.rawShape != 0 {
+		if root == nil {
+			t.Fatal("error tree has nil root")
+		}
+		t.Fatalf("error root raw-shape ref = %d, want 0", root.rawShape)
+	}
+}
+
+func TestCaptureRawShapeCountOverflowFailsClosed(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	parser := &Parser{}
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	entries := make([]stackEntry, rawShapeMaxExactChildCount+2)
+	for i := range entries {
+		entries[i] = newStackEntryNode(1, leaf)
+	}
+
+	ref := parser.captureRawShape(nil, arena, 2, 0, entries, 0, rawShapeMaxExactChildCount)
+	shape, ok := arena.rawShapeForRef(ref)
+	if !ok || shape.childCount() != rawShapeMaxExactChildCount {
+		t.Fatalf("maximum exact shape = (%d, %t), want (%d, true)", shapeChildCount(shape), ok, rawShapeMaxExactChildCount)
+	}
+	for _, count := range []int{rawShapeMaxExactChildCount + 1, rawShapeMaxExactChildCount + 2} {
+		if got := parser.captureRawShape(nil, arena, 2, 0, entries, 0, count); got != 0 {
+			t.Fatalf("overflow count %d returned ref %d, want unknown", count, got)
+		}
+	}
+}
+
+func shapeChildCount(shape *rawShape) int {
+	if shape == nil {
+		return 0
+	}
+	return shape.childCount()
+}
+
 // TestParseReclaimsRawShapeStorageAfterAccounting exercises the reclaim/
 // accounting invariant on a genuinely forking parse (buildPrefixForkLanguage,
 // proven to fork by TestPrefixForkLanguageActuallyForks in

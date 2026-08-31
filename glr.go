@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"sync"
@@ -279,17 +280,18 @@ func (p *Parser) resetPendingStackBuffersAtBoundary() {
 }
 
 type glrMergeScratch struct {
-	result                    []glrStack
-	slots                     []glrMergeSlot
-	largeSlots                []glrMergeLargeSlot
-	perKeyCap                 int
-	language                  *Language
-	arena                     *nodeArena
-	faithfulCapOne            bool
-	recoveryCapOneConvergence bool
-	deferExactDedupe          bool
-	frontierMergeHash         bool
-	trace                     bool
+	result                      []glrStack
+	slots                       []glrMergeSlot
+	largeSlots                  []glrMergeLargeSlot
+	perKeyCap                   int
+	language                    *Language
+	packedGSSVersionOrderActive bool
+	arena                       *nodeArena
+	faithfulCapOne              bool
+	recoveryCapOneConvergence   bool
+	deferExactDedupe            bool
+	frontierMergeHash           bool
+	trace                       bool
 	// cRecoveryCostWalk enables the expensive per-candidate error-cost walks.
 	cRecoveryCostWalk bool
 	// cRecoveryConvergence enables faithful cap-one convergence during an active
@@ -3795,6 +3797,227 @@ func stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch *glrMergeScr
 		stackEntryNodeProductionID(a) == stackEntryNodeProductionID(b)
 }
 
+// cStackLinkPayloadsEquivalentAtOffsets ports stack__subtree_is_equivalent
+// from the C runtime for the certified packed-GSS transaction.
+func compactPackedGSSVersionOrderEnabledForMerge(scratch *glrMergeScratch) bool {
+	return scratch != nil &&
+		scratch.language != nil &&
+		scratch.language.CompactPackedGSSVersionOrderCertified &&
+		scratch.packedGSSVersionOrderActive
+}
+
+func cStackLinkPayloadsEquivalentAtOffsets(scratch *glrMergeScratch, a, b stackEntry, aPrevOffset uint32, aOffsetOK bool, bPrevOffset uint32, bOffsetOK bool) bool {
+	if !compactPackedGSSVersionOrderEnabledForMerge(scratch) {
+		return stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch, a, b)
+	}
+	if a.node == b.node && a.kind == b.kind {
+		return true
+	}
+	if !stackEntryHasNode(a) || !stackEntryHasNode(b) {
+		return !stackEntryHasNode(a) && !stackEntryHasNode(b)
+	}
+	// The enclosing GSS merge proves that every link is clean. Do not use
+	// rawStackEntryErrorCost for C's positive-error shortcut: that Go walk uses
+	// flattened arity and does not price a raw error leaf as C does.
+	aHeader, aHeaderOK := cStackLinkPayloadHeader(scratch, a)
+	bHeader, bHeaderOK := cStackLinkPayloadHeader(scratch, b)
+	if !aHeaderOK || !bHeaderOK {
+		return false
+	}
+	if aHeader.symbol != bHeader.symbol {
+		return false
+	}
+	if !aOffsetOK || !bOffsetOK {
+		return false
+	}
+	aStart := stackEntryNodeStartByte(a)
+	bStart := stackEntryNodeStartByte(b)
+	if aStart < aPrevOffset || bStart < bPrevOffset {
+		return false
+	}
+	aEnd := stackEntryNodeEndByte(a)
+	bEnd := stackEntryNodeEndByte(b)
+	if aEnd < aStart || bEnd < bStart {
+		return false
+	}
+	return aStart-aPrevOffset == bStart-bPrevOffset &&
+		aEnd-aStart == bEnd-bStart &&
+		aHeader.childCount == bHeader.childCount &&
+		stackEntryNodeIsExtra(a) == stackEntryNodeIsExtra(b) &&
+		cStackEntryExternalScannerStatesEqual(scratch, a, aHeader.childCount, b, bHeader.childCount)
+}
+
+type cStackLinkHeader struct {
+	symbol     Symbol
+	childCount int
+}
+
+func cStackLinkPayloadHeader(scratch *glrMergeScratch, entry stackEntry) (cStackLinkHeader, bool) {
+	if scratch == nil || scratch.arena == nil {
+		return cStackLinkHeader{}, false
+	}
+	ref := stackEntryRawShapeRef(entry)
+	if ref == rawShapeZeroChildRef {
+		if !glrMergeScratchOwnsStackEntryPayload(scratch, entry) {
+			return cStackLinkHeader{}, false
+		}
+		return cStackLinkHeader{symbol: stackEntryNodeSymbol(entry), childCount: 0}, true
+	}
+	if ref == 0 {
+		// A physical leaf can also be a collapsed unary reduction. The raw
+		// receipt is the only proof of C's Subtree.child_count for distinct
+		// payloads. Pointer identity was accepted before this function.
+		return cStackLinkHeader{}, false
+	}
+	if !glrMergeScratchOwnsStackEntryPayload(scratch, entry) {
+		return cStackLinkHeader{}, false
+	}
+	shape, ok := scratch.arena.rawShapeForRef(ref)
+	if !ok {
+		return cStackLinkHeader{}, false
+	}
+	count := shape.childCount()
+	if count > rawShapeMaxExactChildCount || len(scratch.arena.rawShapeChildren(shape)) != count {
+		return cStackLinkHeader{}, false
+	}
+	return cStackLinkHeader{symbol: shape.symbol, childCount: count}, true
+}
+
+func usedArenaSliceContainsPointer[T any](data []T, used int, pointer unsafe.Pointer) bool {
+	if pointer == nil || used <= 0 || len(data) == 0 {
+		return false
+	}
+	if used > len(data) {
+		used = len(data)
+	}
+	var value T
+	size := unsafe.Sizeof(value)
+	if size == 0 {
+		return false
+	}
+	base := uintptr(unsafe.Pointer(&data[0]))
+	target := uintptr(pointer)
+	if target < base {
+		return false
+	}
+	delta := target - base
+	return delta%size == 0 && delta/size < uintptr(used)
+}
+
+func glrMergeScratchOwnsStackEntryPayload(scratch *glrMergeScratch, entry stackEntry) bool {
+	if scratch == nil || scratch.arena == nil || entry.node == nil {
+		return false
+	}
+	arena := scratch.arena
+	if node := stackEntryNode(entry); node != nil {
+		if node.ownerArena == arena {
+			return true
+		}
+		return scratch.parser != nil &&
+			scratch.parser.reduceScratch != nil &&
+			scratch.parser.reduceScratch.transientParents != nil &&
+			scratch.parser.reduceScratch.transientParents.ownsActive(node)
+	}
+	switch entry.kind {
+	case stackEntryKindNoTreeNode:
+		for i := range arena.noTreeNodeSlabs {
+			slab := &arena.noTreeNodeSlabs[i]
+			if usedArenaSliceContainsPointer(slab.data, slab.used, entry.node) {
+				return true
+			}
+		}
+		for i := range arena.compactCheckpointLeafSlabs {
+			slab := &arena.compactCheckpointLeafSlabs[i]
+			if usedArenaSliceContainsPointer(slab.data, slab.used, entry.node) {
+				return true
+			}
+		}
+	case stackEntryKindCompactFullLeaf:
+		for i := range arena.compactFullLeafSlabs {
+			slab := &arena.compactFullLeafSlabs[i]
+			if usedArenaSliceContainsPointer(slab.data, slab.used, entry.node) {
+				return true
+			}
+		}
+	case stackEntryKindPendingParent:
+		for i := range arena.pendingParentSlabs {
+			slab := &arena.pendingParentSlabs[i]
+			if usedArenaSliceContainsPointer(slab.data, slab.used, entry.node) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stackEntryIsExternalScannerLeaf(entry stackEntry, rawChildCount int) bool {
+	if rawChildCount != 0 {
+		return false
+	}
+	if node := stackEntryNode(entry); node != nil {
+		return node.isExternalScannerToken()
+	}
+	if node := stackEntryNoTreeNode(entry); node != nil {
+		return node.hasFlag(nodeFlagExternalScannerToken)
+	}
+	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
+		return leaf.hasFlag(nodeFlagExternalScannerToken)
+	}
+	return false
+}
+
+func cStackEntryExternalScannerStatesEqual(scratch *glrMergeScratch, a stackEntry, aRawChildCount int, b stackEntry, bRawChildCount int) bool {
+	aExternal := stackEntryIsExternalScannerLeaf(a, aRawChildCount)
+	bExternal := stackEntryIsExternalScannerLeaf(b, bRawChildCount)
+	if !aExternal && !bExternal {
+		return true
+	}
+	aState, aOK := cStackEntryExternalScannerEndState(scratch, a, aExternal)
+	bState, bOK := cStackEntryExternalScannerEndState(scratch, b, bExternal)
+	return aOK && bOK && bytes.Equal(aState, bState)
+}
+
+func cStackEntryExternalScannerEndState(scratch *glrMergeScratch, entry stackEntry, external bool) ([]byte, bool) {
+	if !external {
+		return nil, true
+	}
+	if scratch == nil || scratch.language == nil || scratch.language.ExternalScanner == nil {
+		return nil, false
+	}
+	if stateless, ok := scratch.language.ExternalScanner.(StatelessExternalScanner); ok && stateless.ExternalScannerIsStateless() {
+		return nil, true
+	}
+	if node := stackEntryNode(entry); node != nil {
+		checkpoint, ok := externalScannerCheckpointRefForNode(node)
+		if !ok || !cStackEntryExternalScannerCheckpointArenaValid(node.ownerArena, scratch.language, checkpoint) {
+			return nil, false
+		}
+		state := node.ownerArena.externalScannerSnapshotBytes(checkpoint.end)
+		return state, len(state) == int(checkpoint.end.len)
+	}
+	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
+		if !glrMergeScratchOwnsStackEntryPayload(scratch, entry) ||
+			!leaf.hasCheckpoint ||
+			!cStackEntryExternalScannerCheckpointArenaValid(scratch.arena, scratch.language, leaf.checkpoint) {
+			return nil, false
+		}
+		state := scratch.arena.externalScannerSnapshotBytes(leaf.checkpoint.end)
+		return state, len(state) == int(leaf.checkpoint.end.len)
+	}
+	// The no-tree checkpoint leaf shares its entry tag with a plain noTreeNode,
+	// so the payload alone cannot authenticate the larger allocation. Fail
+	// closed instead of reading past a plain node.
+	return nil, false
+}
+
+func cStackEntryExternalScannerCheckpointArenaValid(arena *nodeArena, language *Language, checkpoint externalScannerCheckpointRef) bool {
+	return arena != nil &&
+		externalScannerCheckpointRefComplete(checkpoint) &&
+		arena.externalScannerCheckpointIdentityMatches(language) &&
+		arena.externalScannerSnapshotRefValid(checkpoint.start) &&
+		arena.externalScannerSnapshotRefValid(checkpoint.end)
+}
+
 func stackEntryNodesEquivalentIgnoringDynamic(a, b *Node) bool {
 	if a == b {
 		return true
@@ -4395,6 +4618,37 @@ func (p *gssMainPreflight) acquireOffsetSeen() map[*gssNode]bool {
 	return p.offsetSeen
 }
 
+func (p *gssMainPreflight) linkPayloadsEquivalent(aPrev *gssNode, a stackEntry, bPrev *gssNode, b stackEntry) bool {
+	if p == nil || !compactPackedGSSVersionOrderEnabledForMerge(p.scratch) {
+		var scratch *glrMergeScratch
+		if p != nil {
+			scratch = p.scratch
+		}
+		return stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch, a, b)
+	}
+	aOffset, aOK := p.uniformByteOffset(aPrev, p.acquireOffsetSeen())
+	bOffset, bOK := p.uniformByteOffset(bPrev, p.acquireOffsetSeen())
+	return cStackLinkPayloadsEquivalentAtOffsets(p.scratch, a, b, aOffset, aOK, bOffset, bOK)
+}
+
+func stackLinkPayloadsEquivalentWithScratch(scratch *glrMergeScratch, aPrev *gssNode, a stackEntry, bPrev *gssNode, b stackEntry) bool {
+	if !compactPackedGSSVersionOrderEnabledForMerge(scratch) {
+		return stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch, a, b)
+	}
+	var seen map[*gssNode]bool
+	if scratch.preflight != nil {
+		seen = scratch.preflight.acquireOffsetSeen()
+	} else {
+		seen = make(map[*gssNode]bool, 16)
+	}
+	aOffset, aOK := gssNodeUniformByteOffset(aPrev, seen)
+	if len(seen) > 0 {
+		clear(seen)
+	}
+	bOffset, bOK := gssNodeUniformByteOffset(bPrev, seen)
+	return cStackLinkPayloadsEquivalentAtOffsets(scratch, a, b, aOffset, aOK, bOffset, bOK)
+}
+
 func gssMainCanAddLinkSeen(n *gssNode, prev *gssNode, entry stackEntry, seen map[gssMergePair]bool) bool {
 	return newGSSMainPreflight(seen).canAddLink(n, prev, entry)
 }
@@ -4408,7 +4662,7 @@ func (p *gssMainPreflight) canAddLink(n *gssNode, prev *gssNode, entry stackEntr
 	}
 	for i := 0; i < p.linkCount(n); i++ {
 		existingPrev, existingEntry := p.linkAt(n, i)
-		if !stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(p.scratch, existingEntry, entry) {
+		if !p.linkPayloadsEquivalent(existingPrev, existingEntry, prev, entry) {
 			continue
 		}
 		if existingPrev == prev {
@@ -4441,23 +4695,21 @@ func gssMainAddLinkSeenMutate(scratch *glrMergeScratch, n *gssNode, prev *gssNod
 	}
 	for i := 0; i < n.linkCount(); i++ {
 		existingPrev, existingEntry := n.link(i)
+		verdict := stackLinkPayloadsEquivalentWithScratch(scratch, existingPrev, existingEntry, prev, entry)
 		if mergeCensusEnabled {
 			// Stage M0 instrument (spec.merge-time-election.v1). This loop is
 			// production's port of the reference runtime's Tier-2 link union
 			// (stack.c:199-263), and this comparison is its port of
-			// stack__subtree_is_equivalent. The census records production's DEEP
-			// verdict beside the reference runtime's SHALLOW verdict, so stage
-			// M1 knows exactly how many reference-runtime collapses the deep
-			// test turns into appends. Only the mutating union is instrumented;
+			// stack__subtree_is_equivalent. The census records the active route's
+			// verdict beside the reference runtime's SHALLOW verdict. This shows
+			// how many ordinary deep comparisons become appends and confirms the
+			// certified route uses the C verdict. Only the mutating union runs it;
 			// the preflight walkers repeat the same comparisons for the same
 			// pairs and would double count. The constant guard removes this
 			// block from the default build.
-			verdict := stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch, existingEntry, entry)
 			mergeCensusRecordLinkPayload(existingEntry, entry, verdict)
-			if !verdict {
-				continue
-			}
-		} else if !stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch, existingEntry, entry) {
+		}
+		if !verdict {
 			continue
 		}
 		if existingPrev == prev {
@@ -4502,7 +4754,7 @@ func (p *gssMainPreflight) canReplaceWorstEquivalentLinkIfBetter(n *gssNode, pre
 	var worstPrev *gssNode
 	for i := 0; i < p.linkCount(n); i++ {
 		existingPrev, existingEntry := p.linkAt(n, i)
-		if !stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(p.scratch, existingEntry, entry) {
+		if !p.linkPayloadsEquivalent(existingPrev, existingEntry, prev, entry) {
 			continue
 		}
 		if existingPrev != prev && !p.nodesCanMerge(existingPrev, prev) {
@@ -4537,7 +4789,7 @@ func gssMainReplaceWorstEquivalentLinkIfBetterMutate(scratch *glrMergeScratch, n
 	var worstPrev *gssNode
 	for i := 0; i < n.linkCount(); i++ {
 		existingPrev, existingEntry := n.link(i)
-		if !stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch, existingEntry, entry) {
+		if !stackLinkPayloadsEquivalentWithScratch(scratch, existingPrev, existingEntry, prev, entry) {
 			continue
 		}
 		if existingPrev != prev && !gssNodesCanMergeWithScratch(scratch, existingPrev, prev) {
@@ -4703,7 +4955,8 @@ func tryGSSMainMergeResult(scratch *glrMergeScratch, result []glrStack, idx int,
 		}
 		return false, false
 	}
-	if (scratch == nil || scratch.perKeyCap != 1) &&
+	if !compactPackedGSSVersionOrderEnabledForMerge(scratch) &&
+		(scratch == nil || scratch.perKeyCap != 1) &&
 		gssStacksHaveDistinctMaterializingShapesWithScratch(scratch, &result[idx], stack) {
 		if workCountInstrumentationEnabled {
 			workCountRecordGSSReject(workCountParserFromMergeScratch(scratch), workCountConvergencePhaseBoundaryEquivalence, workCountConvergenceReasonDistinctShape, "boundary merge retained distinct materializing shapes", &result[idx], stack)
@@ -5837,6 +6090,7 @@ func (s *glrMergeScratch) reset() {
 	s.childErrors = nil
 	s.perKeyCap = 0
 	s.language = nil
+	s.packedGSSVersionOrderActive = false
 	s.arena = nil
 	s.faithfulCapOne = false
 	s.recoveryCapOneConvergence = false

@@ -2429,6 +2429,7 @@ func (p *Parser) tryRecoverPreviousShiftAsError(s *glrStack, tok Token, nodeCoun
 	errNode := newLeafNodeInArena(arena, errorSymbol, true,
 		topStartByte, topEndByte,
 		stackEntryNodeStartPoint(topEntry), stackEntryNodeEndPoint(topEntry))
+	p.stampCompactPackedGSSZeroChildReceipt(&errNode.rawShape)
 	errNode.setExtra(true)
 	errNode.setHasError(true)
 	errNode.parseState = prevState
@@ -4148,6 +4149,7 @@ func (p *Parser) materializeSkippedGapAsExtraError(s *glrStack, state StateID, t
 	p.markCRecoveryCostCompetitionRelevant()
 	startPoint := p.parserStackEndPoint(s)
 	leaf := newLeafNodeInArena(arena, errorSymbol, true, s.byteOffset, tok.StartByte, startPoint, tok.StartPoint)
+	p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 	leaf.setHasError(true)
 	leaf.setExtra(true)
 	leaf.parseState = state
@@ -4550,6 +4552,27 @@ func compactPackedGSSDispatchVersionCount(certified bool, roundVersionCount, cur
 	return roundVersionCount
 }
 
+func (p *Parser) compactPackedGSSVersionOrderEnabled() bool {
+	return p != nil &&
+		p.language != nil &&
+		p.language.CompactPackedGSSVersionOrderCertified &&
+		p.mergeScratch != nil &&
+		p.mergeScratch.packedGSSVersionOrderActive
+}
+
+func (p *Parser) stampCompactPackedGSSZeroChildReceipt(ref *rawShapeRef) {
+	if ref != nil && p.compactPackedGSSVersionOrderEnabled() {
+		*ref = rawShapeZeroChildRef
+	}
+}
+
+func compactPackedGSSVersionOrderActiveForParse(language *Language, reuse *reuseCursor, oldTree *Tree, noTreeBenchmarkOnly bool) bool {
+	return language != nil &&
+		language.CompactPackedGSSVersionOrderCertified &&
+		reuse == nil && oldTree == nil &&
+		!noTreeBenchmarkOnly
+}
+
 // parseInternal is the core GLR parsing loop shared by Parse and
 // ParseWithTokenSource.
 //
@@ -4589,6 +4612,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	transientReduceParents := p.configureParseScratch(scratch, source, reuse, oldTree, arenaClass, deferParentLinks)
 	scratch.merge.gssOwner = &scratch.gss
 	defer releaseParserScratch(scratch, deferParentLinks)
+	prevReduceScratch := p.reduceScratch
+	prevMergeScratch := p.mergeScratch
+	prevGoCompatFrames := p.goCompatFrames
 	p.reduceScratch = &scratch.reduce
 	p.mergeScratch = &scratch.merge
 	p.beginRecoveryRuntimeTelemetry()
@@ -4612,10 +4638,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		p.reduceScratch.transientChildren = &scratch.transientChildren
 	}
 	defer func() {
-		p.reduceScratch = nil
-		p.mergeScratch = nil
+		p.reduceScratch = prevReduceScratch
+		p.mergeScratch = prevMergeScratch
 		p.budgetScratch = prevBudgetScratch
-		p.goCompatFrames = nil
+		p.goCompatFrames = prevGoCompatFrames
 		if p.cCondenseVersionKeyRanks != nil {
 			clear(p.cCondenseVersionKeyRanks)
 		}
@@ -5875,7 +5901,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// never handed a token it cannot use.
 		stackRelexRestoreTok := Token{}
 		stackRelexActive := false
-		packedVersionOrder := p.language != nil && p.language.CompactPackedGSSVersionOrderCertified
+		packedVersionOrder := p.compactPackedGSSVersionOrderEnabled()
 		for si := 0; si < numStacks || (packedVersionOrder && si < len(stacks)); si++ {
 			s := &stacks[si]
 			if stackRelexActive {
@@ -7228,6 +7254,7 @@ func (p *Parser) configureParseScratch(scratch *parserScratch, source []byte, re
 		p.transientChildren = nil
 	}
 	scratch.merge.language = p.language
+	scratch.merge.packedGSSVersionOrderActive = compactPackedGSSVersionOrderActiveForParse(p.language, reuse, oldTree, p.noTreeBenchmarkOnly)
 	scratch.merge.cErrorCostParser = nil
 	scratch.merge.trace = p.glrTrace
 	scratch.merge.beginEquivEpoch()
@@ -8169,6 +8196,7 @@ func (p *Parser) applyExtraShiftAction(s *glrStack, currentState StateID, act Pa
 		return
 	}
 	leaf := newLeafNodeInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+	p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 	if isMissing {
 		leaf.setMissing(true)
 		leaf.setHasError(true)
@@ -8187,6 +8215,7 @@ func (p *Parser) applyExtraShiftAction(s *glrStack, currentState StateID, act Pa
 func (p *Parser) applyCompactExtraShiftAction(s *glrStack, currentState, targetState StateID, tok Token, named bool, arena *nodeArena, scratch *parserScratch) {
 	if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
 		leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
+		p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 		leaf.setExtra(true)
 		leaf.setExternalScannerToken(tok.ExternalScannerToken)
 		leaf.preGotoState = currentState
@@ -8195,6 +8224,7 @@ func (p *Parser) applyCompactExtraShiftAction(s *glrStack, currentState, targetS
 		return
 	}
 	leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+	p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 	leaf.setExtra(true)
 	leaf.setExternalScannerToken(tok.ExternalScannerToken)
 	leaf.preGotoState = currentState

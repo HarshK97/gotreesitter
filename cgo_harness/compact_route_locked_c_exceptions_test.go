@@ -166,6 +166,60 @@ func TestCompactRouteLockedCExceptions(t *testing.T) {
 	}
 }
 
+func TestCompactPackedGSSVersionOrderLockedCExceptions(t *testing.T) {
+	manifest := loadCompactRouteLockedCManifest(t)
+	for _, witness := range manifest.Witnesses {
+		witness := witness
+		t.Run(witness.ID, func(t *testing.T) {
+			entry, ok := parityEntriesByName[witness.Language]
+			if !ok {
+				t.Fatalf("language %q is not registered", witness.Language)
+			}
+			language := *entry.Language()
+			language.CompactPackedGSSVersionOrderCertified = true
+			cLanguage, err := COracleLanguage(witness.Language)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			source := []byte(witness.SourceUTF8)
+			cParser := sitter.NewParser()
+			defer cParser.Close()
+			if err := cParser.SetLanguage(cLanguage); err != nil {
+				t.Fatal(err)
+			}
+			cTree := cParser.Parse(source, nil)
+			if cTree == nil || cTree.RootNode() == nil {
+				t.Fatal("C oracle returned a nil tree")
+			}
+			defer cTree.Close()
+
+			parser := gotreesitter.NewParser(&language)
+			parser.SetAdmissionCandidateRoute(false)
+			tree, err := parser.Parse(source)
+			if err != nil {
+				t.Fatalf("certified production parse: %v", err)
+			}
+			defer tree.Release()
+
+			root := tree.RootNode()
+			if diff := FirstDivergenceDumpV1(root, &language, cTree.RootNode()); diff != nil {
+				t.Fatalf("certified production tree diverges from locked C: %+v", diff)
+			}
+			if diff := firstLockedCTreeFlagDivergence(root, &language, cTree.RootNode(), "/"+root.Type(&language)); diff != nil {
+				t.Fatalf("certified production flags diverge from locked C: %v", diff)
+			}
+			inspection, err := benchfixtures.InspectGoTree(root, &language)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if inspection.SHA256 != witness.Expected.CompactCDeepSHA256 {
+				t.Fatalf("certified production digest=%s, want C digest %s", inspection.SHA256, witness.Expected.CompactCDeepSHA256)
+			}
+		})
+	}
+}
+
 func loadCompactRouteLockedCManifest(t *testing.T) compactRouteLockedCManifest {
 	t.Helper()
 	raw, err := os.ReadFile(compactRouteLockedCManifestPath)
