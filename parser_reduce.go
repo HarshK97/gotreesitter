@@ -2695,7 +2695,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 
 func (p *Parser) applyReduceActionDispatch(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) {
 	workCountRecordReduce()
-	workCountObserveReductionPop(s, int(act.ChildCount))
+	workCountObserveReductionPop(s, int(act.ChildCount)) // work-count-assembly: topology direct-pop seam
 	entries := s.entries
 	borrowed := false
 	if entries == nil {
@@ -4438,12 +4438,29 @@ func (p *Parser) applyReduceActionFromGSS(source []byte, s *glrStack, act ParseA
 
 func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, _ []stackEntry, deferParentLinks bool, trackChildErrors bool) {
 	var forks []reduceFork
+	var packedGroups [][]reduceFork
 	if p.compactPackedGSSVersionOrderEnabled() {
 		// The certified action-cell transaction keeps its source version
 		// unchanged while these outputs are built. Enumerate every pop slice in
 		// C's iterator-wave order; the transaction then groups and selects the
 		// same-pop candidates before it publishes physical versions.
-		forks = cWaveReduceWindowsFromGSS(s, int(act.ChildCount))
+		allForks := cWaveReduceWindowsFromGSS(s, int(act.ChildCount))
+		for start := 0; start < len(allForks); {
+			end := start + 1
+			for end < len(allForks) && reduceForksSameChildSelectionGroup(allForks[start], allForks[end]) {
+				end++
+			}
+			group := allForks[start:end]
+			selected := 0
+			for i := 1; i < len(group); i++ {
+				if p.reduceForkWindowPreference(arena, act, group[i], group[selected]) < 0 {
+					selected = i
+				}
+			}
+			packedGroups = append(packedGroups, group)
+			forks = append(forks, group[selected])
+			start = end
+		}
 	} else {
 		forks = p.selectedReduceWindowsFromGSS(arena, act, s, int(act.ChildCount), maxStacksPerMergeKey)
 	}
@@ -4538,18 +4555,64 @@ func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAc
 	}
 
 	base := s.cloneWithScratch(gssScratch)
+	var packedClones []glrStack
+	if workCountInstrumentationEnabled && len(packedGroups) != 0 {
+		workCountTopologyRecordPackedReduceGroup(p, arena, s, act, packedGroups[0], 0) // work-count-assembly: topology packed-primary pop-group seam
+		packedClones = make([]glrStack, len(forks)-1)
+		pathOrdinal := uint64(len(packedGroups[0]))
+		for i := 1; i < len(forks); i++ {
+			packedClones[i-1] = base.cloneWithScratch(gssScratch)
+			workCountTopologyRecordVersionCopy(s, &packedClones[i-1])
+			workCountTopologyRecordPackedReduceGroup(p, arena, &packedClones[i-1], act, packedGroups[i], pathOrdinal) // work-count-assembly: topology packed-clone pop-group seam
+			pathOrdinal += uint64(len(packedGroups[i]))
+		}
+	}
 	applyForkToStack(s, forks[0])
+	if workCountInstrumentationEnabled && len(packedGroups) != 0 {
+		workCountTopologyCommitVersion(s)                         // work-count-assembly: topology packed-primary commit seam
+		workCountTopologyRecordPackedReductionMergeAttempts(p, s) // work-count-assembly: topology packed-primary merge-attempt seam
+	}
 	markReduceApplied(s, act, anyReduced)
 
 	for i := 1; i < len(forks); i++ {
-		clone := base.cloneWithScratch(gssScratch)
-		if workCountInstrumentationEnabled {
+		var clone glrStack
+		if len(packedClones) != 0 {
+			clone = packedClones[i-1]
+		} else {
+			clone = base.cloneWithScratch(gssScratch)
+		}
+		if workCountInstrumentationEnabled && len(packedGroups) == 0 {
 			workCountTopologyRecordVersionCopy(s, &clone) // work-count-assembly: topology reduce-copy seam
 		}
 		applyForkToStack(&clone, forks[i])
 		clone.score = base.score + int(act.DynamicPrecedence)
 		if workCountInstrumentationEnabled {
-			workCountTopologyCommitVersion(&clone) // work-count-assembly: topology reduce-copy-result seam
+			workCountTopologyCommitVersion(&clone) // work-count-assembly: topology packed-clone commit seam
+		}
+		if len(packedGroups) != 0 {
+			primaryPackedMergeEligible := s != nil && !s.dead && !clone.dead && !s.accepted && !clone.accepted &&
+				s.entries == nil && clone.entries == nil && s.gss.head != nil && clone.gss.head != nil &&
+				stacksHeaderEquivalent(s, &clone) && gssMainCanMergeForParser(p, s, &clone)
+			if workCountInstrumentationEnabled && primaryPackedMergeEligible {
+				workCountTopologyRecordPackedReductionMergeAttempts(p, &clone) // work-count-assembly: topology packed-eligible merge-attempt seam
+			}
+			if primaryPackedMergeEligible && p.cTryMergeReductionVersion(s, &clone) {
+				continue
+			}
+			mergedPacked := false
+			for pendingIndex := range p.pendingForkStacks {
+				if gssMainCanMergeForParser(p, &p.pendingForkStacks[pendingIndex], &clone) &&
+					p.cTryMergeReductionVersion(&p.pendingForkStacks[pendingIndex], &clone) {
+					mergedPacked = true
+					break
+				}
+			}
+			if mergedPacked {
+				continue
+			}
+			if workCountInstrumentationEnabled && !primaryPackedMergeEligible {
+				workCountTopologyRecordPackedReductionMergeAttempts(p, &clone) // work-count-assembly: topology packed-fallback merge-attempt seam
+			}
 		}
 		if !p.disablePostReduceForkMerge {
 			finalizationRisk := p.postReduceForkMergeHasFinalizationRisk(&clone, tok)

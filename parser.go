@@ -6068,6 +6068,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					continue
 				}
 				if lastReductionVersion >= 0 {
+					if workCountInstrumentationEnabled {
+						workCountTopologyRenumberVersion(&stacks[lastReductionVersion], &stacks[si]) // work-count-assembly: topology packed-reduction-renumber seam
+					}
 					var renumbered bool
 					stacks, renumbered = cRenumberReductionVersion(stacks, lastReductionVersion, si)
 					if !renumbered {
@@ -6117,6 +6120,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				traceVisit(si, s, "extra-shift", 0, len(actions), actions[0])
 				semanticPhaseTraceRecordActionExecution(p, s, tok, actions[0], 0, "extra-shift", false) // semantic-phase-assembly: extra-shift-execution seam
 				p.applyExtraShiftAction(s, currentState, actions[0], tok, arena, scratch, trackChildErrors)
+				if workCountInstrumentationEnabled {
+					workCountTopologyRecordActionResult(s) // work-count-assembly: topology extra-shift action-result seam
+				}
 				nodeCount++
 				traceAfterPrimary(si, s)
 				consumeCurrentToken(s)
@@ -6153,6 +6159,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					// no table actions in C either; the version pauses and the
 					// condense step decides (ts_parser__handle_error skips the
 					// strategy-1 scan for error lookaheads and absorbs it).
+					workCountTopologyRecordNoActionPendingPop() // work-count-assembly: topology error-run pending-pop seam
 					s.cPaused = true
 					p.markCRecoveryCostCompetitionRelevant()
 					if actionTiming != nil {
@@ -6207,6 +6214,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						// Faithful C recovery port: EOF with no action pauses;
 						// the condense step resumes via ts_parser__handle_error
 						// whose recover_eof wraps the stack in an ERROR root.
+						workCountTopologyRecordNoActionPendingPop() // work-count-assembly: topology EOF pending-pop seam
 						s.cPaused = true
 						p.markCRecoveryCostCompetitionRelevant()
 						if actionTiming != nil {
@@ -6348,6 +6356,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					if p.glrTrace {
 						fmt.Printf("  stack[%d] C-PAUSED: no action for sym=%d in state=%d\n", si, tok.Symbol, currentState)
 					}
+					workCountTopologyRecordNoActionPendingPop() // work-count-assembly: topology no-action pending-pop seam
 					s.cPaused = true
 					p.markCRecoveryCostCompetitionRelevant()
 					if actionTiming != nil {
@@ -6890,12 +6899,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// clean parses are unaffected.
 		condenseErrorCostEnabled := p.errorCostCompetitionEnabled()
 		condenseAnyReduced := anyReduced
-		condenseRelevant := condenseErrorCostEnabled && cRecoveryRelevantStack(stacks)
+		condenseRelevant := condenseErrorCostEnabled &&
+			(cRecoveryRelevantStack(stacks) || (packedVersionOrder && len(stacks) > 1))
 		condenseEOFRecovery := condenseRelevant && tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
 		condenseShiftedRecovery := condenseRelevant && anyReduced && !tok.NoLookahead && allLiveUnacceptedStacksShifted(stacks)
 		condenseRan := false
 		condenseResumed := false
-		if condenseErrorCostEnabled && (!anyReduced || condenseEOFRecovery || condenseShiftedRecovery) {
+		if condenseErrorCostEnabled && ((packedVersionOrder && len(stacks) > 1) || !anyReduced || condenseEOFRecovery || condenseShiftedRecovery) {
 			var resumed bool
 			condenseRan = true
 			var reason ParseStopReason

@@ -204,7 +204,7 @@ func assertDiagnosticTopologyEventInvariants(t *testing.T, receipt gts.Diagnosti
 
 func TestDiagnosticTopologyReceiptErlangIssue984(t *testing.T) {
 	sexpr, receipt := captureErlangIssue984Topology(t)
-	if want := `(source_file (integer) (concatables (string) (var) (string)) (integer) (comment))`; sexpr != want {
+	if want := `(source_file (integer) (string) (var) (string) (integer) (comment))`; sexpr != want {
 		t.Fatalf("production witness tree = %s, want %s", sexpr, want)
 	}
 	if receipt.Schema != gts.DiagnosticTopologyReceiptSchema || receipt.Capacity != gts.DiagnosticTopologyReceiptCapacity {
@@ -257,14 +257,13 @@ func TestDiagnosticTopologyReceiptErlangIssue984(t *testing.T) {
 		}
 	}
 	wantState320Slice := []actionSliceEntry{
-		{320, uint64(gts.ParseActionReduce), 1, 1},
-		{830, uint64(gts.ParseActionShift), 0, 1},
 		{320, uint64(gts.ParseActionReduce), 0, 0},
-		{295, uint64(gts.ParseActionReduce), 0, 0},
-		{264, uint64(gts.ParseActionReduce), 0, 0},
-		{50, uint64(gts.ParseActionShift), 1, 2},
-		{50, uint64(gts.ParseActionReduce), 0, 0},
-		{44, uint64(gts.ParseActionShift), 0, 0},
+		{320, uint64(gts.ParseActionReduce), 1, 0},
+		{830, uint64(gts.ParseActionShift), 0, 0},
+		{295, uint64(gts.ParseActionReduce), 0, 1},
+		{264, uint64(gts.ParseActionReduce), 0, 1},
+		{50, uint64(gts.ParseActionReduce), 0, 1},
+		{44, uint64(gts.ParseActionShift), 0, 1},
 	}
 	state320Matches := len(state320Slice) == len(wantState320Slice)
 	for i := 0; state320Matches && i < len(state320Slice); i++ {
@@ -276,24 +275,40 @@ func TestDiagnosticTopologyReceiptErlangIssue984(t *testing.T) {
 	for _, kind := range []uint64{
 		gts.DiagnosticTopologyEventAction,
 		gts.DiagnosticTopologyEventVersionAdd,
-		gts.DiagnosticTopologyEventVersionCopy,
 		gts.DiagnosticTopologyEventVersionRenumber,
 		gts.DiagnosticTopologyEventMerge,
 		gts.DiagnosticTopologyEventLinkInsert,
 		gts.DiagnosticTopologyEventPopPath,
+		gts.DiagnosticTopologyEventChildElection,
 		gts.DiagnosticTopologyEventAcceptElection,
 	} {
 		if counts[kind] == 0 {
 			t.Errorf("receipt has no event kind %d", kind)
 		}
 	}
-	if len(acceptEvents) != 4 {
-		t.Fatalf("accept elections = %d, want four accepted candidates", len(acceptEvents))
+	if len(acceptEvents) != 1 {
+		t.Fatalf("accept elections = %d, want one accepted candidate", len(acceptEvents))
 	}
-	wantAcceptPayloads := []uint64{5, 7, 6, 7}
+	wantCounts := map[uint64]int{
+		gts.DiagnosticTopologyEventAction:          43,
+		gts.DiagnosticTopologyEventVersionAdd:      41,
+		gts.DiagnosticTopologyEventVersionCopy:     0,
+		gts.DiagnosticTopologyEventVersionRenumber: 35,
+		gts.DiagnosticTopologyEventMerge:           55,
+		gts.DiagnosticTopologyEventLinkInsert:      63,
+		gts.DiagnosticTopologyEventPopPath:         41,
+		gts.DiagnosticTopologyEventChildElection:   1,
+		gts.DiagnosticTopologyEventAcceptElection:  1,
+	}
+	for kind, want := range wantCounts {
+		if counts[kind] != want {
+			t.Errorf("event kind %d count = %d, want %d", kind, counts[kind], want)
+		}
+	}
+	wantAcceptPayloads := []uint64{3}
 	for i := range acceptEvents {
 		if acceptEvents[i].PayloadCount != wantAcceptPayloads[i] {
-			t.Fatalf("accept payloads = [%d %d %d %d], want %v", acceptEvents[0].PayloadCount, acceptEvents[1].PayloadCount, acceptEvents[2].PayloadCount, acceptEvents[3].PayloadCount, wantAcceptPayloads)
+			t.Fatalf("accept payload = %d, want %v", acceptEvents[0].PayloadCount, wantAcceptPayloads)
 		}
 		if acceptEvents[i].Flags&gts.DiagnosticTopologyFlagActionContextKnown == 0 ||
 			acceptEvents[i].ActionID == 0 || acceptEvents[i].ActionType != uint64(gts.ParseActionAccept) {
@@ -301,11 +316,36 @@ func TestDiagnosticTopologyReceiptErlangIssue984(t *testing.T) {
 		}
 	}
 	last := acceptEvents[len(acceptEvents)-1]
-	if acceptEvents[0].VersionIndex != 0 || last.SelectedID != acceptEvents[0].CandidateID || last.Flags&gts.DiagnosticTopologyFlagSuccessOrSelected != 0 {
-		t.Fatalf("final production selection = %+v, want physical slot 0 candidate %d to remain selected; elections=%+v", last, acceptEvents[0].CandidateID, acceptEvents)
+	if last.VersionIndex != 0 || last.SelectedID != last.CandidateID ||
+		last.Flags&gts.DiagnosticTopologyFlagSuccessOrSelected == 0 || last.Flags&gts.DiagnosticTopologyFlagNoIncumbent == 0 {
+		t.Fatalf("final production selection = %+v, want the physical slot 0 candidate selected without an incumbent", last)
+	}
+	wantFinalKinds := []uint64{
+		gts.DiagnosticTopologyEventAction,
+		gts.DiagnosticTopologyEventLinkInsert,
+		gts.DiagnosticTopologyEventVersionAdd,
+		gts.DiagnosticTopologyEventPopPath,
+		gts.DiagnosticTopologyEventAcceptElection,
+	}
+	finalEvents := receipt.Events[len(receipt.Events)-len(wantFinalKinds):]
+	for i, wantKind := range wantFinalKinds {
+		if finalEvents[i].Kind != wantKind {
+			t.Fatalf("final event %d kind = %d, want %d", i, finalEvents[i].Kind, wantKind)
+		}
+	}
+	acceptAction := finalEvents[0]
+	if acceptAction.ActionType != uint64(gts.ParseActionAccept) {
+		t.Fatalf("final action = %+v, want ACCEPT", acceptAction)
+	}
+	if eofLink := finalEvents[1]; eofLink.ActionID != acceptAction.ActionID || eofLink.State != 1 ||
+		eofLink.Flags&gts.DiagnosticTopologyFlagPrimaryLink == 0 {
+		t.Fatalf("ACCEPT EOF push = %+v, want a primary state-1 link", eofLink)
+	}
+	if pop := finalEvents[3]; pop.ActionID != acceptAction.ActionID || pop.PayloadCount != 3 || pop.PathOrdinal != 0 {
+		t.Fatalf("ACCEPT pop = %+v, want one three-payload path", pop)
 	}
 	t.Logf("receipt sha256=%s events=%d kinds=%v selected_candidate=%d", receipt.SHA256(), receipt.EventsSeen, counts, last.SelectedID)
-	if receipt.EventsSeen != 399 || receipt.SHA256() != "492192644602d6cc85bee6fe05301e6a9067088f8c24125dda470edb896b45a2" {
+	if receipt.EventsSeen != 280 || receipt.SHA256() != "f90b82a19bd52475a0b61376a631fe53b69ac827c89bec6802940e8302d77754" {
 		t.Fatalf("canonical receipt = %d/%s", receipt.EventsSeen, receipt.SHA256())
 	}
 

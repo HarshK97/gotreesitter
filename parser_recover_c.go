@@ -3137,7 +3137,7 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 			var reason ParseStopReason
 			versions, actionReductionVersion, reason = p.cAppendReductionActionVersions(
 				source, versions, v, act, tok, nodeCount, arena, entryScratch,
-				gssScratch, tmpEntries, trackChildErrors, &singletonCandidate, nil,
+				gssScratch, tmpEntries, trackChildErrors, &singletonCandidate, nil, -1,
 			)
 			if reason != ParseStopNone {
 				if workCountInstrumentationEnabled {
@@ -3194,8 +3194,11 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 }
 
 func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool) ([]glrStack, ParseStopReason) {
+	if workCountInstrumentationEnabled {
+		defer workCountTopologyFinishReductionAction() // work-count-assembly: topology reduction-candidates finish seam
+	}
 	var singletonCandidate glrStack
-	candidates, hasSingletonCandidate, reason := p.cReductionCandidatesForActionInto(source, start, act, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors, &singletonCandidate, nil)
+	candidates, hasSingletonCandidate, reason := p.cReductionCandidatesForActionInto(source, start, act, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors, &singletonCandidate, nil, -1)
 	if hasSingletonCandidate {
 		return []glrStack{singletonCandidate}, reason
 	}
@@ -3206,13 +3209,16 @@ func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, ac
 // version. It appends every surviving pop result in C stack-version order and
 // merges each result into earlier compatible versions before the caller can
 // promote a result into the source slot.
-func (p *Parser) cAppendReductionActionVersions(source []byte, versions []glrStack, originalVersion int, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool, singletonCandidate *glrStack, anyReduced *bool) ([]glrStack, int, ParseStopReason) {
+func (p *Parser) cAppendReductionActionVersions(source []byte, versions []glrStack, originalVersion int, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool, singletonCandidate *glrStack, anyReduced *bool, actionOrdinal int) ([]glrStack, int, ParseStopReason) {
+	if workCountInstrumentationEnabled {
+		defer workCountTopologyFinishReductionAction() // work-count-assembly: topology reduction-append finish seam
+	}
 	if originalVersion < 0 || originalVersion >= len(versions) || singletonCandidate == nil {
 		return versions, -1, ParseStopInvariantViolation
 	}
 	actionCandidates, hasSingletonCandidate, reason := p.cReductionCandidatesForActionInto(
 		source, versions[originalVersion], act, tok, nodeCount, arena,
-		entryScratch, gssScratch, tmpEntries, trackChildErrors, singletonCandidate, anyReduced,
+		entryScratch, gssScratch, tmpEntries, trackChildErrors, singletonCandidate, anyReduced, actionOrdinal,
 	)
 	if reason != ParseStopNone {
 		return versions, -1, reason
@@ -3259,7 +3265,7 @@ func (p *Parser) cAppendActionCellReductionVersions(source []byte, versions []gl
 			var reason ParseStopReason
 			versions, reductionVersion, reason = p.cAppendReductionActionVersions(
 				source, versions, originalVersion, action, tok, nodeCount, arena,
-				entryScratch, gssScratch, tmpEntries, trackChildErrors, &singletonCandidate, anyReduced,
+				entryScratch, gssScratch, tmpEntries, trackChildErrors, &singletonCandidate, anyReduced, actionOrdinal,
 			)
 			if reason != ParseStopNone {
 				return versions, lastReductionVersion, -1, reason
@@ -3279,7 +3285,7 @@ func (p *Parser) cAppendActionCellReductionVersions(source []byte, versions []gl
 	return versions, lastReductionVersion, -1, ParseStopNone
 }
 
-func (p *Parser) cReductionCandidatesForActionInto(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool, singletonCandidate *glrStack, anyReduced *bool) ([]glrStack, bool, ParseStopReason) {
+func (p *Parser) cReductionCandidatesForActionInto(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool, singletonCandidate *glrStack, anyReduced *bool, actionOrdinal int) ([]glrStack, bool, ParseStopReason) {
 	if workCountInstrumentationEnabled {
 		workCountTopologyRetireVersionsIfActive(p.pendingForkStacks)
 	}
@@ -3296,8 +3302,7 @@ func (p *Parser) cReductionCandidatesForActionInto(source []byte, start glrStack
 	}
 	fork := start.cloneWithScratch(gssScratch)
 	if workCountInstrumentationEnabled {
-		workCountTopologyPrepareVersionCopy(&start, &fork)
-		workCountTopologyRecordAction(&fork, tok, act, -1)
+		workCountTopologyBeginReductionVersion(&start, &fork, tok, act, actionOrdinal)
 	}
 	var dummy bool
 	deferParentLinks := p.reduceScratch != nil && p.reduceScratch.transientParents != nil
@@ -3310,7 +3315,7 @@ func (p *Parser) cReductionCandidatesForActionInto(source []byte, start glrStack
 		*anyReduced = true
 	}
 	if workCountInstrumentationEnabled {
-		workCountTopologyRecordActionResult(&fork)
+		workCountTopologyEndReductionVersion(&start, &fork)
 	}
 	if tmpEntries != nil {
 		if localTmpEntries != nil {
@@ -3445,9 +3450,15 @@ func (p *Parser) cTryMergeReductionVersion(target, candidate *glrStack) bool {
 		return false
 	}
 	if target.entries != nil || candidate.entries != nil || target.gss.head == nil || candidate.gss.head == nil {
+		if workCountInstrumentationEnabled {
+			workCountTopologyRecordMerge(target, candidate, false) // work-count-assembly: topology C-reduction merge-reject seam
+		}
 		return false
 	}
 	if !stacksHeaderEquivalent(target, candidate) {
+		if workCountInstrumentationEnabled {
+			workCountTopologyRecordMerge(target, candidate, false) // work-count-assembly: topology C-reduction header-reject seam
+		}
 		return false
 	}
 	return tryGSSMainMergeForParser(p, target, candidate)
@@ -4866,7 +4877,7 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, ts TokenSo
 	if reason := checkStop(); reason != ParseStopNone {
 		return stacks, false, tok, reason
 	}
-	relevant := false
+	relevant := p.compactPackedGSSVersionOrderEnabled() && len(stacks) > 1
 	for i := range stacks {
 		if stacks[i].cPaused || stacks[i].cRec != nil || stacks[i].cRecoverMissingGroup != nil {
 			relevant = true
@@ -4936,16 +4947,20 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, ts TokenSo
 			if cRecoverVersionsSameGroup(stacks[j], stacks[i]) {
 				continue
 			}
-			if cRecoverVersionShouldStayBefore(stacks[j], stacks[i]) {
-				continue
-			}
-			if cRecoverVersionShouldStayBefore(stacks[i], stacks[j]) {
-				stacks[i], stacks[j] = stacks[j], stacks[i]
-				if workCountInstrumentationEnabled {
-					workCountTopologySyncVersionOrder(stacks)
+			// The linear recovery representation needs this ownership order.
+			// Packed version order uses C's physical comparison sequence.
+			if !p.compactPackedGSSVersionOrderEnabled() {
+				if cRecoverVersionShouldStayBefore(stacks[j], stacks[i]) {
+					continue
 				}
-				statusI = p.cCondenseVersionStatus(&stacks[i], subtreeCostRelevant)
-				continue
+				if cRecoverVersionShouldStayBefore(stacks[i], stacks[j]) {
+					stacks[i], stacks[j] = stacks[j], stacks[i]
+					if workCountInstrumentationEnabled {
+						workCountTopologySyncVersionOrder(stacks)
+					}
+					statusI = p.cCondenseVersionStatus(&stacks[i], subtreeCostRelevant)
+					continue
+				}
 			}
 			statusJ := p.cCondenseVersionStatus(&stacks[j], subtreeCostRelevant)
 			switch p.cCompareCondenseVersions(statusJ, statusI, &stacks[j], &stacks[i]) {
@@ -4961,17 +4976,29 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, ts TokenSo
 				stacks = append(stacks[:i], stacks[i+1:]...)
 				i--
 				j = i
+			case cErrorComparisonPreferLeft, cErrorComparisonNone:
+				if p.compactPackedGSSVersionOrderEnabled() && tryGSSMainMergeForParser(p, &stacks[j], &stacks[i]) {
+					stacks = append(stacks[:i], stacks[i+1:]...)
+					i--
+					j = i
+				}
 			case cErrorComparisonPreferRight:
-				if p.glrTrace {
-					p.traceCCondenseSwap("prefer-right", i, j, stacks[i], stacks[j],
-						p.cVersionStatusForTrace(&stacks[i], statusI),
-						p.cVersionStatusForTrace(&stacks[j], statusJ))
+				if p.compactPackedGSSVersionOrderEnabled() && tryGSSMainMergeForParser(p, &stacks[j], &stacks[i]) {
+					stacks = append(stacks[:i], stacks[i+1:]...)
+					i--
+					j = i
+				} else {
+					if p.glrTrace {
+						p.traceCCondenseSwap("prefer-right", i, j, stacks[i], stacks[j],
+							p.cVersionStatusForTrace(&stacks[i], statusI),
+							p.cVersionStatusForTrace(&stacks[j], statusJ))
+					}
+					stacks[i], stacks[j] = stacks[j], stacks[i]
+					if workCountInstrumentationEnabled {
+						workCountTopologySyncVersionOrder(stacks)
+					}
+					statusI = p.cCondenseVersionStatus(&stacks[i], subtreeCostRelevant)
 				}
-				stacks[i], stacks[j] = stacks[j], stacks[i]
-				if workCountInstrumentationEnabled {
-					workCountTopologySyncVersionOrder(stacks)
-				}
-				statusI = p.cCondenseVersionStatus(&stacks[i], subtreeCostRelevant)
 			case cErrorComparisonTakeRight:
 				if p.glrTrace {
 					p.traceCCondenseDrop("take-right", j, i, stacks[j], stacks[i],

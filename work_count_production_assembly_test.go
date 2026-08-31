@@ -16,33 +16,56 @@ import (
 )
 
 const (
-	finalizeDeferGuardMarker               = "work-count-assembly: finalize-defer guard"
-	popPayloadCensusMarker                 = "work-count-assembly: payload-census seam"
-	convergenceIterationMarker             = "work-count-assembly: convergence iteration seam"
-	resolvedActionCellMarker               = "work-count-assembly: resolved action-cell seam"
-	unionFrontierElectionMarker            = "work-count-assembly: union-frontier election seam"
-	rawMainLexerInvocationMarker           = "work-count-assembly: raw main-lexer invocation seam"
-	convergenceFinalExpandMarker           = "work-count-assembly: convergence final-expand seam"
-	convergenceGSSMarker                   = "work-count-assembly: convergence GSS seam"
-	gssMutationSetPrimaryMarker            = "work-count-assembly: GSS mutation set-primary seam"
-	gssMutationSetExtraMarker              = "work-count-assembly: GSS mutation set-extra seam"
-	gssAlternateAppendReuseMarker          = "work-count-assembly: alternate predecessor append-reuse seam"
-	gssAlternateAppendGrowMarker           = "work-count-assembly: alternate predecessor append-grow seam"
-	gssMutationAppendReuseMarker           = "work-count-assembly: GSS mutation append-reuse seam"
-	gssMutationAppendGrowMarker            = "work-count-assembly: GSS mutation append-grow seam"
-	topologyActionResultMarker             = "work-count-assembly: topology action-result seam"
-	topologyInitialVersionMarker           = "work-count-assembly: topology initial-version seam"
-	topologyConflictCopyMarker             = "work-count-assembly: topology conflict-copy seam"
-	topologyFrontierShiftCopyMarker        = "work-count-assembly: topology frontier-shift-copy seam"
-	topologyChildElectionMarker            = "work-count-assembly: topology child-election seam"
-	topologyPopPathMarker                  = "work-count-assembly: topology pop-path seam"
-	topologyReduceCopyMarker               = "work-count-assembly: topology reduce-copy seam"
-	topologyNodeAllocationMarker           = "work-count-assembly: topology primary-link seam"
-	semanticPhaseActionCellMarker          = "semantic-phase-assembly: action-cell seam"
-	semanticPhaseActionExecutionMarker     = "semantic-phase-assembly: action-execution seam"
-	semanticPhaseExtraShiftExecutionMarker = "semantic-phase-assembly: extra-shift-execution seam"
-	semanticPhaseEOFActionCellMarker       = "semantic-phase-assembly: EOF-prefix action-cell seam"
-	semanticPhaseEOFActionExecutionMarker  = "semantic-phase-assembly: EOF-prefix action-execution seam"
+	finalizeDeferGuardMarker                = "work-count-assembly: finalize-defer guard"
+	popPayloadCensusMarker                  = "work-count-assembly: payload-census seam"
+	convergenceIterationMarker              = "work-count-assembly: convergence iteration seam"
+	resolvedActionCellMarker                = "work-count-assembly: resolved action-cell seam"
+	unionFrontierElectionMarker             = "work-count-assembly: union-frontier election seam"
+	rawMainLexerInvocationMarker            = "work-count-assembly: raw main-lexer invocation seam"
+	convergenceFinalExpandMarker            = "work-count-assembly: convergence final-expand seam"
+	convergenceGSSMarker                    = "work-count-assembly: convergence GSS seam"
+	gssMutationSetPrimaryMarker             = "work-count-assembly: GSS mutation set-primary seam"
+	gssMutationSetExtraMarker               = "work-count-assembly: GSS mutation set-extra seam"
+	gssAlternateAppendReuseMarker           = "work-count-assembly: alternate predecessor append-reuse seam"
+	gssAlternateAppendGrowMarker            = "work-count-assembly: alternate predecessor append-grow seam"
+	gssMutationAppendReuseMarker            = "work-count-assembly: GSS mutation append-reuse seam"
+	gssMutationAppendGrowMarker             = "work-count-assembly: GSS mutation append-grow seam"
+	topologyActionResultMarker              = "work-count-assembly: topology action-result seam"
+	topologyExtraShiftActionResultMarker    = "work-count-assembly: topology extra-shift action-result seam"
+	topologyPackedReductionRenumberMarker   = "work-count-assembly: topology packed-reduction-renumber seam"
+	topologyFlatEntryLinkMarker             = "work-count-assembly: topology flat-entry-link seam"
+	topologyDirectPopMarker                 = "work-count-assembly: topology direct-pop seam"
+	topologyCReductionMergeRejectMarker     = "work-count-assembly: topology C-reduction merge-reject seam"
+	topologyCReductionHeaderRejectMarker    = "work-count-assembly: topology C-reduction header-reject seam"
+	topologyLinearDemotionMarker            = "work-count-assembly: topology linear-demotion seam"
+	topologyParserMergeMarker               = "work-count-assembly: topology parser-merge seam"
+	topologyParserMergeSuccessMarker        = "work-count-assembly: topology parser-merge success seam"
+	topologyBoundaryMergeMarker             = "work-count-assembly: topology boundary-merge seam"
+	topologyBoundaryMergeSuccessMarker      = "work-count-assembly: topology boundary-merge success seam"
+	topologyErrorRunPendingPopMarker        = "work-count-assembly: topology error-run pending-pop seam"
+	topologyEOFPendingPopMarker             = "work-count-assembly: topology EOF pending-pop seam"
+	topologyNoActionPendingPopMarker        = "work-count-assembly: topology no-action pending-pop seam"
+	topologyReductionCandidatesFinishMarker = "work-count-assembly: topology reduction-candidates finish seam"
+	topologyReductionAppendFinishMarker     = "work-count-assembly: topology reduction-append finish seam"
+	topologyPackedPrimaryPopGroupMarker     = "work-count-assembly: topology packed-primary pop-group seam"
+	topologyPackedClonePopGroupMarker       = "work-count-assembly: topology packed-clone pop-group seam"
+	topologyPackedPrimaryCommitMarker       = "work-count-assembly: topology packed-primary commit seam"
+	topologyPackedCloneCommitMarker         = "work-count-assembly: topology packed-clone commit seam"
+	topologyPackedPrimaryMergeMarker        = "work-count-assembly: topology packed-primary merge-attempt seam"
+	topologyPackedEligibleMergeMarker       = "work-count-assembly: topology packed-eligible merge-attempt seam"
+	topologyPackedFallbackMergeMarker       = "work-count-assembly: topology packed-fallback merge-attempt seam"
+	topologyInitialVersionMarker            = "work-count-assembly: topology initial-version seam"
+	topologyConflictCopyMarker              = "work-count-assembly: topology conflict-copy seam"
+	topologyFrontierShiftCopyMarker         = "work-count-assembly: topology frontier-shift-copy seam"
+	topologyChildElectionMarker             = "work-count-assembly: topology child-election seam"
+	topologyPopPathMarker                   = "work-count-assembly: topology pop-path seam"
+	topologyReduceCopyMarker                = "work-count-assembly: topology reduce-copy seam"
+	topologyNodeAllocationMarker            = "work-count-assembly: topology primary-link seam"
+	semanticPhaseActionCellMarker           = "semantic-phase-assembly: action-cell seam"
+	semanticPhaseActionExecutionMarker      = "semantic-phase-assembly: action-execution seam"
+	semanticPhaseExtraShiftExecutionMarker  = "semantic-phase-assembly: extra-shift-execution seam"
+	semanticPhaseEOFActionCellMarker        = "semantic-phase-assembly: EOF-prefix action-cell seam"
+	semanticPhaseEOFActionExecutionMarker   = "semantic-phase-assembly: EOF-prefix action-execution seam"
 )
 
 func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
@@ -90,6 +113,10 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	assertNoAssemblyAtMarker(t, parseInternalAssembly, "parser.go", resolvedActionCellMarker)
 	assertNoAssemblyAtMarker(t, parseInternalAssembly, "parser.go", topologyInitialVersionMarker)
 	assertNoAssemblyAtMarker(t, parseInternalAssembly, "parser.go", topologyConflictCopyMarker)
+	assertNoAssemblyAtMarker(t, parseInternalAssembly, "parser.go", topologyPackedReductionRenumberMarker)
+	assertNoAssemblyAtMarker(t, parseInternalAssembly, "parser.go", topologyErrorRunPendingPopMarker)
+	assertNoAssemblyAtMarker(t, parseInternalAssembly, "parser.go", topologyEOFPendingPopMarker)
+	assertNoAssemblyAtMarker(t, parseInternalAssembly, "parser.go", topologyNoActionPendingPopMarker)
 	assertNoDiagnosticAssembly(t, parseInternalAssembly)
 	lexerScanAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Lexer\)\.scan$`, testBinary)
 	assertNoAssemblyAtMarker(t, lexerScanAssembly, "lexer.go", rawMainLexerInvocationMarker)
@@ -97,8 +124,19 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	recoverAcquireAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.cRecoverAcquireToken$`, testBinary)
 	assertNoAssemblyAtMarker(t, recoverAcquireAssembly, "parser_recover_c.go", unionFrontierElectionMarker)
 	assertNoDiagnosticAssembly(t, recoverAcquireAssembly)
+	reductionMergeAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.cTryMergeReductionVersion`, testBinary)
+	assertNoAssemblyAtMarker(t, reductionMergeAssembly, "parser_recover_c.go", topologyCReductionMergeRejectMarker)
+	assertNoAssemblyAtMarker(t, reductionMergeAssembly, "parser_recover_c.go", topologyCReductionHeaderRejectMarker)
+	assertNoDiagnosticAssembly(t, reductionMergeAssembly)
+	reductionCandidatesAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.cReductionCandidatesForAction$`, testBinary)
+	assertNoAssemblyAtMarker(t, reductionCandidatesAssembly, "parser_recover_c.go", topologyReductionCandidatesFinishMarker)
+	assertNoDiagnosticAssembly(t, reductionCandidatesAssembly)
+	reductionAppendAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.cAppendReductionActionVersions$`, testBinary)
+	assertNoAssemblyAtMarker(t, reductionAppendAssembly, "parser_recover_c.go", topologyReductionAppendFinishMarker)
+	assertNoDiagnosticAssembly(t, reductionAppendAssembly)
 	assertNoAssemblyAtMarker(t, closures, "parser.go", semanticPhaseActionCellMarker)
 	assertNoAssemblyAtMarker(t, closures, "parser.go", semanticPhaseExtraShiftExecutionMarker)
+	assertNoAssemblyAtMarker(t, closures, "parser.go", topologyExtraShiftActionResultMarker)
 	eofAdvanceAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.tryAdvanceEOFOnSingleStack`, testBinary)
 	assertNoAssemblyAtMarker(t, eofAdvanceAssembly, "parser.go", semanticPhaseEOFActionCellMarker)
 	assertNoAssemblyAtMarker(t, eofAdvanceAssembly, "parser.go", semanticPhaseEOFActionExecutionMarker)
@@ -113,6 +151,14 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	gssAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.tryGSSMainMergeForParser`, testBinary)
 	assertNoAssemblyAtMarker(t, gssAssembly, "glr.go", convergenceGSSMarker)
 	assertNoDiagnosticAssembly(t, gssAssembly)
+	parserMergeAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.tryGSSMainMergeForParserPhase$`, testBinary)
+	assertNoAssemblyAtMarker(t, parserMergeAssembly, "glr.go", topologyParserMergeMarker)
+	assertNoAssemblyAtMarker(t, parserMergeAssembly, "glr.go", topologyParserMergeSuccessMarker)
+	assertNoDiagnosticAssembly(t, parserMergeAssembly)
+	boundaryMergeAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.tryGSSMainMergeResult$`, testBinary)
+	assertNoAssemblyAtMarker(t, boundaryMergeAssembly, "glr.go", topologyBoundaryMergeMarker)
+	assertNoAssemblyAtMarker(t, boundaryMergeAssembly, "glr.go", topologyBoundaryMergeSuccessMarker)
+	assertNoDiagnosticAssembly(t, boundaryMergeAssembly)
 	gssMutationAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.(?:setGSSMainLink|gssMainAddLinkSeenMutate|gssMainReplaceWorstEquivalentLinkIfBetterMutate|gssMainMergeNodesSeenMutate|gssMainMergeWithScratch|tryGSSMainMergeResult|\(\*gssNode\)\.appendExtraLink)`, testBinary)
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr.go", gssMutationSetPrimaryMarker)
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr.go", gssMutationSetExtraMarker)
@@ -121,9 +167,29 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr_gss.go", gssMutationAppendReuseMarker)
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr_gss.go", gssMutationAppendGrowMarker)
 	assertNoDiagnosticAssembly(t, gssMutationAssembly)
+	flatStackAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*glrStack\)\.pushEntry`, testBinary)
+	assertNoAssemblyAtMarker(t, flatStackAssembly, "glr.go", topologyFlatEntryLinkMarker)
+	assertNoDiagnosticAssembly(t, flatStackAssembly)
+	demotionAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*glrStack\)\.demoteLinearGSS$`, testBinary)
+	assertNoAssemblyAtMarker(t, demotionAssembly, "glr.go", topologyLinearDemotionMarker)
+	assertNoDiagnosticAssembly(t, demotionAssembly)
 	postReduceAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.(?:tryMergePostReduceFork|postReduceForkMergePreflight|\(\*Parser\)\.(?:applyReduceActionForked|applyReduceActionFromGSS))`, testBinary)
 	assertNoAssemblyAtMarker(t, postReduceAssembly, "parser_reduce.go", topologyReduceCopyMarker)
+	for _, marker := range []string{
+		topologyPackedPrimaryPopGroupMarker,
+		topologyPackedClonePopGroupMarker,
+		topologyPackedPrimaryCommitMarker,
+		topologyPackedCloneCommitMarker,
+		topologyPackedPrimaryMergeMarker,
+		topologyPackedEligibleMergeMarker,
+		topologyPackedFallbackMergeMarker,
+	} {
+		assertNoAssemblyAtMarker(t, postReduceAssembly, "parser_reduce.go", marker)
+	}
 	assertNoDiagnosticAssembly(t, postReduceAssembly)
+	reduceDispatchAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.applyReduceActionDispatch`, testBinary)
+	assertNoAssemblyAtMarker(t, reduceDispatchAssembly, "parser_reduce.go", topologyDirectPopMarker)
+	assertNoDiagnosticAssembly(t, reduceDispatchAssembly)
 	frontierAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.completeConflictReduceFrontier`, testBinary)
 	assertNoAssemblyAtMarker(t, frontierAssembly, "parser_reduce.go", topologyFrontierShiftCopyMarker)
 	assertNoDiagnosticAssembly(t, frontierAssembly)

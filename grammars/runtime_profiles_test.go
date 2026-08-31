@@ -462,6 +462,100 @@ func TestBuiltinCompactConvergedSplitProfilesRequireExactBlobIdentity(t *testing
 	}
 }
 
+func TestBuiltinCompactPackedGSSVersionOrderProfileRequiresExactBlobIdentity(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	builtin := ErlangLanguage()
+	if !builtin.CompactPackedGSSVersionOrderCertified {
+		t.Fatal("exact Erlang artifact did not receive packed GSS version-order certification")
+	}
+
+	custom := &gotreesitter.Language{Name: "erlang"}
+	AttachLanguageSupport("erlang", custom)
+	if custom.CompactPackedGSSVersionOrderCertified {
+		t.Fatal("same-name custom grammar enabled packed GSS version ordering")
+	}
+
+	stale := &gotreesitter.Language{Name: "erlang"}
+	if attachBuiltinLanguageRuntimeProfile("erlang", sha256.Sum256([]byte("stale-erlang-blob")), stale) {
+		t.Fatal("stale Erlang blob attached the runtime profile")
+	}
+	if stale.CompactPackedGSSVersionOrderCertified {
+		t.Fatal("stale Erlang blob enabled packed GSS version ordering")
+	}
+}
+
+func TestBuiltinErlangPackedGSSVersionOrderIssue984Tree(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	builtin := ErlangLanguage()
+	copyLanguage := *builtin
+	for _, test := range []struct {
+		name     string
+		language *gotreesitter.Language
+	}{
+		{name: "language_copy", language: &copyLanguage},
+		{name: "cached_builtin", language: builtin},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parser := gotreesitter.NewParser(test.language)
+			parser.SetAdmissionCandidateRoute(false)
+			tree, err := parser.Parse([]byte("000\"0A!A \"A\"=0:A0!)A\"0%0000"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tree.Release()
+			if got, want := tree.RootNode().SExpr(test.language), `(source_file (integer) (string) (var) (string) (integer) (comment))`; got != want {
+				t.Fatalf("Erlang issue #984 tree = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
+func TestBuiltinErlangPackedGSSVersionOrderPreservesLinearRecovery(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	const source = "f(X) ->\n" +
+		"  try 1 of\n" +
+		"    X -> ok;\n" +
+		"    Y when Z -> ok\n" +
+		"  catch\n" +
+		"    Pattern -> ok;\n" +
+		"    error:Pattern -> ok;\n" +
+		"    throw:Pattern:Stack -> ok;\n" +
+		"    exit:Complex + Pattern:Stack -> ok\n" +
+		"  after\n" +
+		"    ok\n" +
+		"  end,\n" +
+		"  try _\n" +
+		"  catch\n" +
+		"  end.\n"
+	builtin := ErlangLanguage()
+	linear := *builtin
+	linear.CompactPackedGSSVersionOrderCertified = false
+	var sexprs [2]string
+	for i, language := range []*gotreesitter.Language{builtin, &linear} {
+		parser := gotreesitter.NewParser(language)
+		tree, err := parser.Parse([]byte(source))
+		if err != nil {
+			t.Fatalf("route %d parse: %v", i, err)
+		}
+		if tree.RootNode().HasError() {
+			got := tree.RootNode().SExpr(language)
+			tree.Release()
+			t.Fatalf("route %d produced an error tree: %s", i, got)
+		}
+		sexprs[i] = tree.RootNode().SExpr(language)
+		tree.Release()
+	}
+	if sexprs[0] != sexprs[1] {
+		t.Fatalf("packed and linear Erlang trees differ:\npacked: %s\nlinear: %s", sexprs[0], sexprs[1])
+	}
+}
+
 func TestBuiltinOdinArenaDensityProfileRequiresExactBlobIdentity(t *testing.T) {
 	PurgeEmbeddedLanguageCache()
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })

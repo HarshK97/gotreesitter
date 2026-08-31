@@ -171,6 +171,11 @@ type diagnosticTopologyLinkKey struct {
 	ordinal uint64
 }
 
+type diagnosticTopologyMergeKey struct {
+	targetID    uint64
+	candidateID uint64
+}
+
 type diagnosticTopologyVersion struct {
 	id            uint64
 	index         uint64
@@ -179,19 +184,22 @@ type diagnosticTopologyVersion struct {
 	entrySnapshot []stackEntry
 	entryNodeIDs  []uint64
 	emptyNodeID   uint64
+	snapshot      glrStack
 }
 
 type diagnosticTopologyAction struct {
-	id        uint64
-	ordinal   int64
-	typeID    uint64
-	state     uint64
-	lookahead uint64
-	byte      uint64
-	symbol    uint64
-	versionID uint64
-	index     uint64
-	popID     uint64
+	id                uint64
+	ordinal           int64
+	typeID            uint64
+	state             uint64
+	lookahead         uint64
+	byte              uint64
+	symbol            uint64
+	versionID         uint64
+	index             uint64
+	popID             uint64
+	directPop         bool
+	candidatePrepared bool
 }
 
 type diagnosticTopologyPendingCopy struct {
@@ -227,21 +235,28 @@ type diagnosticTopologyState struct {
 	nextElectionID  uint64
 	nextCandidateID uint64
 
-	nodeIDs       map[*gssNode]uint64
-	linkIDs       map[diagnosticTopologyLinkKey]uint64
-	linkPrevIDs   map[diagnosticTopologyLinkKey]uint64
-	versions      map[uint64]diagnosticTopologyVersion
-	versionSlots  []uint64
-	actions       map[*glrStack]diagnosticTopologyAction
-	pendingCopies map[*glrStack]diagnosticTopologyPendingCopy
-	candidates    []diagnosticTopologyCandidate
-	currentAction *diagnosticTopologyAction
-	promotion     diagnosticTopologyPromotion
-	parser        *Parser
-	arena         *nodeArena
-	trackErrors   *bool
-	acceptCurrent diagnosticTopologyAcceptCandidate
-	acceptSet     bool
+	nodeIDs                      map[*gssNode]uint64
+	linkIDs                      map[diagnosticTopologyLinkKey]uint64
+	linkPrevIDs                  map[diagnosticTopologyLinkKey]uint64
+	versions                     map[uint64]diagnosticTopologyVersion
+	versionSlots                 []uint64
+	actions                      map[*glrStack]diagnosticTopologyAction
+	pendingCopies                map[*glrStack]diagnosticTopologyPendingCopy
+	preRecordedMerges            map[diagnosticTopologyMergeKey]bool
+	candidates                   []diagnosticTopologyCandidate
+	currentAction                *diagnosticTopologyAction
+	reductionActionSourceID      uint64
+	reductionActionTargetID      uint64
+	reductionActionAddRecorded   bool
+	reductionActionAddEventIndex int
+	promotion                    diagnosticTopologyPromotion
+	parser                       *Parser
+	arena                        *nodeArena
+	trackErrors                  *bool
+	acceptCurrent                diagnosticTopologyAcceptCandidate
+	acceptSet                    bool
+	acceptEOFNodeID              uint64
+	acceptSuppressNextLinkInsert bool
 }
 
 // diagnosticTopologyReceiptOwner gives one caller exclusive receipt ownership.
@@ -263,12 +278,13 @@ func BeginDiagnosticTopologyReceipt() {
 			Capacity: DiagnosticTopologyReceiptCapacity,
 			Events:   make([]DiagnosticTopologyEvent, 0, DiagnosticTopologyReceiptCapacity),
 		},
-		nodeIDs:       make(map[*gssNode]uint64),
-		linkIDs:       make(map[diagnosticTopologyLinkKey]uint64),
-		linkPrevIDs:   make(map[diagnosticTopologyLinkKey]uint64),
-		versions:      make(map[uint64]diagnosticTopologyVersion),
-		actions:       make(map[*glrStack]diagnosticTopologyAction),
-		pendingCopies: make(map[*glrStack]diagnosticTopologyPendingCopy),
+		nodeIDs:           make(map[*gssNode]uint64),
+		linkIDs:           make(map[diagnosticTopologyLinkKey]uint64),
+		linkPrevIDs:       make(map[diagnosticTopologyLinkKey]uint64),
+		versions:          make(map[uint64]diagnosticTopologyVersion),
+		actions:           make(map[*glrStack]diagnosticTopologyAction),
+		pendingCopies:     make(map[*glrStack]diagnosticTopologyPendingCopy),
+		preRecordedMerges: make(map[diagnosticTopologyMergeKey]bool),
 	}
 }
 
@@ -351,14 +367,21 @@ func workCountTopologyBeginAttempt() {
 	s.versionSlots = s.versionSlots[:0]
 	clear(s.actions)
 	clear(s.pendingCopies)
+	clear(s.preRecordedMerges)
 	s.candidates = s.candidates[:0]
 	s.currentAction = nil
+	s.reductionActionSourceID = 0
+	s.reductionActionTargetID = 0
+	s.reductionActionAddRecorded = false
+	s.reductionActionAddEventIndex = -1
 	s.promotion = diagnosticTopologyPromotion{}
 	s.parser = nil
 	s.arena = nil
 	s.trackErrors = nil
 	s.acceptCurrent = diagnosticTopologyAcceptCandidate{}
 	s.acceptSet = false
+	s.acceptEOFNodeID = 0
+	s.acceptSuppressNextLinkInsert = false
 }
 
 func workCountTopologySetParseContext(p *Parser, arena *nodeArena, trackErrors *bool) {
@@ -413,6 +436,38 @@ func workCountTopologyCommitPromotion(stack *glrStack) {
 		return
 	}
 	s.bindVersion(stack, promotion.versionID)
+}
+
+func workCountTopologyRecordDemotion(stack *glrStack, entries []stackEntry) {
+	s := activeDiagnosticTopology
+	if s == nil || stack == nil || stack.gss.head == nil || len(entries) == 0 {
+		return
+	}
+	versionID := s.versionID(stack)
+	version, ok := s.versions[versionID]
+	if !ok || versionID == 0 {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	nodeIDs := make([]uint64, len(entries))
+	node := stack.gss.head
+	for i := len(entries) - 1; i >= 0; i-- {
+		if node == nil || node.entry != entries[i] {
+			s.receipt.IdentityIncomplete = true
+			return
+		}
+		nodeIDs[i] = s.nodeID(node)
+		node = node.prev
+	}
+	if node != nil {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	version.head = nil
+	version.entrySnapshot = append(version.entrySnapshot[:0], entries...)
+	version.entryNodeIDs = append(version.entryNodeIDs[:0], nodeIDs...)
+	version.nodeID = nodeIDs[len(nodeIDs)-1]
+	s.versions[versionID] = version
 }
 
 func workCountTopologyRecordNodeAllocation(node *gssNode) {
@@ -634,6 +689,9 @@ func workCountTopologyRetireVersion(stack *glrStack) {
 		return
 	}
 	id := stack.diagnosticTopology.versionID
+	if s.acceptSet && stack.accepted && id == 0 {
+		return
+	}
 	if id == 0 {
 		s.receipt.IdentityIncomplete = true
 		return
@@ -691,6 +749,20 @@ func workCountTopologyRetireMissingVersions(before, after []glrStack) {
 	s := activeDiagnosticTopology
 	if s == nil {
 		return
+	}
+	if s.acceptSet && len(after) != 0 {
+		allAccepted := true
+		for i := range after {
+			if !after[i].accepted {
+				allAccepted = false
+				break
+			}
+		}
+		if allAccepted {
+			// C keeps the accepted stack and pop-all slice alive until parser
+			// teardown. Final Go result compaction must not publish removals.
+			return
+		}
 	}
 	for i := range before {
 		id := before[i].diagnosticTopology.versionID
@@ -853,6 +925,12 @@ func (s *diagnosticTopologyState) bindVersion(stack *glrStack, id uint64) {
 	if newHead == nil {
 		s.syncVersionEntries(id, stack)
 	}
+	version = s.versions[id]
+	version.snapshot = *stack
+	if stack.entries != nil {
+		version.snapshot.entries = append([]stackEntry(nil), stack.entries...)
+	}
+	s.versions[id] = version
 }
 
 func diagnosticTopologyCommonEntryPrefix(a, b []stackEntry) int {
@@ -1044,13 +1122,36 @@ func workCountTopologyRecordVersionCopy(source, target *glrStack) {
 		return
 	}
 	sourceID := s.versionID(source)
+	kind := uint64(DiagnosticTopologyEventVersionCopy)
+	if s.reductionActionSourceID != 0 {
+		sourceID = s.reductionActionSourceID
+		kind = DiagnosticTopologyEventVersionAdd
+	}
 	targetID := s.allocateVersion(target, sourceID)
-	s.recordVersionCopyEvent(target, diagnosticTopologyPendingCopy{
+	copy := diagnosticTopologyPendingCopy{
 		sourceVersionID: sourceID,
 		sourceIndex:     s.versions[sourceID].index,
 		targetVersionID: targetID,
 		targetIndex:     s.versions[targetID].index,
-	}, s.currentAction)
+	}
+	if kind == DiagnosticTopologyEventVersionCopy {
+		s.recordVersionCopyEvent(target, copy, s.currentAction)
+		return
+	}
+	if s.currentAction == nil || s.currentAction.versionID != sourceID {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	s.actions[target] = *s.currentAction
+	event := diagnosticTopologyEventBase()
+	event.Kind = kind
+	event.VersionID = copy.targetVersionID
+	event.VersionIndex = copy.targetIndex
+	event.SourceVersionID = copy.sourceVersionID
+	event.SourceIndex = copy.sourceIndex
+	event.NodeID = s.versionNodeID(copy.targetVersionID, target)
+	s.applyActionContext(&event, s.currentAction)
+	s.appendEvent(event)
 }
 
 func workCountTopologyCommitVersion(stack *glrStack) {
@@ -1103,6 +1204,12 @@ func workCountTopologyRecordAction(stack *glrStack, tok Token, action ParseActio
 		versionID: versionID,
 		index:     s.versions[versionID].index,
 	}
+	if action.Type == ParseActionReduce {
+		context.popID = s.nextID(&s.nextPopID)
+		if context.popID == 0 {
+			return
+		}
+	}
 	event := diagnosticTopologyEventBase()
 	event.Kind = DiagnosticTopologyEventAction
 	event.ActionID = context.id
@@ -1123,6 +1230,19 @@ func workCountTopologyRecordAction(stack *glrStack, tok Token, action ParseActio
 	}
 }
 
+// workCountTopologyRecordNoActionPendingPop mirrors the iterator identity
+// that C allocates when breakdown_top_of_stack checks for a pending subtree.
+// The check allocates an identity even when it finds no pop path.
+func workCountTopologyRecordNoActionPendingPop() {
+	s := activeDiagnosticTopology
+	if s == nil {
+		return
+	}
+	if s.nextID(&s.nextPopID) == 0 {
+		s.receipt.IdentityIncomplete = true
+	}
+}
+
 func workCountTopologyRecordActionResult(stack *glrStack) {
 	s := activeDiagnosticTopology
 	if s == nil || stack == nil {
@@ -1133,9 +1253,17 @@ func workCountTopologyRecordActionResult(stack *glrStack) {
 		return
 	}
 	s.bindVersion(stack, context.versionID)
+	if context.typeID == uint64(ParseActionShift) && (s.parser == nil || !s.parser.compactPackedGSSVersionOrderEnabled()) {
+		s.recordOmittedCShiftMergeAttempts(stack, context)
+	}
 	if stack.accepted {
 		if context.typeID == uint64(ParseActionAccept) {
 			s.recordAcceptAction(stack, context)
+			delete(s.actions, stack)
+			if s.currentAction != nil && s.currentAction.id == context.id {
+				s.currentAction = nil
+			}
+			return
 		}
 		s.retireVersion(context.versionID)
 		stack.diagnosticTopology.versionID = 0
@@ -1146,9 +1274,157 @@ func workCountTopologyRecordActionResult(stack *glrStack) {
 	}
 }
 
+func (s *diagnosticTopologyState) recordOmittedCShiftMergeAttempts(stack *glrStack, action diagnosticTopologyAction) {
+	if s == nil || s.parser == nil || stack == nil || action.versionID == 0 {
+		return
+	}
+	candidateVersion, ok := s.versions[action.versionID]
+	if !ok || candidateVersion.index == 0 {
+		return
+	}
+	subtreeCostRelevant := s.trackErrors == nil || *s.trackErrors
+	candidateStatus := s.parser.cCondenseVersionStatus(stack, subtreeCostRelevant)
+	for index := uint64(0); index < candidateVersion.index; index++ {
+		if index >= uint64(len(s.versionSlots)) {
+			s.receipt.IdentityIncomplete = true
+			return
+		}
+		targetID := s.versionSlots[index]
+		targetVersion, targetOK := s.versions[targetID]
+		if !targetOK || targetID == 0 || targetVersion.snapshot.dead || targetVersion.snapshot.accepted ||
+			stacksHeaderEquivalent(&targetVersion.snapshot, stack) {
+			continue
+		}
+		targetStatus := s.parser.cCondenseVersionStatus(&targetVersion.snapshot, subtreeCostRelevant)
+		comparison := s.parser.cCompareCondenseVersions(targetStatus, candidateStatus, &targetVersion.snapshot, stack)
+		if comparison == cErrorComparisonTakeLeft || comparison == cErrorComparisonTakeRight {
+			continue
+		}
+		savedAction := s.currentAction
+		s.currentAction = nil
+		workCountTopologyRecordMerge(&targetVersion.snapshot, stack, false)
+		s.currentAction = savedAction
+	}
+}
+
+func workCountTopologyBeginReductionVersion(source, target *glrStack, tok Token, action ParseAction, actionOrdinal int) {
+	s := activeDiagnosticTopology
+	if s == nil || source == nil || target == nil {
+		return
+	}
+	workCountTopologyRecordAction(source, tok, action, actionOrdinal)
+	context, ok := s.actions[source]
+	if !ok || context.versionID == 0 || s.reductionActionSourceID != 0 {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	if context.popID == 0 {
+		context.popID = s.nextID(&s.nextPopID)
+		if context.popID == 0 {
+			return
+		}
+	}
+	s.actions[source] = context
+	s.currentAction = &context
+	s.reductionActionSourceID = context.versionID
+	targetID := s.allocateVersion(target, context.versionID)
+	if targetID == 0 {
+		return
+	}
+	s.reductionActionTargetID = targetID
+	s.actions[target] = context
+	event := diagnosticTopologyEventBase()
+	event.Kind = DiagnosticTopologyEventVersionAdd
+	event.VersionID = targetID
+	event.VersionIndex = s.versions[targetID].index
+	event.SourceVersionID = context.versionID
+	event.SourceIndex = context.index
+	event.NodeID = s.versionNodeID(targetID, target)
+	s.applyActionContext(&event, &context)
+	s.appendEvent(event)
+	s.reductionActionAddEventIndex = len(s.receipt.Events) - 1
+}
+
+func workCountTopologyEndReductionVersion(source, target *glrStack) {
+	s := activeDiagnosticTopology
+	if s == nil || source == nil || target == nil {
+		return
+	}
+	context, sourceOK := s.actions[source]
+	targetContext, targetOK := s.actions[target]
+	targetID := target.diagnosticTopology.versionID
+	if sourceOK && targetOK && context.id == targetContext.id && targetID == s.reductionActionTargetID && !s.reductionActionAddRecorded {
+		s.recordPendingReductionVersionAdd(target, context, s.versionNodeID(targetID, target))
+	}
+	if !sourceOK || !targetOK || context.id != targetContext.id || targetID == 0 ||
+		targetID != s.reductionActionTargetID || !s.reductionActionAddRecorded {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	if !targetContext.candidatePrepared && s.nextID(&s.nextCandidateID) == 0 {
+		return
+	}
+	s.bindVersion(target, targetID)
+	delete(s.actions, source)
+	delete(s.actions, target)
+	s.reductionActionSourceID = 0
+	s.reductionActionTargetID = 0
+	s.reductionActionAddRecorded = false
+	s.reductionActionAddEventIndex = -1
+}
+
+func workCountTopologyFinishReductionAction() {
+	if s := activeDiagnosticTopology; s != nil {
+		s.currentAction = nil
+	}
+}
+
+func workCountTopologyRecordEntryPush(stack *glrStack) {
+	s := activeDiagnosticTopology
+	if s == nil || stack == nil || stack.gss.head != nil || len(stack.entries) < 2 {
+		return
+	}
+	if s.acceptSuppressNextLinkInsert {
+		s.acceptSuppressNextLinkInsert = false
+		return
+	}
+	versionID := s.versionID(stack)
+	s.syncVersionEntries(versionID, stack)
+	version, ok := s.versions[versionID]
+	if !ok || len(version.entryNodeIDs) != len(stack.entries) {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	linkID := s.nextID(&s.nextLinkID)
+	if linkID == 0 {
+		return
+	}
+	event := diagnosticTopologyEventBase()
+	event.Kind = DiagnosticTopologyEventLinkInsert
+	event.State = uint64(stack.entries[len(stack.entries)-1].state)
+	event.NodeID = version.entryNodeIDs[len(version.entryNodeIDs)-1]
+	event.PredecessorNodeID = version.entryNodeIDs[len(version.entryNodeIDs)-2]
+	event.LinkID = linkID
+	event.Flags = DiagnosticTopologyFlagPrimaryLink
+	if action := s.currentAction; action != nil {
+		s.applyActionContext(&event, action)
+	}
+	s.appendEvent(event)
+}
+
 func workCountTopologyRecordLinkInsert(node, predecessor *gssNode, ordinal int, primary bool) {
 	s := activeDiagnosticTopology
 	if s == nil || node == nil || predecessor == nil || ordinal < 0 {
+		return
+	}
+	if s.acceptSuppressNextLinkInsert {
+		if _, exists := s.nodeIDs[node]; !exists && s.acceptEOFNodeID != 0 {
+			s.nodeIDs[node] = s.acceptEOFNodeID
+		}
+		s.acceptSuppressNextLinkInsert = false
+		return
+	}
+	if s.promotion.versionID != 0 {
 		return
 	}
 	nodeID := s.nodeID(node)
@@ -1202,7 +1478,51 @@ func diagnosticTopologyPayloadCount(window []stackEntry) uint64 {
 }
 
 func workCountTopologyRecordPopPath(stack *glrStack, window []stackEntry, popTo *gssNode, pathOrdinal uint64) {
+	if s := activeDiagnosticTopology; s != nil && stack != nil {
+		if action, ok := s.actions[stack]; ok && action.directPop {
+			return
+		}
+	}
 	workCountTopologyRecordPopPathWithNodeID(stack, window, popTo, 0, pathOrdinal)
+}
+
+func (s *diagnosticTopologyState) recordPendingReductionVersionAdd(stack *glrStack, action diagnosticTopologyAction, popToNodeID uint64) {
+	if s == nil || stack == nil || popToNodeID == 0 || s.reductionActionSourceID == 0 {
+		return
+	}
+	versionID := stack.diagnosticTopology.versionID
+	if versionID == 0 || action.versionID != s.reductionActionSourceID {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	version, ok := s.versions[versionID]
+	if !ok {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	eventIndex := -1
+	for i := len(s.receipt.Events) - 1; i >= 0; i-- {
+		event := s.receipt.Events[i]
+		if event.Kind == DiagnosticTopologyEventVersionAdd && event.VersionID == versionID && event.SourceVersionID == action.versionID {
+			eventIndex = i
+			break
+		}
+	}
+	if eventIndex < 0 {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	version.nodeID = popToNodeID
+	s.versions[versionID] = version
+	event := &s.receipt.Events[eventIndex]
+	if event.Kind != DiagnosticTopologyEventVersionAdd || event.VersionID != versionID || event.SourceVersionID != action.versionID {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	event.NodeID = popToNodeID
+	if versionID == s.reductionActionTargetID {
+		s.reductionActionAddRecorded = true
+	}
 }
 
 func workCountTopologyRecordPopPathWithNodeID(stack *glrStack, window []stackEntry, popTo *gssNode, popToNodeID, pathOrdinal uint64) {
@@ -1215,6 +1535,10 @@ func workCountTopologyRecordPopPathWithNodeID(stack *glrStack, window []stackEnt
 		s.receipt.IdentityIncomplete = true
 		return
 	}
+	if popToNodeID == 0 {
+		popToNodeID = s.nodeID(popTo)
+	}
+	s.recordPendingReductionVersionAdd(stack, action, popToNodeID)
 	if action.popID == 0 {
 		action.popID = s.nextID(&s.nextPopID)
 		s.actions[stack] = action
@@ -1242,17 +1566,20 @@ func workCountTopologyRecordPopPathWithNodeID(stack *glrStack, window []stackEnt
 	event := diagnosticTopologyEventBase()
 	event.Kind = DiagnosticTopologyEventPopPath
 	s.applyActionContext(&event, &action)
-	event.VersionID = action.versionID
-	event.VersionIndex = action.index
+	versionID := stack.diagnosticTopology.versionID
+	version, versionOK := s.versions[versionID]
+	if !versionOK || versionID == 0 {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	event.VersionID = versionID
+	event.VersionIndex = version.index
 	event.SourceVersionID = action.versionID
 	event.SourceIndex = action.index
-	event.NodeID = s.versionNodeID(action.versionID, stack)
+	event.NodeID = popToNodeID
 	event.PopID = action.popID
 	event.PathOrdinal = pathOrdinal
 	event.PopToNodeID = popToNodeID
-	if event.PopToNodeID == 0 {
-		event.PopToNodeID = s.nodeID(popTo)
-	}
 	if event.PopToNodeID == 0 {
 		s.receipt.IdentityIncomplete = true
 	}
@@ -1277,9 +1604,11 @@ func workCountTopologyRecordDirectPop(stack *glrStack, childCount int) {
 				return
 			}
 			workCountTopologyRecordPopPathWithNodeID(stack, nil, nil, version.entryNodeIDs[len(version.entryNodeIDs)-1], 0)
+			activeDiagnosticTopology.markDirectPop(stack)
 			return
 		}
 		workCountTopologyRecordPopPath(stack, nil, stack.gss.head, 0)
+		activeDiagnosticTopology.markDirectPop(stack)
 		return
 	}
 	if stack.entries != nil {
@@ -1309,6 +1638,7 @@ func workCountTopologyRecordDirectPop(stack *glrStack, childCount int) {
 						popToNodeID = version.entryNodeIDs[start-1]
 					}
 					workCountTopologyRecordPopPathWithNodeID(stack, stack.entries[start:], nil, popToNodeID, 0)
+					activeDiagnosticTopology.markDirectPop(stack)
 					return
 				}
 			}
@@ -1340,6 +1670,54 @@ func workCountTopologyRecordDirectPop(stack *glrStack, childCount int) {
 			window[left], window[right] = window[right], window[left]
 		}
 		workCountTopologyRecordPopPath(stack, window, popTo, 0)
+		activeDiagnosticTopology.markDirectPop(stack)
+	}
+}
+
+func workCountTopologyRecordPackedReduceGroup(p *Parser, arena *nodeArena, stack *glrStack, act ParseAction, forks []reduceFork, pathOrdinal uint64) {
+	s := activeDiagnosticTopology
+	if s == nil || p == nil || stack == nil || len(forks) == 0 {
+		return
+	}
+	for i := range forks {
+		workCountTopologyRecordPopPathWithNodeID(stack, forks[i].window, forks[i].popTo, 0, pathOrdinal+uint64(i))
+	}
+	incumbent := forks[0]
+	incumbentID := s.reduceCandidateID(incumbent)
+	action := s.actions[stack]
+	action.candidatePrepared = true
+	s.actions[stack] = action
+	if s.currentAction != nil && s.currentAction.id == action.id {
+		s.currentAction = &action
+	}
+	for i := 1; i < len(forks); i++ {
+		candidate := forks[i]
+		candidateID := s.reduceCandidateID(candidate)
+		preference := p.reduceForkWindowPreference(arena, act, candidate, incumbent)
+		s.recordPackedChildElection(stack, incumbentID, candidateID, diagnosticTopologyPayloadCount(candidate.window), preference < 0)
+		if preference < 0 {
+			incumbent = candidate
+			incumbentID = candidateID
+		}
+	}
+	if stack.diagnosticTopology.versionID != s.reductionActionTargetID {
+		delete(s.actions, stack)
+	}
+}
+
+func (s *diagnosticTopologyState) markDirectPop(stack *glrStack) {
+	if s == nil || stack == nil {
+		return
+	}
+	action, ok := s.actions[stack]
+	if !ok {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	action.directPop = true
+	s.actions[stack] = action
+	if s.currentAction != nil && s.currentAction.id == action.id {
+		s.currentAction = &action
 	}
 }
 
@@ -1414,13 +1792,65 @@ func workCountTopologyRecordChildElection(stack *glrStack, incumbent, candidate 
 	s.appendEvent(event)
 }
 
+func (s *diagnosticTopologyState) recordPackedChildElection(stack *glrStack, incumbentID, candidateID, payloadCount uint64, candidateSelected bool) {
+	if s == nil || stack == nil || incumbentID == 0 || candidateID == 0 {
+		if s != nil {
+			s.receipt.IdentityIncomplete = true
+		}
+		return
+	}
+	action, ok := s.actions[stack]
+	versionID := stack.diagnosticTopology.versionID
+	version, versionOK := s.versions[versionID]
+	if !ok || !versionOK || versionID == 0 {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	electionID := s.nextID(&s.nextElectionID)
+	if electionID == 0 {
+		return
+	}
+	selectedID := incumbentID
+	flags := uint64(0)
+	if candidateSelected {
+		selectedID = candidateID
+		flags = DiagnosticTopologyFlagSuccessOrSelected
+	}
+	event := diagnosticTopologyEventBase()
+	event.Kind = DiagnosticTopologyEventChildElection
+	s.applyActionContext(&event, &action)
+	event.State = action.symbol
+	event.VersionID = versionID
+	event.VersionIndex = version.index
+	event.ElectionID = electionID
+	event.IncumbentID = incumbentID
+	event.CandidateID = candidateID
+	event.SelectedID = selectedID
+	event.PayloadCount = payloadCount
+	event.Flags |= flags
+	s.appendEvent(event)
+}
+
 func workCountTopologyRecordMerge(target, candidate *glrStack, merged bool) {
+	workCountTopologyRecordMergeWithRetire(target, candidate, merged, merged)
+}
+
+func workCountTopologyRecordMergeBeforeMutation(target, candidate *glrStack) {
+	workCountTopologyRecordMergeWithRetire(target, candidate, true, false)
+}
+
+func workCountTopologyRecordMergeWithRetire(target, candidate *glrStack, merged, retire bool) {
 	s := activeDiagnosticTopology
 	if s == nil || target == nil || candidate == nil {
 		return
 	}
 	targetID := s.versionID(target)
 	candidateID := s.versionID(candidate)
+	key := diagnosticTopologyMergeKey{targetID: targetID, candidateID: candidateID}
+	if !merged && s.preRecordedMerges[key] {
+		delete(s.preRecordedMerges, key)
+		return
+	}
 	targetVersion, targetOK := s.versions[targetID]
 	candidateVersion, candidateOK := s.versions[candidateID]
 	if !targetOK || !candidateOK || targetID == 0 || candidateID == 0 || targetID == candidateID || targetVersion.index >= candidateVersion.index {
@@ -1447,8 +1877,67 @@ func workCountTopologyRecordMerge(target, candidate *glrStack, merged bool) {
 		s.applyActionContext(&event, action)
 	}
 	s.appendEvent(event)
-	if merged {
+	if retire {
 		s.retireVersion(candidateID)
+	}
+}
+
+func workCountTopologyRecordPackedReductionMergeAttempts(p *Parser, candidate *glrStack) {
+	s := activeDiagnosticTopology
+	if s == nil || p == nil || candidate == nil || s.reductionActionSourceID == 0 {
+		return
+	}
+	candidateID := candidate.diagnosticTopology.versionID
+	candidateVersion, ok := s.versions[candidateID]
+	if !ok || candidateID == 0 {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	for index := uint64(0); index < candidateVersion.index; index++ {
+		if index >= uint64(len(s.versionSlots)) {
+			s.receipt.IdentityIncomplete = true
+			return
+		}
+		targetID := s.versionSlots[index]
+		if targetID == s.reductionActionSourceID {
+			continue
+		}
+		targetVersion, targetOK := s.versions[targetID]
+		if !targetOK || targetID == 0 {
+			s.receipt.IdentityIncomplete = true
+			return
+		}
+		key := diagnosticTopologyMergeKey{targetID: targetID, candidateID: candidateID}
+		if s.preRecordedMerges[key] {
+			continue
+		}
+		if gssMainCanMergeForParser(p, &targetVersion.snapshot, candidate) {
+			// The parser performs this successful merge through its physical
+			// packed-output target. Stop before that mutation records the event.
+			return
+		}
+		workCountTopologyRecordMerge(&targetVersion.snapshot, candidate, false)
+		s.preRecordedMerges[key] = true
+	}
+}
+
+func workCountTopologyCommitMerge(candidate *glrStack) {
+	s := activeDiagnosticTopology
+	if s == nil || candidate == nil {
+		return
+	}
+	id := candidate.diagnosticTopology.versionID
+	if id == 0 {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	s.retireVersion(id)
+	candidate.diagnosticTopology.versionID = 0
+}
+
+func workCountTopologyRequireMergeSuccess(merged bool) {
+	if s := activeDiagnosticTopology; s != nil && !merged {
+		s.receipt.IdentityIncomplete = true
 	}
 }
 
@@ -1474,20 +1963,128 @@ func diagnosticTopologyAcceptPayloadCount(stack *glrStack) uint64 {
 	}
 	entries, _ := stack.entriesForRead(nil)
 	payloads := 0
-	rootChildren := 0
-	rootFound := false
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
 		if !stackEntryHasNode(entry) {
 			continue
 		}
 		payloads++
-		if !rootFound && !stackEntryNodeIsExtra(entry) {
-			rootChildren = stackEntryNodeChildCount(entry)
-			rootFound = true
-		}
 	}
-	return uint64(payloads + rootChildren)
+	// C pushes the EOF subtree before pop_all, so it contributes one payload.
+	return uint64(payloads + 1)
+}
+
+func (s *diagnosticTopologyState) acceptPopToNodeID(stack *glrStack, sourceVersion diagnosticTopologyVersion) uint64 {
+	if stack != nil && stack.gss.head != nil {
+		node := stack.gss.head
+		for node.prev != nil {
+			node = node.prev
+		}
+		return s.nodeID(node)
+	}
+	if len(sourceVersion.entryNodeIDs) != 0 {
+		return sourceVersion.entryNodeIDs[0]
+	}
+	return sourceVersion.emptyNodeID
+}
+
+func (s *diagnosticTopologyState) recordAcceptEOFPush(stack *glrStack, action diagnosticTopologyAction) {
+	predecessorNodeID := s.versionNodeID(action.versionID, stack)
+	nodeID := s.nextNodeIdentity()
+	linkID := s.nextID(&s.nextLinkID)
+	if predecessorNodeID == 0 || nodeID == 0 || linkID == 0 {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	event := diagnosticTopologyEventBase()
+	event.Kind = DiagnosticTopologyEventLinkInsert
+	s.applyActionContext(&event, &action)
+	event.State = 1
+	event.NodeID = nodeID
+	event.PredecessorNodeID = predecessorNodeID
+	event.LinkID = linkID
+	event.Flags |= DiagnosticTopologyFlagPrimaryLink
+	s.appendEvent(event)
+	s.acceptEOFNodeID = nodeID
+	s.acceptSuppressNextLinkInsert = true
+}
+
+func (s *diagnosticTopologyState) recordAcceptPopPath(stack *glrStack, action diagnosticTopologyAction, sourceVersion diagnosticTopologyVersion, popID, pathOrdinal, payloadCount uint64) uint64 {
+	popToNodeID := s.acceptPopToNodeID(stack, sourceVersion)
+	versionID := s.nextID(&s.nextVersionID)
+	if popToNodeID == 0 || versionID == 0 || popID == 0 {
+		s.receipt.IdentityIncomplete = true
+		return 0
+	}
+	version := diagnosticTopologyVersion{
+		id:       versionID,
+		index:    uint64(len(s.versionSlots)),
+		nodeID:   popToNodeID,
+		snapshot: diagnosticTopologySnapshotAcceptStack(*stack),
+	}
+	s.versions[versionID] = version
+	s.versionSlots = append(s.versionSlots, versionID)
+
+	add := diagnosticTopologyEventBase()
+	add.Kind = DiagnosticTopologyEventVersionAdd
+	s.applyActionContext(&add, &action)
+	add.VersionID = versionID
+	add.VersionIndex = version.index
+	add.SourceVersionID = action.versionID
+	add.SourceIndex = action.index
+	add.NodeID = popToNodeID
+	s.appendEvent(add)
+
+	pop := diagnosticTopologyEventBase()
+	pop.Kind = DiagnosticTopologyEventPopPath
+	s.applyActionContext(&pop, &action)
+	pop.VersionID = versionID
+	pop.VersionIndex = version.index
+	pop.SourceVersionID = action.versionID
+	pop.SourceIndex = action.index
+	pop.NodeID = popToNodeID
+	pop.PopID = popID
+	pop.PathOrdinal = pathOrdinal
+	pop.PopToNodeID = popToNodeID
+	pop.PayloadCount = payloadCount
+	s.appendEvent(pop)
+	return versionID
+}
+
+// detachAcceptVersions mirrors C's removal of an accepted version from the
+// active version pool. C does not publish renumber events for this removal.
+func (s *diagnosticTopologyState) detachAcceptVersions(versionIDs []uint64) {
+	if len(versionIDs) == 0 {
+		return
+	}
+	detached := make(map[uint64]struct{}, len(versionIDs))
+	for _, id := range versionIDs {
+		if id == 0 {
+			s.receipt.IdentityIncomplete = true
+			return
+		}
+		detached[id] = struct{}{}
+	}
+	kept := s.versionSlots[:0]
+	for _, id := range s.versionSlots {
+		if _, ok := detached[id]; ok {
+			delete(s.versions, id)
+			continue
+		}
+		version, ok := s.versions[id]
+		if !ok {
+			s.receipt.IdentityIncomplete = true
+			return
+		}
+		version.index = uint64(len(kept))
+		s.versions[id] = version
+		kept = append(kept, id)
+	}
+	if len(kept)+len(detached) != len(s.versionSlots) {
+		s.receipt.IdentityIncomplete = true
+		return
+	}
+	s.versionSlots = kept
 }
 
 func (s *diagnosticTopologyState) recordAcceptAction(stack *glrStack, action diagnosticTopologyAction) {
@@ -1499,11 +2096,17 @@ func (s *diagnosticTopologyState) recordAcceptAction(stack *glrStack, action dia
 		s.receipt.IdentityIncomplete = true
 		return
 	}
+	s.recordAcceptEOFPush(stack, action)
 	paths := expandPackedGSSResultPaths([]glrStack{*stack})
+	popID := s.nextID(&s.nextPopID)
+	sourceVersion := s.versions[action.versionID]
 	skipErrorRank := false
 	if s.trackErrors != nil {
 		skipErrorRank = !*s.trackErrors
 	}
+	candidates := make([]diagnosticTopologyAcceptCandidate, 0, len(paths))
+	acceptedVersionIDs := make([]uint64, 0, len(paths)+1)
+	acceptedVersionIDs = append(acceptedVersionIDs, action.versionID)
 	for i := range paths {
 		snapshot := diagnosticTopologySnapshotAcceptStack(paths[i])
 		candidate := diagnosticTopologyAcceptCandidate{
@@ -1516,6 +2119,11 @@ func (s *diagnosticTopologyState) recordAcceptAction(stack *glrStack, action dia
 		if candidate.candidateID == 0 {
 			return
 		}
+		acceptedVersionIDs = append(acceptedVersionIDs, s.recordAcceptPopPath(&paths[i], action, sourceVersion, popID, uint64(i), candidate.payloadCount))
+		candidates = append(candidates, candidate)
+	}
+	for i := range candidates {
+		candidate := candidates[i]
 		selected := !s.acceptSet || stackCompareForResultSelection(
 			s.parser, s.arena, &candidate.stack, &s.acceptCurrent.stack, skipErrorRank,
 		) > 0
@@ -1525,6 +2133,8 @@ func (s *diagnosticTopologyState) recordAcceptAction(stack *glrStack, action dia
 			s.acceptSet = true
 		}
 	}
+	s.detachAcceptVersions(acceptedVersionIDs)
+	stack.diagnosticTopology.versionID = 0
 }
 
 func (s *diagnosticTopologyState) recordAcceptElection(candidate diagnosticTopologyAcceptCandidate, candidateSelected bool) {

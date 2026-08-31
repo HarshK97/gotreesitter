@@ -503,8 +503,9 @@ func TestDiagnosticTopologyReceiptRetiresSamePopReductionLosers(t *testing.T) {
 	workCountTopologyCommitVersion(&better)
 	betterID := better.diagnosticTopology.versionID
 	parser := &Parser{}
-	if !parser.cTryCollapseSamePopReductionVersion(&target, &better, nil) {
-		t.Fatal("better same-pop candidate did not collapse")
+	collapsed, reason := parser.cTryCollapseSamePopReductionVersion(&target, &better, nil)
+	if reason != ParseStopNone || !collapsed {
+		t.Fatalf("better same-pop collapse = %v, reason = %v", collapsed, reason)
 	}
 	if target.diagnosticTopology.versionID != betterID {
 		t.Fatalf("same-pop survivor version = %d, want %d", target.diagnosticTopology.versionID, betterID)
@@ -518,8 +519,9 @@ func TestDiagnosticTopologyReceiptRetiresSamePopReductionLosers(t *testing.T) {
 	worse.gss.push(2, worseNode, &scratch)
 	workCountTopologyCommitVersion(&worse)
 	worseID := worse.diagnosticTopology.versionID
-	if !parser.cTryCollapseSamePopReductionVersion(&target, &worse, nil) {
-		t.Fatal("worse same-pop candidate did not collapse")
+	collapsed, reason = parser.cTryCollapseSamePopReductionVersion(&target, &worse, nil)
+	if reason != ParseStopNone || !collapsed {
+		t.Fatalf("worse same-pop collapse = %v, reason = %v", collapsed, reason)
 	}
 	if _, ok := activeDiagnosticTopology.versions[worseID]; ok {
 		t.Fatalf("same-pop loser version %d remains bound", worseID)
@@ -660,19 +662,37 @@ func TestDiagnosticTopologyReceiptKeepsEachCandidateFromOneAcceptAction(t *testi
 	workCountTopologyRecordAction(&stack, Token{Symbol: 0}, ParseAction{Type: ParseActionAccept}, 0)
 	stack.accepted = true
 	workCountTopologyRecordActionResult(&stack)
+	if stack.diagnosticTopology.versionID != 0 || len(activeDiagnosticTopology.versionSlots) != 0 {
+		t.Fatalf("accepted versions remain active: stack=%d slots=%v", stack.diagnosticTopology.versionID, activeDiagnosticTopology.versionSlots)
+	}
 	receipt := EndDiagnosticTopologyReceipt()
 	if !receipt.Complete() {
 		t.Fatalf("multi-candidate accept receipt is incomplete: %+v", receipt)
 	}
-	var elections []DiagnosticTopologyEvent
 	var acceptAction DiagnosticTopologyEvent
 	for _, event := range receipt.Events {
 		if event.Kind == DiagnosticTopologyEventAction && event.ActionType == uint64(ParseActionAccept) {
 			acceptAction = event
 		}
+	}
+	var eofLinks, adds, pops, elections []DiagnosticTopologyEvent
+	for _, event := range receipt.Events {
 		if event.Kind == DiagnosticTopologyEventAcceptElection {
 			elections = append(elections, event)
 		}
+		if event.ActionID == acceptAction.ActionID {
+			switch event.Kind {
+			case DiagnosticTopologyEventLinkInsert:
+				eofLinks = append(eofLinks, event)
+			case DiagnosticTopologyEventVersionAdd:
+				adds = append(adds, event)
+			case DiagnosticTopologyEventPopPath:
+				pops = append(pops, event)
+			}
+		}
+	}
+	if len(eofLinks) != 1 || len(adds) != 2 || len(pops) != 2 {
+		t.Fatalf("ACCEPT topology has links/adds/pops = %d/%d/%d, want 1/2/2", len(eofLinks), len(adds), len(pops))
 	}
 	if len(elections) != 2 {
 		t.Fatalf("accept elections = %d, want two", len(elections))
@@ -685,8 +705,19 @@ func TestDiagnosticTopologyReceiptKeepsEachCandidateFromOneAcceptAction(t *testi
 		elections[1].IncumbentID != elections[0].CandidateID {
 		t.Fatalf("accept election chain = %+v, want the first candidate as the second incumbent", elections)
 	}
-	if acceptAction.EventID == 0 || elections[0].EventID != acceptAction.EventID+1 || elections[1].EventID != elections[0].EventID+1 {
-		t.Fatalf("accept elections are not inside the ACCEPT action: %+v", elections)
+	if acceptAction.EventID == 0 || eofLinks[0].EventID != acceptAction.EventID+1 ||
+		adds[0].EventID != eofLinks[0].EventID+1 || pops[0].EventID != adds[0].EventID+1 ||
+		adds[1].EventID != pops[0].EventID+1 || pops[1].EventID != adds[1].EventID+1 ||
+		elections[0].EventID != pops[1].EventID+1 || elections[1].EventID != elections[0].EventID+1 {
+		t.Fatalf("ACCEPT action sequence is not EOF push, pop paths, then elections: %+v", receipt.Events)
+	}
+	if pops[0].PopID == 0 || pops[0].PopID != pops[1].PopID || pops[0].PathOrdinal != 0 || pops[1].PathOrdinal != 1 {
+		t.Fatalf("ACCEPT pop paths do not share one pop: %+v", pops)
+	}
+	for i := range pops {
+		if pops[i].PayloadCount != elections[i].PayloadCount {
+			t.Fatalf("candidate %d payload count changed from pop to election: %d/%d", i, pops[i].PayloadCount, elections[i].PayloadCount)
+		}
 	}
 }
 

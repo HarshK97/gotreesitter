@@ -30,6 +30,7 @@ func workCountRecordReduce()                                                    
 func workCountRecordAccept()                                                            {}
 func workCountRecordExplicitRecover()                                                   {}
 func workCountObserveReductionPop(*glrStack, int)                                       {}
+func workCountTopologyRecordNoActionPendingPop()                                        {}
 func workCountAddPopPaths(uint64, uint64)                                               {}
 func workCountObservePopWindow([]stackEntry)                                            {}
 func workCountRecordVersionCreation()                                                   {}
@@ -82,25 +83,38 @@ func workCountRecordFinalSelect(*Parser, []glrStack, *glrStack)                 
 func workCountTopologySetParseContext(*Parser, *nodeArena, *bool)                   {}
 func workCountTopologyRecordAction(*glrStack, Token, ParseAction, int)              {}
 func workCountTopologyRecordActionResult(*glrStack)                                 {}
-func workCountTopologyRecordInitialVersion(*glrStack)                               {}
-func workCountTopologyPrepareVersionCopy(*glrStack, *glrStack)                      {}
-func workCountTopologyRecordVersionCopy(*glrStack, *glrStack)                       {}
-func workCountTopologyCommitVersion(*glrStack)                                      {}
-func workCountTopologyPreparePromotion(*glrStack)                                   {}
-func workCountTopologyCommitPromotion(*glrStack)                                    {}
-func workCountTopologyRecordNodeAllocation(*gssNode)                                {}
-func workCountTopologyRecordLinkInsert(*gssNode, *gssNode, int, bool)               {}
-func workCountTopologyRecordPopPath(*glrStack, []stackEntry, *gssNode, uint64)      {}
-func workCountTopologyRecordChildElection(*glrStack, reduceFork, reduceFork, int)   {}
-func workCountTopologyRecordMerge(*glrStack, *glrStack, bool)                       {}
-func workCountTopologyRetireVersion(*glrStack)                                      {}
-func workCountTopologyRetireVersionIfActive(*glrStack)                              {}
-func workCountTopologyRetireVersionsIfActive([]glrStack)                            {}
-func workCountTopologyRetireUnpublishedVersions([]glrStack, []glrStack)             {}
-func workCountTopologyRenumberVersion(*glrStack, *glrStack)                         {}
-func workCountTopologyRetireMissingVersions([]glrStack, []glrStack)                 {}
-func workCountTopologyReconcileVersionSelection([]glrStack, []glrStack)             {}
-func workCountTopologySyncVersionOrder([]glrStack)                                  {}
+func workCountTopologyBeginReductionVersion(*glrStack, *glrStack, Token, ParseAction, int) {
+}
+func workCountTopologyEndReductionVersion(*glrStack, *glrStack)                {}
+func workCountTopologyFinishReductionAction()                                  {}
+func workCountTopologyRecordInitialVersion(*glrStack)                          {}
+func workCountTopologyPrepareVersionCopy(*glrStack, *glrStack)                 {}
+func workCountTopologyRecordVersionCopy(*glrStack, *glrStack)                  {}
+func workCountTopologyCommitVersion(*glrStack)                                 {}
+func workCountTopologyPreparePromotion(*glrStack)                              {}
+func workCountTopologyCommitPromotion(*glrStack)                               {}
+func workCountTopologyRecordDemotion(*glrStack, []stackEntry)                  {}
+func workCountTopologyRecordNodeAllocation(*gssNode)                           {}
+func workCountTopologyRecordLinkInsert(*gssNode, *gssNode, int, bool)          {}
+func workCountTopologyRecordEntryPush(*glrStack)                               {}
+func workCountTopologyRecordPopPath(*glrStack, []stackEntry, *gssNode, uint64) {}
+func workCountTopologyRecordDirectPop(*glrStack, int)                          {}
+func workCountTopologyRecordPackedReduceGroup(*Parser, *nodeArena, *glrStack, ParseAction, []reduceFork, uint64) {
+}
+func workCountTopologyRecordPackedReductionMergeAttempts(*Parser, *glrStack)      {}
+func workCountTopologyRecordChildElection(*glrStack, reduceFork, reduceFork, int) {}
+func workCountTopologyRecordMerge(*glrStack, *glrStack, bool)                     {}
+func workCountTopologyRecordMergeBeforeMutation(*glrStack, *glrStack)             {}
+func workCountTopologyCommitMerge(*glrStack)                                      {}
+func workCountTopologyRequireMergeSuccess(bool)                                   {}
+func workCountTopologyRetireVersion(*glrStack)                                    {}
+func workCountTopologyRetireVersionIfActive(*glrStack)                            {}
+func workCountTopologyRetireVersionsIfActive([]glrStack)                          {}
+func workCountTopologyRetireUnpublishedVersions([]glrStack, []glrStack)           {}
+func workCountTopologyRenumberVersion(*glrStack, *glrStack)                       {}
+func workCountTopologyRetireMissingVersions([]glrStack, []glrStack)               {}
+func workCountTopologyReconcileVersionSelection([]glrStack, []glrStack)           {}
+func workCountTopologySyncVersionOrder([]glrStack)                                {}
 func workCountTryPostReduceMergeObserved(p *Parser, _ string, _ string, target, candidate *glrStack) bool {
 	return tryMergePostReduceFork(p, target, candidate)
 }
