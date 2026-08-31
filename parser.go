@@ -2463,6 +2463,9 @@ func (p *Parser) rejectUndrainedPendingForkStacks(s *glrStack) bool {
 		return false
 	}
 	workCountRecordPendingTransition(p, &p.pendingForkStacks[0], len(p.pendingForkStacks), 0, workCountConvergenceOutcomePendingDiscarded, "undrained post-reduce candidates rejected")
+	if workCountInstrumentationEnabled {
+		workCountTopologyRetireVersionsIfActive(p.pendingForkStacks)
+	}
 	p.pendingForkStacks = p.pendingForkStacks[:0]
 	if s != nil {
 		s.dead = true
@@ -3002,11 +3005,17 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 				workCountTopologyRecordVersionCopy(s, &prefix)
 			}
 			if !prefix.truncate(cut) {
+				if workCountInstrumentationEnabled {
+					workCountTopologyRetireVersionIfActive(&prefix)
+				}
 				continue
 			}
 			prefixEOF := eofTokenForTrailingCut(tok, entries, cut, node)
 			insertedMissing, advanced := p.advanceTrailingEOFPrefix(&prefix, prefixEOF, prefixEOF.EndByte, source, nodeCount, arena, entryScratch, gssScratch, tmpEntries)
 			if !advanced {
+				if workCountInstrumentationEnabled {
+					workCountTopologyRetireVersionIfActive(&prefix)
+				}
 				continue
 			}
 
@@ -3018,6 +3027,9 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 				}
 			}
 			nodes, recovered := p.appendTrailingEOFRecoveryNodes(nodes, entries, cut, tok, arena, nodeCount)
+			if workCountInstrumentationEnabled {
+				workCountTopologyRetireVersionIfActive(&prefix)
+			}
 			if recovered || insertedMissing || cut > firstDrop {
 				return nodes, true
 			}
@@ -5270,6 +5282,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
 		workCountRecordFinalPendingDiscards(p, p.pendingForkStacks, p.pendingFrontierForkStacks)
+		if workCountInstrumentationEnabled {
+			workCountTopologyRetireVersionsIfActive(p.pendingForkStacks)
+			workCountTopologyRetireVersionsIfActive(p.pendingFrontierForkStacks)
+		}
 		if p.noTreeBenchmarkOnly {
 			rootEndByte := expectedEOFByte
 			if stopReason != ParseStopAccepted && stopReason != ParseStopNone {
@@ -6816,10 +6832,20 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 
 		postDispatchVersionCount := compactPackedGSSDispatchVersionCount(packedVersionOrder, numStacks, len(stacks))
 		if postDispatchVersionCount > 1 && retryPass && allParseStacksDead(stacks) {
+			var topologyBefore []glrStack
+			if workCountInstrumentationEnabled {
+				topologyBefore = append(topologyBefore, stacks...)
+			}
 			bestIdx := bestRetryRecoveryStack(stacks)
 			stacks[bestIdx].dead = false
+			if workCountInstrumentationEnabled && bestIdx != 0 {
+				workCountTopologyRenumberVersion(&stacks[bestIdx], &stacks[0])
+			}
 			stacks[0] = stacks[bestIdx]
 			stacks = stacks[:1]
+			if workCountInstrumentationEnabled {
+				workCountTopologyRetireMissingVersions(topologyBefore, stacks)
+			}
 			if p.glrTrace {
 				fmt.Printf("[GLR] ALL-DEAD RECOVERY: resurrect stack (was [%d]) st=%d dep=%d byte=%d\n",
 					bestIdx, stacks[0].top().state, stacks[0].depth(), stacks[0].byteOffset)
@@ -7508,6 +7534,10 @@ type parseStackPrepResult struct {
 
 func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *parserScratch, arena *nodeArena, arenaClass arenaClass, maxStacks, maxStackCullTrigger int, phaseTiming bool, glrMergeNanos, glrCullNanos *int64) parseStackPrepResult {
 	result := parseStackPrepResult{stacks: stacks}
+	var topologyBefore []glrStack
+	if workCountInstrumentationEnabled && len(stacks) > 1 {
+		topologyBefore = append(topologyBefore, stacks...)
+	}
 	resetCRecoveryMergeScratch(&scratch.merge)
 	if len(stacks) == 1 {
 		if stacks[0].dead {
@@ -7570,6 +7600,9 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		p.promotePrimaryStack(result.stacks)
 	} else {
 		p.tryDemoteSingleLinearGSS(result.stacks, scratch)
+	}
+	if workCountInstrumentationEnabled {
+		workCountTopologyRetireMissingVersions(topologyBefore, result.stacks)
 	}
 	scratch.gss.setSingleStackMode(len(result.stacks) == 1)
 	clearParseStackEntryCaches(result.stacks)
@@ -7735,6 +7768,10 @@ func (p *Parser) cullParseStacksForIteration(stacks []glrStack, scratch *parserS
 		perfRecordGlobalCapCull(len(stacks), maxStacks)
 	}
 	cullIn := len(stacks)
+	var topologyBefore []glrStack
+	if workCountInstrumentationEnabled {
+		topologyBefore = append(topologyBefore, stacks...)
+	}
 	cullLang := stackCullLanguageForArena(p.language, arenaClass)
 	if phaseTiming && glrCullNanos != nil {
 		cullStart := time.Now()
@@ -7742,6 +7779,9 @@ func (p *Parser) cullParseStacksForIteration(stacks []glrStack, scratch *parserS
 		*glrCullNanos += time.Since(cullStart).Nanoseconds()
 	} else {
 		stacks = retainTopStacksForLanguageWithScratch(stacks, maxStacks, cullLang, &scratch.stackPick, &scratch.stackKeep, &scratch.stackCull)
+	}
+	if workCountInstrumentationEnabled {
+		workCountTopologyReconcileVersionSelection(topologyBefore, stacks)
 	}
 	scratch.audit.recordGlobalCull(cullIn, len(stacks))
 	workCountRecordBoundaryCull(p, cullIn, len(stacks))
@@ -8725,6 +8765,10 @@ func csharpCanShiftDeclarationListRepetitionToken(lang *Language, tok Token) boo
 }
 
 func compactAcceptedStacks(stacks []glrStack) []glrStack {
+	var topologyBefore []glrStack
+	if workCountInstrumentationEnabled {
+		topologyBefore = append(topologyBefore, stacks...)
+	}
 	acceptedCount := 0
 	for i := range stacks {
 		if stacks[i].accepted {
@@ -8732,7 +8776,11 @@ func compactAcceptedStacks(stacks []glrStack) []glrStack {
 			acceptedCount++
 		}
 	}
-	return stacks[:acceptedCount]
+	stacks = stacks[:acceptedCount]
+	if workCountInstrumentationEnabled {
+		workCountTopologyRetireMissingVersions(topologyBefore, stacks)
+	}
+	return stacks
 }
 
 func stackCullLanguageForArena(lang *Language, class arenaClass) *Language {
@@ -8798,6 +8846,9 @@ func (p *Parser) promotePrimaryStack(stacks []glrStack) {
 	}
 	if best != 0 {
 		stacks[0], stacks[best] = stacks[best], stacks[0]
+		if workCountInstrumentationEnabled {
+			workCountTopologySyncVersionOrder(stacks)
+		}
 	}
 }
 
