@@ -1408,21 +1408,27 @@ type IncrementalParseProfile struct {
 	// carries no cross-token state and is proven quiescent at every boundary
 	// (external_scanner_quiescence.go). A nonzero count marks boundaries where
 	// scanner state, not fragility or byte drift, is the binding constraint.
-	ReuseRejectScannerUnquiescent       uint64
-	RecoverSearches                     uint64
-	RecoverStateChecks                  uint64
-	RecoverStateSkips                   uint64
-	RecoverSymbolSkips                  uint64
-	RecoverLookups                      uint64
-	RecoverHits                         uint64
-	MaxStacksSeen                       int
-	EntryScratchPeak                    uint64
-	StopReason                          ParseStopReason
-	TokensConsumed                      uint64
-	LastTokenEndByte                    uint32
-	ExpectedEOFByte                     uint32
-	ArenaBytesAllocated                 int64
-	ScratchBytesAllocated               int64
+	ReuseRejectScannerUnquiescent uint64
+	RecoverSearches               uint64
+	RecoverStateChecks            uint64
+	RecoverStateSkips             uint64
+	RecoverSymbolSkips            uint64
+	RecoverLookups                uint64
+	RecoverHits                   uint64
+	MaxStacksSeen                 int
+	EntryScratchPeak              uint64
+	StopReason                    ParseStopReason
+	TokensConsumed                uint64
+	LastTokenEndByte              uint32
+	ExpectedEOFByte               uint32
+	ArenaBytesAllocated           int64
+	// ArenaBaselineBytes sums retained arena capacity before each attempt.
+	// Subtract it from ArenaBytesAllocated to measure total operation growth.
+	ArenaBaselineBytes    int64
+	ScratchBytesAllocated int64
+	// ScratchBaselineBytes sums retained scratch capacity before each attempt.
+	// Subtract it from ScratchBytesAllocated to measure total operation growth.
+	ScratchBaselineBytes                int64
 	EntryScratchBytesAllocated          int64
 	GSSBytesAllocated                   int64
 	SingleStackIterations               int
@@ -1529,7 +1535,9 @@ type incrementalParseTiming struct {
 	lastTokenEndByte                    uint32
 	expectedEOFByte                     uint32
 	arenaBytesAllocated                 int64
+	arenaBaselineBytes                  int64
 	scratchBytesAllocated               int64
+	scratchBaselineBytes                int64
 	entryScratchBytesAllocated          uint64
 	gssBytesAllocated                   uint64
 	singleStackIterations               int
@@ -3919,7 +3927,9 @@ func copyParseRuntimeToTiming(timing *incrementalParseTiming, parseRuntime Parse
 	timing.lastTokenEndByte = parseRuntime.LastTokenEndByte
 	timing.expectedEOFByte = parseRuntime.ExpectedEOFByte
 	timing.arenaBytesAllocated = parseRuntime.ArenaBytesAllocated
+	timing.arenaBaselineBytes = parseRuntime.ArenaBaselineBytes
 	timing.scratchBytesAllocated = parseRuntime.ScratchBytesAllocated
+	timing.scratchBaselineBytes = parseRuntime.ScratchBaselineBytes
 	timing.entryScratchBytesAllocated = uint64(parseRuntime.EntryScratchBytesAllocated)
 	timing.gssBytesAllocated = uint64(parseRuntime.GSSBytesAllocated)
 	timing.singleStackIterations = parseRuntime.SingleStackIterations
