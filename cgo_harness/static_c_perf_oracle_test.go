@@ -790,7 +790,7 @@ func perfScanOracleBoardFromRowsForMode(rows []*perfScanLanguage, mode string) (
 	allowReportClosures := mode == perfScanReduceModeReport
 	board := &perfScanOracleBoardIdentity{}
 	for _, row := range rows {
-		if allowReportClosures && row != nil && perfScanReportClosureStatus(row.Status) {
+		if allowReportClosures && perfScanReportClosureRow(row) {
 			if err := perfScanValidateReportClosureRow(row); err != nil {
 				return nil, err
 			}
@@ -882,7 +882,7 @@ func perfScanValidateOracleEvidenceForMode(board *perfScanScoreboard, mode strin
 	wantOracleLanguages := len(board.Languages)
 	if allowReportClosures {
 		for _, row := range board.Languages {
-			if row != nil && perfScanReportClosureStatus(row.Status) {
+			if perfScanReportClosureRow(row) {
 				if err := perfScanValidateReportClosureRow(row); err != nil {
 					return fmt.Errorf("language %q report closure: %w", row.Language, err)
 				}
@@ -897,7 +897,7 @@ func perfScanValidateOracleEvidenceForMode(board *perfScanScoreboard, mode strin
 		return fmt.Errorf("oracle identity has %d languages, scoreboard requires %d", len(boardByLanguage), wantOracleLanguages)
 	}
 	for _, row := range board.Languages {
-		if allowReportClosures && row != nil && perfScanReportClosureStatus(row.Status) {
+		if allowReportClosures && perfScanReportClosureRow(row) {
 			continue
 		}
 		if row == nil || row.Oracle == nil {

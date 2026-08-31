@@ -1288,6 +1288,16 @@ func perfScanClearActiveFile(row *perfScanLanguage) {
 }
 
 func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flush func(*perfScanLanguage)) *perfScanLanguage {
+	return perfScanMeasureLanguageWithStaticOracleBuilder(t, lang, cfg, flush, buildStaticCPerfOracle)
+}
+
+func perfScanMeasureLanguageWithStaticOracleBuilder(
+	t *testing.T,
+	lang string,
+	cfg perfScanConfig,
+	flush func(*perfScanLanguage),
+	buildStaticOracle func(string) (*staticCPerfOracle, error),
+) *perfScanLanguage {
 	start := time.Now()
 	row := &perfScanLanguage{
 		Language: lang,
@@ -1318,12 +1328,41 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 		row.Notes = append(row.Notes, "known structural mismatch (timed anyway): "+reason)
 	}
 
+	var staticOracle *staticCPerfOracle
+	defer func() { staticOracle.Close() }()
+	prepareStaticOracle := func() error {
+		if staticOracle != nil {
+			return nil
+		}
+		if buildStaticOracle == nil {
+			return errors.New("builder is not configured")
+		}
+		oracle, err := buildStaticOracle(lang)
+		if err != nil {
+			return err
+		}
+		if oracle == nil {
+			return errors.New("builder returned no oracle")
+		}
+		staticOracle = oracle
+		identity := staticOracle.identity
+		row.Oracle = &identity
+		return nil
+	}
+
 	langRoot := realCorpusBenchmarkLanguageRoot(t, cfg.CorpusRoot, lang)
 	if st, err := os.Stat(langRoot); err != nil || !st.IsDir() {
-		return finish("no_corpus", fmt.Sprintf("no corpus directory at %s", langRoot))
+		detail := fmt.Sprintf("no corpus directory at %s", langRoot)
+		if err := prepareStaticOracle(); err != nil {
+			return finish("no_corpus", fmt.Sprintf("%s; build locked static C oracle: %v", detail, err))
+		}
+		return finish("no_corpus", detail)
 	}
 	files, err := perfScanSelectFiles(t, lang, cfg, langRoot)
 	if err != nil {
+		if oracleErr := prepareStaticOracle(); oracleErr != nil {
+			return finish("no_corpus_files", fmt.Sprintf("%v; build locked static C oracle: %v", err, oracleErr))
+		}
 		return finish("no_corpus_files", err.Error())
 	}
 	row.FilesSelected = len(files)
@@ -1343,13 +1382,9 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 	if err != nil {
 		return finish("no_c_reference", fmt.Sprintf("load C parser identity: %v", err))
 	}
-	staticOracle, err := buildStaticCPerfOracle(lang)
-	if err != nil {
+	if err := prepareStaticOracle(); err != nil {
 		return finish("no_static_c_oracle", fmt.Sprintf("build locked static C oracle: %v", err))
 	}
-	defer staticOracle.Close()
-	identity := staticOracle.identity
-	row.Oracle = &identity
 
 	goLang := entry.Language()
 	if goLang == nil {
@@ -1470,6 +1505,109 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 		return finish(measurementStatus, strings.Join(measurementDetails, "; "))
 	}
 	return finish(perfScanStatusOK, "")
+}
+
+func TestPerfScanMissingCorpusPinsStaticOracleIdentityUnit(t *testing.T) {
+	cfg := perfScanConfig{
+		CorpusRoot: filepath.Join(t.TempDir(), "missing"),
+		Axes:       []string{perfScanAxisFull},
+	}
+	want := perfScanTestOracleIdentity("go")
+	buildCalls := 0
+	closeCalls := 0
+	row := perfScanMeasureLanguageWithStaticOracleBuilder(t, "go", cfg, nil, func(language string) (*staticCPerfOracle, error) {
+		buildCalls++
+		if language != "go" {
+			t.Fatalf("static oracle language = %q, want go", language)
+		}
+		return &staticCPerfOracle{
+			identity: *want,
+			cleanup:  func() { closeCalls++ },
+		}, nil
+	})
+	if row.Status != "no_corpus" {
+		t.Fatalf("missing corpus status = %q, want no_corpus: %s", row.Status, row.Detail)
+	}
+	if row.Oracle == nil || row.Oracle.Common != want.Common ||
+		row.Oracle.Language.Language != want.Language.Language ||
+		row.Oracle.Language.GrammarCommit != want.Language.GrammarCommit ||
+		row.Oracle.Language.BuildKeySHA256 != want.Language.BuildKeySHA256 ||
+		row.Oracle.Language.ArtifactSHA256 != want.Language.ArtifactSHA256 {
+		t.Fatalf("missing corpus lost locked static C identity: got=%+v want=%+v", row.Oracle, want)
+	}
+	if buildCalls != 1 || closeCalls != 1 {
+		t.Fatalf("static oracle lifecycle builds=%d closes=%d, want 1/1", buildCalls, closeCalls)
+	}
+	if row.FilesSelected != 0 || row.FilesMeasured != 0 || len(row.Files) != 0 {
+		t.Fatalf("identity preparation widened measurement scope: %+v", row)
+	}
+	board, err := perfScanOracleBoardFromRows([]*perfScanLanguage{row})
+	if err != nil {
+		t.Fatalf("assemble no-corpus oracle board: %v", err)
+	}
+	if len(board.Languages) != 1 || board.Languages[0].Language != "go" {
+		t.Fatalf("no-corpus oracle board = %+v", board)
+	}
+}
+
+func TestPerfScanEmptyCorpusPinsStaticOracleIdentityUnit(t *testing.T) {
+	corpusRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(corpusRoot, "go"), 0o755); err != nil {
+		t.Fatalf("create empty corpus: %v", err)
+	}
+	cfg := perfScanConfig{
+		CorpusRoot: corpusRoot,
+		Axes:       []string{perfScanAxisFull},
+	}
+	want := perfScanTestOracleIdentity("go")
+	buildCalls := 0
+	closeCalls := 0
+	row := perfScanMeasureLanguageWithStaticOracleBuilder(t, "go", cfg, nil, func(language string) (*staticCPerfOracle, error) {
+		buildCalls++
+		if language != "go" {
+			t.Fatalf("static oracle language = %q, want go", language)
+		}
+		return &staticCPerfOracle{
+			identity: *want,
+			cleanup:  func() { closeCalls++ },
+		}, nil
+	})
+	if row.Status != "no_corpus_files" {
+		t.Fatalf("empty corpus status = %q, want no_corpus_files: %s", row.Status, row.Detail)
+	}
+	if row.Oracle == nil || row.Oracle.Common != want.Common ||
+		row.Oracle.Language.Language != want.Language.Language ||
+		row.Oracle.Language.GrammarCommit != want.Language.GrammarCommit ||
+		row.Oracle.Language.BuildKeySHA256 != want.Language.BuildKeySHA256 ||
+		row.Oracle.Language.ArtifactSHA256 != want.Language.ArtifactSHA256 {
+		t.Fatalf("empty corpus lost locked static C identity: got=%+v want=%+v", row.Oracle, want)
+	}
+	if buildCalls != 1 || closeCalls != 1 {
+		t.Fatalf("static oracle lifecycle builds=%d closes=%d, want 1/1", buildCalls, closeCalls)
+	}
+	if row.FilesSelected != 0 || row.FilesMeasured != 0 || len(row.Files) != 0 {
+		t.Fatalf("identity preparation widened measurement scope: %+v", row)
+	}
+	board, err := perfScanOracleBoardFromRows([]*perfScanLanguage{row})
+	if err != nil {
+		t.Fatalf("assemble empty-corpus oracle board: %v", err)
+	}
+	if len(board.Languages) != 1 || board.Languages[0].Language != "go" {
+		t.Fatalf("empty-corpus oracle board = %+v", board)
+	}
+}
+
+func TestPerfScanMissingCorpusFailsClosedOnStaticOracleErrorUnit(t *testing.T) {
+	cfg := perfScanConfig{CorpusRoot: filepath.Join(t.TempDir(), "missing")}
+	row := perfScanMeasureLanguageWithStaticOracleBuilder(t, "go", cfg, nil, func(string) (*staticCPerfOracle, error) {
+		return nil, errors.New("fixture build failure")
+	})
+	if row.Status != "no_corpus" || row.Oracle != nil || !strings.Contains(row.Detail, "fixture build failure") {
+		t.Fatalf("static oracle failure did not fail the missing-corpus row closed: %+v", row)
+	}
+	if _, err := perfScanOracleBoardFromRows([]*perfScanLanguage{row}); err == nil {
+		t.Fatal("missing static oracle identity produced an authenticated board")
+	}
 }
 
 type perfScanCorpusFile struct {
