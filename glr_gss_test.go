@@ -34,6 +34,142 @@ func TestGSSNodeLayoutSizeBudget(t *testing.T) {
 	}
 }
 
+func TestGSSPackedLinkCapacityIsTrackedAndReleasedOnRecycle(t *testing.T) {
+	var owner gssScratch
+	base := owner.allocNode(stackEntry{state: 1}, nil, 1)
+	head := owner.allocNode(newStackEntryNode(2, &Node{symbol: 1}), base, 2)
+	merge := glrMergeScratch{gssOwner: &owner}
+	baseline := owner.allocatedBytes
+
+	for i := 0; i < maxMainLinkCount-1; i++ {
+		prev := owner.allocNode(stackEntry{state: StateID(10 + i)}, nil, 1)
+		entry := newStackEntryNode(2, &Node{symbol: Symbol(10 + i)})
+		if !gssMainAddLinkSeenMutate(&merge, head, prev, entry, make(map[gssMergePair]bool)) {
+			t.Fatalf("append packed link %d failed", i)
+		}
+		wantCap := 1
+		switch {
+		case i >= 4:
+			wantCap = maxMainLinkCount - 1
+		case i >= 2:
+			wantCap = 4
+		case i >= 1:
+			wantCap = 2
+		}
+		if got := int(head.extraLinkCap); got != wantCap {
+			t.Fatalf("packed link capacity after append %d = %d, want %d", i, got, wantCap)
+		}
+		wantBytes := baseline + gssMainLinkBytesForCap(wantCap)
+		if got := owner.allocatedBytes; got != wantBytes {
+			t.Fatalf("tracked bytes after append %d = %d, want %d", i, got, wantBytes)
+		}
+		if got := owner.packedLinkBytes; got != gssMainLinkBytesForCap(wantCap) {
+			t.Fatalf("packed link bytes after append %d = %d, want %d", i, got, gssMainLinkBytesForCap(wantCap))
+		}
+	}
+	owner.ensureReachMarks()
+	retainedBaseline := baseline
+	for i := range owner.slabs {
+		retainedBaseline += gssReachMarkBytesForCap(len(owner.slabs[i].reachMarks))
+	}
+	if got, want := owner.allocatedBytes, retainedBaseline+gssMainLinkBytesForCap(maxMainLinkCount-1); got != want {
+		t.Fatalf("tracked bytes after reach-mark recompute = %d, want %d", got, want)
+	}
+
+	owner.recycleForParse()
+	if got := owner.allocatedBytes; got != retainedBaseline {
+		t.Fatalf("tracked bytes after recycle = %d, want retained baseline %d", got, retainedBaseline)
+	}
+	if owner.packedLinkBytes != 0 {
+		t.Fatalf("packed link bytes after recycle = %d, want 0", owner.packedLinkBytes)
+	}
+}
+
+func TestGSSPackedLinkRecycleRepairsCounterUnderflow(t *testing.T) {
+	var owner gssScratch
+	base := owner.allocNode(stackEntry{state: 1}, nil, 1)
+	head := owner.allocNode(newStackEntryNode(2, &Node{symbol: 1}), base, 2)
+	prev := owner.allocNode(stackEntry{state: 3}, nil, 1)
+	merge := glrMergeScratch{gssOwner: &owner}
+	entry := newStackEntryNode(4, &Node{symbol: 2})
+	if !gssMainAddLinkSeenMutate(&merge, head, prev, entry, make(map[gssMergePair]bool)) {
+		t.Fatal("packed link append failed")
+	}
+	retainedBytes := owner.allocatedBytes - owner.packedLinkBytes
+	owner.allocatedBytes = owner.packedLinkBytes - 1
+
+	owner.recycleForParse()
+
+	if got := owner.allocatedBytes; got != retainedBytes {
+		t.Fatalf("tracked bytes after underflow repair = %d, want %d", got, retainedBytes)
+	}
+	if owner.packedLinkBytes != 0 {
+		t.Fatalf("packed link bytes after underflow repair = %d, want 0", owner.packedLinkBytes)
+	}
+}
+
+func TestGSSPackedLinkCapacityIsReleasedOnReset(t *testing.T) {
+	var owner gssScratch
+	base := owner.allocNode(stackEntry{state: 1}, nil, 1)
+	head := owner.allocNode(newStackEntryNode(2, &Node{symbol: 1}), base, 2)
+	prev := owner.allocNode(stackEntry{state: 3}, nil, 1)
+	merge := glrMergeScratch{gssOwner: &owner}
+	entry := newStackEntryNode(4, &Node{symbol: 2})
+	if !gssMainAddLinkSeenMutate(&merge, head, prev, entry, make(map[gssMergePair]bool)) {
+		t.Fatal("packed link append failed")
+	}
+	retainedBytes := owner.allocatedBytes - owner.packedLinkBytes
+
+	owner.reset()
+
+	if got := owner.allocatedBytes; got != retainedBytes {
+		t.Fatalf("tracked bytes after reset = %d, want %d", got, retainedBytes)
+	}
+	if owner.packedLinkBytes != 0 {
+		t.Fatalf("packed link bytes after reset = %d, want 0", owner.packedLinkBytes)
+	}
+	if head.extraLinks != nil || head.extraLinkCount != 0 || head.extraLinkCap != 0 {
+		t.Fatalf("reset node retained packed links: %+v", *head)
+	}
+}
+
+func TestGSSPackedLinkCounterIsClearedByEmptyReset(t *testing.T) {
+	owner := gssScratch{
+		allocatedBytes:  gssMainLinkBytesForCap(1),
+		packedLinkBytes: gssMainLinkBytesForCap(1),
+	}
+
+	owner.reset()
+
+	if owner.allocatedBytes != 0 || owner.packedLinkBytes != 0 {
+		t.Fatalf("empty reset retained packed-link accounting: allocated=%d packed=%d", owner.allocatedBytes, owner.packedLinkBytes)
+	}
+}
+
+func TestGSSPackedLinkCapacityCountsTowardParserScratchBudget(t *testing.T) {
+	var scratch parserScratch
+	base := scratch.gss.allocNode(stackEntry{state: 1}, nil, 1)
+	head := scratch.gss.allocNode(newStackEntryNode(2, &Node{symbol: 1}), base, 2)
+	prev := scratch.gss.allocNode(stackEntry{state: 3}, nil, 1)
+	scratch.merge.gssOwner = &scratch.gss
+	scratch.setBudget(gssMainLinkBytesForCap(1))
+
+	entry := newStackEntryNode(4, &Node{symbol: 2})
+	if !gssMainAddLinkSeenMutate(&scratch.merge, head, prev, entry, make(map[gssMergePair]bool)) {
+		t.Fatal("packed link append failed")
+	}
+	if !scratch.budgetExhausted() {
+		t.Fatal("parser scratch budget did not observe packed link capacity")
+	}
+	var stats ParseRuntime
+	if !captureParseScratchStats(&stats, &scratch, nil, nil) {
+		t.Fatal("captureParseScratchStats returned false")
+	}
+	if got, want := stats.GSSBytesAllocated, scratch.gssBaselineBytes+gssMainLinkBytesForCap(1); got != want {
+		t.Fatalf("runtime GSS bytes = %d, want %d", got, want)
+	}
+}
+
 func TestCRecoverSummaryArenaCrossesChunkBoundary(t *testing.T) {
 	parser := &Parser{}
 	var scratch gssScratch

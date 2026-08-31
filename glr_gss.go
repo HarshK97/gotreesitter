@@ -136,6 +136,13 @@ func (n *gssNode) setExtraLink(i int, link gssMainLink) {
 }
 
 func (n *gssNode) appendExtraLink(link gssMainLink) {
+	n.appendExtraLinkWithOwner(link, nil)
+}
+
+// appendExtraLinkWithOwner bills current packed-link capacity to the scratch
+// that owns n. Standalone callers pass nil because they do not own a parser
+// scratch budget.
+func (n *gssNode) appendExtraLinkWithOwner(link gssMainLink, owner *gssScratch) {
 	if n == nil || int(n.extraLinkCount) >= maxMainLinkCount-1 {
 		panic("gssNode.appendExtraLink: link limit exceeded")
 	}
@@ -165,6 +172,11 @@ func (n *gssNode) appendExtraLink(link gssMainLink) {
 	n.extraLinks = &links[0]
 	n.extraLinkCount++
 	n.extraLinkCap = uint8(newCapacity)
+	if owner != nil {
+		delta := gssMainLinkBytesForCap(newCapacity) - gssMainLinkBytesForCap(capacity)
+		owner.allocatedBytes += delta
+		owner.packedLinkBytes += delta
+	}
 	workCountRecordGraphLinkAddition()
 	workCountRecordAlternatePredecessorLinkAppended() // work-count-assembly: alternate predecessor append-grow seam
 	workCountRecordGSSMutation()                      // work-count-assembly: GSS mutation append-grow seam
@@ -210,6 +222,7 @@ type gssScratch struct {
 	usedTotal           int
 	peakUsed            int
 	allocatedBytes      int64
+	packedLinkBytes     int64
 	singleStackMode     bool
 	singleStackAllocs   uint64
 	multiStackAllocs    uint64
@@ -988,7 +1001,15 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth uint32
 // outside this allocator makes accidental address reuse impossible from lower
 // level allocation call sites.
 func (s *gssScratch) recycleForParse() {
-	if s == nil || s.usedTotal == 0 {
+	if s == nil {
+		return
+	}
+	packedLinkBytes := s.packedLinkBytes
+	s.packedLinkBytes = 0
+	if s.usedTotal == 0 {
+		if packedLinkBytes != 0 {
+			s.recomputeAllocatedBytes()
+		}
 		return
 	}
 	for i := range s.slabs {
@@ -1004,6 +1025,12 @@ func (s *gssScratch) recycleForParse() {
 	}
 	s.slabCursor = 0
 	s.usedTotal = 0
+	if packedLinkBytes < 0 || packedLinkBytes > s.allocatedBytes {
+		// Repair an inconsistent counter without allowing signed underflow.
+		s.recomputeAllocatedBytes()
+		return
+	}
+	s.allocatedBytes -= packedLinkBytes
 }
 
 func (s *gssScratch) reset() {
@@ -1015,6 +1042,7 @@ func (s *gssScratch) reset() {
 		s.stackEntries = s.stackEntries[:0]
 	}
 	if len(s.slabs) == 0 {
+		s.packedLinkBytes = 0
 		s.singleStackMode = false
 		s.everForked = false
 		s.singleStackAllocs = 0
@@ -1077,6 +1105,7 @@ func (s *gssScratch) reset() {
 		}
 		s.slabs[i].used = 0
 	}
+	s.packedLinkBytes = 0
 	s.slabCursor = 0
 	s.skipClear = false
 	s.usedTotal = 0
@@ -1125,6 +1154,13 @@ func gssNodeBytesForCap(n int) int64 {
 	return int64(n) * int64(unsafe.Sizeof(gssNode{}))
 }
 
+func gssMainLinkBytesForCap(n int) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return int64(n) * int64(unsafe.Sizeof(gssMainLink{}))
+}
+
 func (s *gssScratch) capacityNodes() int {
 	if s == nil {
 		return 0
@@ -1145,6 +1181,7 @@ func (s *gssScratch) recomputeAllocatedBytes() {
 		total += gssNodeBytesForCap(len(s.slabs[i].data))
 		total += gssReachMarkBytesForCap(len(s.slabs[i].reachMarks))
 	}
+	total += s.packedLinkBytes
 	for i := range s.summaryChunks {
 		bytes, ok := gssSummaryBytesForCap(cap(s.summaryChunks[i].data))
 		if ok {
