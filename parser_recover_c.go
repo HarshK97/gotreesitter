@@ -3081,7 +3081,7 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 				return versions, canShift, reason
 			}
 			if p.cTryMergeReductionVersion(&versions[j], &versions[v]) {
-				versions = append(versions[:v], versions[v+1:]...)
+				versions, _ = cRemoveReductionVersion(versions, v)
 				merged = true
 				break
 			}
@@ -3109,19 +3109,14 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 				p.crecoveryReductionCandidateCeilingHits++
 				return versions, canShift, ParseStopNone
 			}
-			actionCandidates, hasSingletonCandidate, reason := p.cReductionCandidatesForActionInto(source, versions[v], act, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors, &singletonCandidate)
+			var actionReductionVersion int
+			var reason ParseStopReason
+			versions, actionReductionVersion, reason = p.cAppendReductionActionVersions(
+				source, versions, v, act, tok, nodeCount, arena, entryScratch,
+				gssScratch, tmpEntries, trackChildErrors, &singletonCandidate,
+			)
 			if reason != ParseStopNone {
 				return versions, canShift, reason
-			}
-			actionReductionVersion := -1
-			if hasSingletonCandidate {
-				var appended bool
-				versions, appended = p.cAppendReductionVersion(versions, singletonCandidate, v)
-				if appended {
-					actionReductionVersion = len(versions) - 1
-				}
-			} else if len(actionCandidates) > 0 {
-				versions, actionReductionVersion = p.cAppendActionReductionVersions(versions, actionCandidates, v, arena)
 			}
 			// C overwrites reduction_version for every reduce action, including
 			// STACK_VERSION_NONE when the action only merges into an existing
@@ -3143,11 +3138,14 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 			// C renumbers the LAST reduction version onto the current version
 			// (reduction_version is overwritten per reduce action) and
 			// reprocesses it in place.
-			versions[v] = versions[lastReduction]
-			versions = append(versions[:lastReduction], versions[lastReduction+1:]...)
+			var renumbered bool
+			versions, renumbered = cRenumberReductionVersion(versions, lastReduction, v)
+			if !renumbered {
+				return versions, canShift, ParseStopInvariantViolation
+			}
 			continue
 		} else if !anyLookahead {
-			versions = append(versions[:v], versions[v+1:]...)
+			versions, _ = cRemoveReductionVersion(versions, v)
 			continue
 		}
 		if v == 0 {
@@ -3169,6 +3167,36 @@ func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, ac
 		return []glrStack{singletonCandidate}, reason
 	}
 	return candidates, reason
+}
+
+// cAppendReductionActionVersions applies one reduction to an unchanged source
+// version. It appends every surviving pop result in C stack-version order and
+// merges each result into earlier compatible versions before the caller can
+// promote a result into the source slot.
+func (p *Parser) cAppendReductionActionVersions(source []byte, versions []glrStack, originalVersion int, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool, singletonCandidate *glrStack) ([]glrStack, int, ParseStopReason) {
+	if originalVersion < 0 || originalVersion >= len(versions) || singletonCandidate == nil {
+		return versions, -1, ParseStopInvariantViolation
+	}
+	actionCandidates, hasSingletonCandidate, reason := p.cReductionCandidatesForActionInto(
+		source, versions[originalVersion], act, tok, nodeCount, arena,
+		entryScratch, gssScratch, tmpEntries, trackChildErrors, singletonCandidate,
+	)
+	if reason != ParseStopNone {
+		return versions, -1, reason
+	}
+	if hasSingletonCandidate {
+		var appended bool
+		versions, appended = p.cAppendReductionVersion(versions, *singletonCandidate, originalVersion)
+		if appended {
+			return versions, len(versions) - 1, ParseStopNone
+		}
+		return versions, -1, ParseStopNone
+	}
+	if len(actionCandidates) == 0 {
+		return versions, -1, ParseStopNone
+	}
+	versions, reductionVersion := p.cAppendActionReductionVersions(versions, actionCandidates, originalVersion, arena)
+	return versions, reductionVersion, ParseStopNone
 }
 
 func (p *Parser) cReductionCandidatesForActionInto(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool, singletonCandidate *glrStack) ([]glrStack, bool, ParseStopReason) {
@@ -3267,6 +3295,29 @@ func (p *Parser) cAppendReductionVersion(versions []glrStack, candidate glrStack
 	}
 	versions = append(versions, candidate)
 	return versions, true
+}
+
+// cRemoveReductionVersion applies C's stable stack-version deletion. Every
+// later physical slot moves left by one. Clear the retired tail so the caller's
+// reusable backing array does not retain graph and error-region references.
+func cRemoveReductionVersion(versions []glrStack, version int) ([]glrStack, bool) {
+	if version < 0 || version >= len(versions) {
+		return versions, false
+	}
+	copy(versions[version:], versions[version+1:])
+	clear(versions[len(versions)-1:])
+	return versions[:len(versions)-1], true
+}
+
+// cRenumberReductionVersion replaces an earlier physical slot with a later
+// reduction result. C deletes the target head, moves the source head into that
+// slot, and then removes the source slot with stable compaction.
+func cRenumberReductionVersion(versions []glrStack, sourceVersion, targetVersion int) ([]glrStack, bool) {
+	if targetVersion < 0 || sourceVersion <= targetVersion || sourceVersion >= len(versions) {
+		return versions, false
+	}
+	versions[targetVersion] = versions[sourceVersion]
+	return cRemoveReductionVersion(versions, sourceVersion)
 }
 
 func (p *Parser) cTryMergeReductionVersion(target, candidate *glrStack) bool {

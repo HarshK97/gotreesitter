@@ -2160,6 +2160,64 @@ func TestCAppendReductionVersionCallerSeedFirstAppendAllocatesZero(t *testing.T)
 	}
 }
 
+func TestCRenumberReductionVersionPreservesPhysicalOrderAndClearsTail(t *testing.T) {
+	versions := make([]glrStack, 4, 5)
+	for i, state := range []StateID{236, 269, 320, 240} {
+		versions[i] = newGLRStack(state)
+		versions[i].branchOrder = uint64(i + 1)
+	}
+	backing := versions[:cap(versions)]
+
+	var ok bool
+	versions, ok = cRenumberReductionVersion(versions, 3, 0)
+	if !ok {
+		t.Fatal("renumber failed")
+	}
+	if got, want := len(versions), 3; got != want {
+		t.Fatalf("version count = %d, want %d", got, want)
+	}
+	for i, want := range []StateID{240, 269, 320} {
+		if got := versions[i].top().state; got != want {
+			t.Fatalf("version[%d] state = %d, want %d", i, got, want)
+		}
+	}
+	if got, want := versions[0].branchOrder, uint64(4); got != want {
+		t.Fatalf("promoted branch order = %d, want %d", got, want)
+	}
+	if backing[3].gss.head != nil || backing[3].entries != nil || backing[3].branchOrder != 0 {
+		t.Fatalf("retired tail = %+v, want cleared", backing[3])
+	}
+}
+
+func TestCRemoveReductionVersionUsesStablePhysicalCompaction(t *testing.T) {
+	versions := make([]glrStack, 4)
+	for i, state := range []StateID{236, 269, 320, 240} {
+		versions[i] = newGLRStack(state)
+	}
+	backing := versions
+
+	var ok bool
+	versions, ok = cRemoveReductionVersion(versions, 1)
+	if !ok {
+		t.Fatal("remove failed")
+	}
+	for i, want := range []StateID{236, 320, 240} {
+		if got := versions[i].top().state; got != want {
+			t.Fatalf("version[%d] state = %d, want %d", i, got, want)
+		}
+	}
+	if backing[3].gss.head != nil || backing[3].entries != nil || backing[3].branchOrder != 0 {
+		t.Fatalf("retired tail = %+v, want cleared", backing[3])
+	}
+
+	if out, removed := cRemoveReductionVersion(versions, len(versions)); removed || len(out) != len(versions) {
+		t.Fatalf("invalid remove changed versions: removed=%t len=%d", removed, len(out))
+	}
+	if out, renumbered := cRenumberReductionVersion(versions, 0, 1); renumbered || len(out) != len(versions) {
+		t.Fatalf("invalid renumber changed versions: renumbered=%t len=%d", renumbered, len(out))
+	}
+}
+
 func TestCDoAllPotentialReductionsDistinguishesEOFFromAnyLookahead(t *testing.T) {
 	lang := &Language{
 		TokenCount:  2,
