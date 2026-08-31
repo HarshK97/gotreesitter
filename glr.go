@@ -596,6 +596,13 @@ func (s *glrStack) ensureGSS(scratch *gssScratch) {
 	s.gss = buildGSSStack(s.entries, scratch)
 }
 
+// conflictForkBase promotes the live stack before it copies the fork base.
+// The original and each clone share one head until their first mutation.
+func (s *glrStack) conflictForkBase(scratch *gssScratch) glrStack {
+	s.ensureGSS(scratch)
+	return *s
+}
+
 func (s *glrStack) depth() int {
 	if s.gss.head != nil {
 		return s.gss.len()
