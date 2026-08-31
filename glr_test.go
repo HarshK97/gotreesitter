@@ -4378,7 +4378,10 @@ func TestGSSMainMergeCLinkPolicyRetiresCandidateAtEightLinkCap(t *testing.T) {
 	}
 	before := snapshotGSSMainLinks(incumbent.gss.head)
 	candidate := buildStack(99)
-	scratch := glrMergeScratch{language: &Language{CompactPackedGSSVersionOrderCertified: true}}
+	scratch := glrMergeScratch{
+		language:                    &Language{CompactPackedGSSVersionOrderCertified: true},
+		packedGSSVersionOrderActive: true,
+	}
 	if !gssMainCanMergeWithScratch(&scratch, &incumbent, &candidate) {
 		t.Fatal("certified C link policy rejected the merge eligibility gate")
 	}

@@ -4654,7 +4654,7 @@ func gssMainCanAddLinkSeen(n *gssNode, prev *gssNode, entry stackEntry, seen map
 }
 
 func compactCMainLinkPolicyEnabled(scratch *glrMergeScratch) bool {
-	return scratch != nil && scratch.language != nil && scratch.language.CompactPackedGSSVersionOrderCertified
+	return compactPackedGSSVersionOrderEnabledForMerge(scratch)
 }
 
 func gssMainLinkLimitForScratch(scratch *glrMergeScratch) int {

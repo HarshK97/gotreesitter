@@ -94,8 +94,9 @@ func TestGSSPackedLinkCertifiedPolicyBillsSevenSlotCapacity(t *testing.T) {
 	head := owner.allocNode(newStackEntryNode(2, &Node{symbol: 1}), prevs[0], 2)
 	baseline := owner.allocatedBytes
 	merge := glrMergeScratch{
-		language: &Language{CompactPackedGSSVersionOrderCertified: true},
-		gssOwner: &owner,
+		language:                    &Language{CompactPackedGSSVersionOrderCertified: true},
+		packedGSSVersionOrderActive: true,
+		gssOwner:                    &owner,
 	}
 
 	for i := 1; i < maxCMainLinkCount; i++ {
@@ -114,6 +115,18 @@ func TestGSSPackedLinkCertifiedPolicyBillsSevenSlotCapacity(t *testing.T) {
 	}
 	if got := owner.allocatedBytes; got != baseline+wantBytes {
 		t.Fatalf("certified allocated bytes = %d, want %d", got, baseline+wantBytes)
+	}
+}
+
+func TestGSSMainLinkLimitRequiresActiveCertifiedRoute(t *testing.T) {
+	language := &Language{CompactPackedGSSVersionOrderCertified: true}
+	scratch := &glrMergeScratch{language: language}
+	if got := gssMainLinkLimitForScratch(scratch); got != maxMainLinkCount {
+		t.Fatalf("inactive certified link limit = %d, want ordinary limit %d", got, maxMainLinkCount)
+	}
+	scratch.packedGSSVersionOrderActive = true
+	if got := gssMainLinkLimitForScratch(scratch); got != maxCMainLinkCount {
+		t.Fatalf("active certified link limit = %d, want C limit %d", got, maxCMainLinkCount)
 	}
 }
 
@@ -1212,21 +1225,23 @@ func TestGSSMainAddLinkAtCapReplacesEquivalentSamePredecessorWithHigherDynamic(t
 }
 
 func TestGSSMainCLinkPolicyUsesEightSlotsThenDropsDistinctLink(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
 	entry := func(sym Symbol, dynamic int32) stackEntry {
-		return newStackEntryNode(10, &Node{
-			symbol:            sym,
-			startByte:         1,
-			endByte:           2,
-			flags:             nodeFlagNamed,
-			dynamicPrecedence: dynamic,
-		})
+		node := newLeafNodeInArena(arena, sym, true, 1, 2, Point{}, Point{Column: 1})
+		node.dynamicPrecedence = dynamic
+		node.rawShape = rawShapeZeroChildRef
+		return newStackEntryNode(10, node)
 	}
 	prev := func(state StateID) *gssNode {
 		return &gssNode{entry: stackEntry{state: state}, depth: 1}
 	}
 
 	head := &gssNode{entry: entry(20, 1), prev: prev(100), depth: 2}
-	scratch := glrMergeScratch{language: &Language{CompactPackedGSSVersionOrderCertified: true}}
+	scratch := glrMergeScratch{
+		language:                    &Language{CompactPackedGSSVersionOrderCertified: true},
+		packedGSSVersionOrderActive: true,
+		arena:                       arena,
+	}
 	for i := 1; i < maxCMainLinkCount; i++ {
 		if !gssMainAddLinkSeenMutate(
 			&scratch,
@@ -1265,14 +1280,12 @@ func TestGSSMainCLinkPolicyUsesEightSlotsThenDropsDistinctLink(t *testing.T) {
 }
 
 func TestGSSMainCLinkPolicyStillUpdatesSamePredecessorAtCap(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
 	entry := func(sym Symbol, dynamic int32) stackEntry {
-		return newStackEntryNode(10, &Node{
-			symbol:            sym,
-			startByte:         1,
-			endByte:           2,
-			flags:             nodeFlagNamed,
-			dynamicPrecedence: dynamic,
-		})
+		node := newLeafNodeInArena(arena, sym, true, 1, 2, Point{}, Point{Column: 1})
+		node.dynamicPrecedence = dynamic
+		node.rawShape = rawShapeZeroChildRef
+		return newStackEntryNode(10, node)
 	}
 	sharedPrev := &gssNode{entry: stackEntry{state: 100}, depth: 1}
 	head := &gssNode{entry: entry(20, 1), prev: sharedPrev, depth: 2}
@@ -1283,7 +1296,11 @@ func TestGSSMainCLinkPolicyStillUpdatesSamePredecessorAtCap(t *testing.T) {
 		}, maxCMainLinkCount)
 	}
 
-	scratch := glrMergeScratch{language: &Language{CompactPackedGSSVersionOrderCertified: true}}
+	scratch := glrMergeScratch{
+		language:                    &Language{CompactPackedGSSVersionOrderCertified: true},
+		packedGSSVersionOrderActive: true,
+		arena:                       arena,
+	}
 	if !gssMainAddLinkSeenMutate(&scratch, head, sharedPrev, entry(20, 99), make(map[gssMergePair]bool)) {
 		t.Fatal("same-predecessor update was rejected at the C link cap")
 	}
@@ -1297,13 +1314,11 @@ func TestGSSMainCLinkPolicyStillUpdatesSamePredecessorAtCap(t *testing.T) {
 }
 
 func TestGSSMainCLinkPolicyPreflightMatchesMultiLinkMutationAtLimit(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
 	entry := func(sym Symbol) stackEntry {
-		return newStackEntryNode(10, &Node{
-			symbol:    sym,
-			startByte: 1,
-			endByte:   2,
-			flags:     nodeFlagNamed,
-		})
+		node := newLeafNodeInArena(arena, sym, true, 1, 2, Point{}, Point{Column: 1})
+		node.rawShape = rawShapeZeroChildRef
+		return newStackEntryNode(10, node)
 	}
 	prev := func(state StateID) *gssNode {
 		return &gssNode{entry: stackEntry{state: state}, depth: 1}
@@ -1325,7 +1340,11 @@ func TestGSSMainCLinkPolicyPreflightMatchesMultiLinkMutationAtLimit(t *testing.T
 		})
 	}
 
-	scratch := glrMergeScratch{language: &Language{CompactPackedGSSVersionOrderCertified: true}}
+	scratch := glrMergeScratch{
+		language:                    &Language{CompactPackedGSSVersionOrderCertified: true},
+		packedGSSVersionOrderActive: true,
+		arena:                       arena,
+	}
 	preflight := acquirePreflightForScratch(&scratch)
 	if !preflight.canMergeNodes(destination, source) {
 		t.Fatal("C preflight rejected a merge that can fill and then drop links")
