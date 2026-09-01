@@ -1312,6 +1312,9 @@ func (p *Parser) noteStopActionDiagnostic(phase string, s *glrStack, tok Token, 
 }
 
 func (p *Parser) noteStopActionResult(s *glrStack) {
+	if workCountInstrumentationEnabled {
+		workCountTopologyRecordActionResult(s) // work-count-assembly: topology action-result seam
+	}
 	if p == nil || p.stopActionDiag == nil || !p.stopActionDiag.captured || s == nil || s.depth() == 0 {
 		return
 	}
@@ -1405,21 +1408,27 @@ type IncrementalParseProfile struct {
 	// carries no cross-token state and is proven quiescent at every boundary
 	// (external_scanner_quiescence.go). A nonzero count marks boundaries where
 	// scanner state, not fragility or byte drift, is the binding constraint.
-	ReuseRejectScannerUnquiescent       uint64
-	RecoverSearches                     uint64
-	RecoverStateChecks                  uint64
-	RecoverStateSkips                   uint64
-	RecoverSymbolSkips                  uint64
-	RecoverLookups                      uint64
-	RecoverHits                         uint64
-	MaxStacksSeen                       int
-	EntryScratchPeak                    uint64
-	StopReason                          ParseStopReason
-	TokensConsumed                      uint64
-	LastTokenEndByte                    uint32
-	ExpectedEOFByte                     uint32
-	ArenaBytesAllocated                 int64
-	ScratchBytesAllocated               int64
+	ReuseRejectScannerUnquiescent uint64
+	RecoverSearches               uint64
+	RecoverStateChecks            uint64
+	RecoverStateSkips             uint64
+	RecoverSymbolSkips            uint64
+	RecoverLookups                uint64
+	RecoverHits                   uint64
+	MaxStacksSeen                 int
+	EntryScratchPeak              uint64
+	StopReason                    ParseStopReason
+	TokensConsumed                uint64
+	LastTokenEndByte              uint32
+	ExpectedEOFByte               uint32
+	ArenaBytesAllocated           int64
+	// ArenaBaselineBytes sums retained arena capacity before each attempt.
+	// Subtract it from ArenaBytesAllocated to measure total operation growth.
+	ArenaBaselineBytes    int64
+	ScratchBytesAllocated int64
+	// ScratchBaselineBytes sums retained scratch capacity before each attempt.
+	// Subtract it from ScratchBytesAllocated to measure total operation growth.
+	ScratchBaselineBytes                int64
 	EntryScratchBytesAllocated          int64
 	GSSBytesAllocated                   int64
 	SingleStackIterations               int
@@ -1526,7 +1535,9 @@ type incrementalParseTiming struct {
 	lastTokenEndByte                    uint32
 	expectedEOFByte                     uint32
 	arenaBytesAllocated                 int64
+	arenaBaselineBytes                  int64
 	scratchBytesAllocated               int64
+	scratchBaselineBytes                int64
 	entryScratchBytesAllocated          uint64
 	gssBytesAllocated                   uint64
 	singleStackIterations               int
@@ -2429,6 +2440,7 @@ func (p *Parser) tryRecoverPreviousShiftAsError(s *glrStack, tok Token, nodeCoun
 	errNode := newLeafNodeInArena(arena, errorSymbol, true,
 		topStartByte, topEndByte,
 		stackEntryNodeStartPoint(topEntry), stackEntryNodeEndPoint(topEntry))
+	p.stampCompactPackedGSSZeroChildReceipt(&errNode.rawShape)
 	errNode.setExtra(true)
 	errNode.setHasError(true)
 	errNode.parseState = prevState
@@ -2459,6 +2471,9 @@ func (p *Parser) rejectUndrainedPendingForkStacks(s *glrStack) bool {
 		return false
 	}
 	workCountRecordPendingTransition(p, &p.pendingForkStacks[0], len(p.pendingForkStacks), 0, workCountConvergenceOutcomePendingDiscarded, "undrained post-reduce candidates rejected")
+	if workCountInstrumentationEnabled {
+		workCountTopologyRetireVersionsIfActive(p.pendingForkStacks)
+	}
 	p.pendingForkStacks = p.pendingForkStacks[:0]
 	if s != nil {
 		s.dead = true
@@ -2865,10 +2880,16 @@ func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, expectedEOFB
 		}
 		switch act.Type {
 		case ParseActionReduce:
+			if workCountInstrumentationEnabled {
+				workCountTopologyRecordAction(s, tok, act, 0)
+			}
 			if semanticPhaseTraceActive() {
 				semanticPhaseTraceRecordActionExecution(p, s, tok, act, 0, "eof-prefix-reduce", false) // semantic-phase-assembly: EOF-prefix action-execution seam
 			}
 			p.applyAction(nil, s, act, tok, &anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, false, nil)
+			if workCountInstrumentationEnabled {
+				workCountTopologyRecordActionResult(s)
+			}
 			if p.rejectUndrainedPendingForkStacks(s) {
 				return false
 			}
@@ -2876,10 +2897,16 @@ func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, expectedEOFB
 				return false
 			}
 		case ParseActionAccept:
+			if workCountInstrumentationEnabled {
+				workCountTopologyRecordAction(s, tok, act, 0)
+			}
 			if semanticPhaseTraceActive() {
 				semanticPhaseTraceRecordActionExecution(p, s, tok, act, 0, "eof-prefix-accept", false)
 			}
 			s.accepted = true
+			if workCountInstrumentationEnabled {
+				workCountTopologyRecordActionResult(s)
+			}
 			return true
 		default:
 			return false
@@ -2982,12 +3009,21 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 		}
 		for _, cut := range trailingEOFSuffixCuts(entries, firstDrop, node) {
 			prefix := s.cloneWithScratch(gssScratch)
+			if workCountInstrumentationEnabled {
+				workCountTopologyRecordVersionCopy(s, &prefix)
+			}
 			if !prefix.truncate(cut) {
+				if workCountInstrumentationEnabled {
+					workCountTopologyRetireVersionIfActive(&prefix)
+				}
 				continue
 			}
 			prefixEOF := eofTokenForTrailingCut(tok, entries, cut, node)
 			insertedMissing, advanced := p.advanceTrailingEOFPrefix(&prefix, prefixEOF, prefixEOF.EndByte, source, nodeCount, arena, entryScratch, gssScratch, tmpEntries)
 			if !advanced {
+				if workCountInstrumentationEnabled {
+					workCountTopologyRetireVersionIfActive(&prefix)
+				}
 				continue
 			}
 
@@ -2999,6 +3035,9 @@ func (p *Parser) tryRecoverTrailingEOFSuffix(s *glrStack, tok Token, nodeCount *
 				}
 			}
 			nodes, recovered := p.appendTrailingEOFRecoveryNodes(nodes, entries, cut, tok, arena, nodeCount)
+			if workCountInstrumentationEnabled {
+				workCountTopologyRetireVersionIfActive(&prefix)
+			}
 			if recovered || insertedMissing || cut > firstDrop {
 				return nodes, true
 			}
@@ -3888,7 +3927,9 @@ func copyParseRuntimeToTiming(timing *incrementalParseTiming, parseRuntime Parse
 	timing.lastTokenEndByte = parseRuntime.LastTokenEndByte
 	timing.expectedEOFByte = parseRuntime.ExpectedEOFByte
 	timing.arenaBytesAllocated = parseRuntime.ArenaBytesAllocated
+	timing.arenaBaselineBytes = parseRuntime.ArenaBaselineBytes
 	timing.scratchBytesAllocated = parseRuntime.ScratchBytesAllocated
+	timing.scratchBaselineBytes = parseRuntime.ScratchBaselineBytes
 	timing.entryScratchBytesAllocated = uint64(parseRuntime.EntryScratchBytesAllocated)
 	timing.gssBytesAllocated = uint64(parseRuntime.GSSBytesAllocated)
 	timing.singleStackIterations = parseRuntime.SingleStackIterations
@@ -4148,6 +4189,7 @@ func (p *Parser) materializeSkippedGapAsExtraError(s *glrStack, state StateID, t
 	p.markCRecoveryCostCompetitionRelevant()
 	startPoint := p.parserStackEndPoint(s)
 	leaf := newLeafNodeInArena(arena, errorSymbol, true, s.byteOffset, tok.StartByte, startPoint, tok.StartPoint)
+	p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 	leaf.setHasError(true)
 	leaf.setExtra(true)
 	leaf.parseState = state
@@ -4550,6 +4592,27 @@ func compactPackedGSSDispatchVersionCount(certified bool, roundVersionCount, cur
 	return roundVersionCount
 }
 
+func (p *Parser) compactPackedGSSVersionOrderEnabled() bool {
+	return p != nil &&
+		p.language != nil &&
+		p.language.CompactPackedGSSVersionOrderCertified &&
+		p.mergeScratch != nil &&
+		p.mergeScratch.packedGSSVersionOrderActive
+}
+
+func (p *Parser) stampCompactPackedGSSZeroChildReceipt(ref *rawShapeRef) {
+	if ref != nil && p.compactPackedGSSVersionOrderEnabled() {
+		*ref = rawShapeZeroChildRef
+	}
+}
+
+func compactPackedGSSVersionOrderActiveForParse(language *Language, reuse *reuseCursor, oldTree *Tree, noTreeBenchmarkOnly bool) bool {
+	return language != nil &&
+		language.CompactPackedGSSVersionOrderCertified &&
+		reuse == nil && oldTree == nil &&
+		!noTreeBenchmarkOnly
+}
+
 // parseInternal is the core GLR parsing loop shared by Parse and
 // ParseWithTokenSource.
 //
@@ -4589,6 +4652,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	transientReduceParents := p.configureParseScratch(scratch, source, reuse, oldTree, arenaClass, deferParentLinks)
 	scratch.merge.gssOwner = &scratch.gss
 	defer releaseParserScratch(scratch, deferParentLinks)
+	prevReduceScratch := p.reduceScratch
+	prevMergeScratch := p.mergeScratch
+	prevGoCompatFrames := p.goCompatFrames
 	p.reduceScratch = &scratch.reduce
 	p.mergeScratch = &scratch.merge
 	p.beginRecoveryRuntimeTelemetry()
@@ -4612,10 +4678,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		p.reduceScratch.transientChildren = &scratch.transientChildren
 	}
 	defer func() {
-		p.reduceScratch = nil
-		p.mergeScratch = nil
+		p.reduceScratch = prevReduceScratch
+		p.mergeScratch = prevMergeScratch
 		p.budgetScratch = prevBudgetScratch
-		p.goCompatFrames = nil
+		p.goCompatFrames = prevGoCompatFrames
 		if p.cCondenseVersionKeyRanks != nil {
 			clear(p.cCondenseVersionKeyRanks)
 		}
@@ -4702,6 +4768,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	arena.audit = nil
 	scratch.merge.arena = arena
 	scratch.merge.parser = p
+	if workCountInstrumentationEnabled {
+		workCountTopologySetParseContext(p, arena, trackChildErrors)
+	}
 	if scratch.audit.enabled || scratch.audit.equivEnabled {
 		scratch.merge.audit = &scratch.audit
 	}
@@ -5223,6 +5292,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
 		workCountRecordFinalPendingDiscards(p, p.pendingForkStacks, p.pendingFrontierForkStacks)
+		if workCountInstrumentationEnabled {
+			workCountTopologyRetireVersionsIfActive(p.pendingForkStacks)
+			workCountTopologyRetireVersionsIfActive(p.pendingFrontierForkStacks)
+		}
 		if p.noTreeBenchmarkOnly {
 			rootEndByte := expectedEOFByte
 			if stopReason != ParseStopAccepted && stopReason != ParseStopNone {
@@ -5297,6 +5370,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	}
 
 	stacks, maxStacksSeen = p.newInitialParseStacks(scratch, reuse, timing, len(source))
+	if workCountInstrumentationEnabled && len(stacks) != 0 {
+		workCountTopologyRecordInitialVersion(&stacks[0]) // work-count-assembly: topology initial-version seam
+	}
 	caps := p.configureParseCaps(source, reuse, arenaClass, scratch, maxStacksOverride, maxNodesOverride, maxMergePerKeyOverride)
 	workCountResolveParseAttempt(
 		workCountAttempt,
@@ -5875,7 +5951,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// never handed a token it cannot use.
 		stackRelexRestoreTok := Token{}
 		stackRelexActive := false
-		packedVersionOrder := p.language != nil && p.language.CompactPackedGSSVersionOrderCertified
+		packedVersionOrder := p.compactPackedGSSVersionOrderEnabled()
 		for si := 0; si < numStacks || (packedVersionOrder && si < len(stacks)); si++ {
 			s := &stacks[si]
 			if stackRelexActive {
@@ -6002,6 +6078,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					continue
 				}
 				if lastReductionVersion >= 0 {
+					if workCountInstrumentationEnabled {
+						workCountTopologyRenumberVersion(&stacks[lastReductionVersion], &stacks[si]) // work-count-assembly: topology packed-reduction-renumber seam
+					}
 					var renumbered bool
 					stacks, renumbered = cRenumberReductionVersion(stacks, lastReductionVersion, si)
 					if !renumbered {
@@ -6051,6 +6130,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				traceVisit(si, s, "extra-shift", 0, len(actions), actions[0])
 				semanticPhaseTraceRecordActionExecution(p, s, tok, actions[0], 0, "extra-shift", false) // semantic-phase-assembly: extra-shift-execution seam
 				p.applyExtraShiftAction(s, currentState, actions[0], tok, arena, scratch, trackChildErrors)
+				if workCountInstrumentationEnabled {
+					workCountTopologyRecordActionResult(s) // work-count-assembly: topology extra-shift action-result seam
+				}
 				nodeCount++
 				traceAfterPrimary(si, s)
 				consumeCurrentToken(s)
@@ -6087,6 +6169,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					// no table actions in C either; the version pauses and the
 					// condense step decides (ts_parser__handle_error skips the
 					// strategy-1 scan for error lookaheads and absorbs it).
+					workCountTopologyRecordNoActionPendingPop() // work-count-assembly: topology error-run pending-pop seam
 					s.cPaused = true
 					p.markCRecoveryCostCompetitionRelevant()
 					if actionTiming != nil {
@@ -6141,6 +6224,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						// Faithful C recovery port: EOF with no action pauses;
 						// the condense step resumes via ts_parser__handle_error
 						// whose recover_eof wraps the stack in an ERROR root.
+						workCountTopologyRecordNoActionPendingPop() // work-count-assembly: topology EOF pending-pop seam
 						s.cPaused = true
 						p.markCRecoveryCostCompetitionRelevant()
 						if actionTiming != nil {
@@ -6282,6 +6366,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					if p.glrTrace {
 						fmt.Printf("  stack[%d] C-PAUSED: no action for sym=%d in state=%d\n", si, tok.Symbol, currentState)
 					}
+					workCountTopologyRecordNoActionPendingPop() // work-count-assembly: topology no-action pending-pop seam
 					s.cPaused = true
 					p.markCRecoveryCostCompetitionRelevant()
 					if actionTiming != nil {
@@ -6574,6 +6659,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					fork.branchOrder = allocBranchOrder()
 					if actions[ai].Type != ParseActionShift || p.guardRealShiftGap(source, &fork, tok) {
 						if actions[ai].Type != ParseActionRecover || p.guardRealTokenAttachmentGap(source, &fork, tok, "recover") {
+							if workCountInstrumentationEnabled {
+								workCountTopologyPrepareVersionCopy(&base, &fork) // work-count-assembly: topology conflict-copy seam
+							}
 							setPendingTrace("conflict-fork", si, ai, len(actions), actions[ai])
 							p.noteStopActionDiagnostic("conflict-fork", &fork, tok, actions[ai], ai, len(actions), false, 0, 0, false)
 							actionBeforeState, actionBeforeByte, actionBeforeDepth := stackTraceState(&fork)
@@ -6763,10 +6851,20 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 
 		postDispatchVersionCount := compactPackedGSSDispatchVersionCount(packedVersionOrder, numStacks, len(stacks))
 		if postDispatchVersionCount > 1 && retryPass && allParseStacksDead(stacks) {
+			var topologyBefore []glrStack
+			if workCountInstrumentationEnabled {
+				topologyBefore = append(topologyBefore, stacks...)
+			}
 			bestIdx := bestRetryRecoveryStack(stacks)
 			stacks[bestIdx].dead = false
+			if workCountInstrumentationEnabled && bestIdx != 0 {
+				workCountTopologyRenumberVersion(&stacks[bestIdx], &stacks[0])
+			}
 			stacks[0] = stacks[bestIdx]
 			stacks = stacks[:1]
+			if workCountInstrumentationEnabled {
+				workCountTopologyRetireMissingVersions(topologyBefore, stacks)
+			}
 			if p.glrTrace {
 				fmt.Printf("[GLR] ALL-DEAD RECOVERY: resurrect stack (was [%d]) st=%d dep=%d byte=%d\n",
 					bestIdx, stacks[0].top().state, stacks[0].depth(), stacks[0].byteOffset)
@@ -6811,12 +6909,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// clean parses are unaffected.
 		condenseErrorCostEnabled := p.errorCostCompetitionEnabled()
 		condenseAnyReduced := anyReduced
-		condenseRelevant := condenseErrorCostEnabled && cRecoveryRelevantStack(stacks)
+		condenseRelevant := condenseErrorCostEnabled &&
+			(cRecoveryRelevantStack(stacks) || (packedVersionOrder && len(stacks) > 1))
 		condenseEOFRecovery := condenseRelevant && tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
 		condenseShiftedRecovery := condenseRelevant && anyReduced && !tok.NoLookahead && allLiveUnacceptedStacksShifted(stacks)
 		condenseRan := false
 		condenseResumed := false
-		if condenseErrorCostEnabled && (!anyReduced || condenseEOFRecovery || condenseShiftedRecovery) {
+		if condenseErrorCostEnabled && ((packedVersionOrder && len(stacks) > 1) || !anyReduced || condenseEOFRecovery || condenseShiftedRecovery) {
 			var resumed bool
 			condenseRan = true
 			var reason ParseStopReason
@@ -7228,6 +7327,7 @@ func (p *Parser) configureParseScratch(scratch *parserScratch, source []byte, re
 		p.transientChildren = nil
 	}
 	scratch.merge.language = p.language
+	scratch.merge.packedGSSVersionOrderActive = compactPackedGSSVersionOrderActiveForParse(p.language, reuse, oldTree, p.noTreeBenchmarkOnly)
 	scratch.merge.cErrorCostParser = nil
 	scratch.merge.trace = p.glrTrace
 	scratch.merge.beginEquivEpoch()
@@ -7454,6 +7554,10 @@ type parseStackPrepResult struct {
 
 func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *parserScratch, arena *nodeArena, arenaClass arenaClass, maxStacks, maxStackCullTrigger int, phaseTiming bool, glrMergeNanos, glrCullNanos *int64) parseStackPrepResult {
 	result := parseStackPrepResult{stacks: stacks}
+	var topologyBefore []glrStack
+	if workCountInstrumentationEnabled && len(stacks) > 1 {
+		topologyBefore = append(topologyBefore, stacks...)
+	}
 	resetCRecoveryMergeScratch(&scratch.merge)
 	if len(stacks) == 1 {
 		if stacks[0].dead {
@@ -7516,6 +7620,9 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		p.promotePrimaryStack(result.stacks)
 	} else {
 		p.tryDemoteSingleLinearGSS(result.stacks, scratch)
+	}
+	if workCountInstrumentationEnabled {
+		workCountTopologyRetireMissingVersions(topologyBefore, result.stacks)
 	}
 	scratch.gss.setSingleStackMode(len(result.stacks) == 1)
 	clearParseStackEntryCaches(result.stacks)
@@ -7681,6 +7788,10 @@ func (p *Parser) cullParseStacksForIteration(stacks []glrStack, scratch *parserS
 		perfRecordGlobalCapCull(len(stacks), maxStacks)
 	}
 	cullIn := len(stacks)
+	var topologyBefore []glrStack
+	if workCountInstrumentationEnabled {
+		topologyBefore = append(topologyBefore, stacks...)
+	}
 	cullLang := stackCullLanguageForArena(p.language, arenaClass)
 	if phaseTiming && glrCullNanos != nil {
 		cullStart := time.Now()
@@ -7688,6 +7799,9 @@ func (p *Parser) cullParseStacksForIteration(stacks []glrStack, scratch *parserS
 		*glrCullNanos += time.Since(cullStart).Nanoseconds()
 	} else {
 		stacks = retainTopStacksForLanguageWithScratch(stacks, maxStacks, cullLang, &scratch.stackPick, &scratch.stackKeep, &scratch.stackCull)
+	}
+	if workCountInstrumentationEnabled {
+		workCountTopologyReconcileVersionSelection(topologyBefore, stacks)
 	}
 	scratch.audit.recordGlobalCull(cullIn, len(stacks))
 	workCountRecordBoundaryCull(p, cullIn, len(stacks))
@@ -8169,6 +8283,7 @@ func (p *Parser) applyExtraShiftAction(s *glrStack, currentState StateID, act Pa
 		return
 	}
 	leaf := newLeafNodeInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+	p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 	if isMissing {
 		leaf.setMissing(true)
 		leaf.setHasError(true)
@@ -8187,6 +8302,7 @@ func (p *Parser) applyExtraShiftAction(s *glrStack, currentState StateID, act Pa
 func (p *Parser) applyCompactExtraShiftAction(s *glrStack, currentState, targetState StateID, tok Token, named bool, arena *nodeArena, scratch *parserScratch) {
 	if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
 		leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
+		p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 		leaf.setExtra(true)
 		leaf.setExternalScannerToken(tok.ExternalScannerToken)
 		leaf.preGotoState = currentState
@@ -8195,6 +8311,7 @@ func (p *Parser) applyCompactExtraShiftAction(s *glrStack, currentState, targetS
 		return
 	}
 	leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
+	p.stampCompactPackedGSSZeroChildReceipt(&leaf.rawShape)
 	leaf.setExtra(true)
 	leaf.setExternalScannerToken(tok.ExternalScannerToken)
 	leaf.preGotoState = currentState
@@ -8668,6 +8785,10 @@ func csharpCanShiftDeclarationListRepetitionToken(lang *Language, tok Token) boo
 }
 
 func compactAcceptedStacks(stacks []glrStack) []glrStack {
+	var topologyBefore []glrStack
+	if workCountInstrumentationEnabled {
+		topologyBefore = append(topologyBefore, stacks...)
+	}
 	acceptedCount := 0
 	for i := range stacks {
 		if stacks[i].accepted {
@@ -8675,7 +8796,11 @@ func compactAcceptedStacks(stacks []glrStack) []glrStack {
 			acceptedCount++
 		}
 	}
-	return stacks[:acceptedCount]
+	stacks = stacks[:acceptedCount]
+	if workCountInstrumentationEnabled {
+		workCountTopologyRetireMissingVersions(topologyBefore, stacks)
+	}
+	return stacks
 }
 
 func stackCullLanguageForArena(lang *Language, class arenaClass) *Language {
@@ -8741,6 +8866,9 @@ func (p *Parser) promotePrimaryStack(stacks []glrStack) {
 	}
 	if best != 0 {
 		stacks[0], stacks[best] = stacks[best], stacks[0]
+		if workCountInstrumentationEnabled {
+			workCountTopologySyncVersionOrder(stacks)
+		}
 	}
 }
 

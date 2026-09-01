@@ -96,12 +96,24 @@ type gssMainLink struct {
 	entry stackEntry
 }
 
-const maxMainLinkCount = maxStacksPerMergeKey
+const (
+	// maxMainLinkCount is the ordinary Go merge-policy limit. Keep it separate
+	// from the backing-array limit so uncertified grammars retain the current
+	// six-link behavior.
+	maxMainLinkCount = maxStacksPerMergeKey
+
+	// maxCMainLinkCount matches tree-sitter C's MAX_LINK_COUNT (stack.c). The
+	// compact C-order capability can use all eight physical link slots.
+	maxCMainLinkCount = 8
+)
 
 // extraLinkCount/extraLinkCap are uint8; the compacted layout is only valid
 // while every possible link count fits. This conversion fails to compile if
-// maxMainLinkCount ever grows past what uint8 can carry.
-const _ = uint8(maxMainLinkCount - 1)
+// maxCMainLinkCount ever grows past what uint8 can carry.
+const _ = uint8(maxCMainLinkCount - 1)
+
+// The physical backing limit must contain the ordinary policy limit.
+const _ = uint8(maxCMainLinkCount - maxMainLinkCount)
 
 func (n *gssNode) linkCount() int {
 	if n == nil {
@@ -136,14 +148,22 @@ func (n *gssNode) setExtraLink(i int, link gssMainLink) {
 }
 
 func (n *gssNode) appendExtraLink(link gssMainLink) {
-	n.appendExtraLinkWithOwner(link, nil)
+	n.appendExtraLinkWithLimitAndOwner(link, maxMainLinkCount, nil)
 }
 
-// appendExtraLinkWithOwner bills current packed-link capacity to the scratch
-// that owns n. Standalone callers pass nil because they do not own a parser
-// scratch budget.
-func (n *gssNode) appendExtraLinkWithOwner(link gssMainLink, owner *gssScratch) {
-	if n == nil || int(n.extraLinkCount) >= maxMainLinkCount-1 {
+// appendExtraLinkWithLimit keeps the ordinary six-link allocation shape while
+// the certified C policy can use the full eight-link backing limit.
+func (n *gssNode) appendExtraLinkWithLimit(link gssMainLink, linkLimit int) {
+	n.appendExtraLinkWithLimitAndOwner(link, linkLimit, nil)
+}
+
+// appendExtraLinkWithLimitAndOwner applies one limit to storage and billing.
+func (n *gssNode) appendExtraLinkWithLimitAndOwner(link gssMainLink, linkLimit int, owner *gssScratch) {
+	if linkLimit < 1 || linkLimit > maxCMainLinkCount {
+		panic("gssNode.appendExtraLinkWithLimit: invalid link limit")
+	}
+	maxExtraLinks := linkLimit - 1
+	if n == nil || int(n.extraLinkCount) >= maxExtraLinks {
 		panic("gssNode.appendExtraLink: link limit exceeded")
 	}
 	n.cleanZeroState = gssCleanZeroUnknown
@@ -153,6 +173,9 @@ func (n *gssNode) appendExtraLinkWithOwner(link gssMainLink, owner *gssScratch) 
 		unsafe.Slice(n.extraLinks, capacity)[count] = link
 		n.extraLinkCount++
 		workCountRecordGraphLinkAddition()
+		if workCountInstrumentationEnabled {
+			workCountTopologyRecordLinkInsert(n, link.prev, count+1, false) // work-count-assembly: topology alternate-link-reuse seam
+		}
 		workCountRecordAlternatePredecessorLinkAppended() // work-count-assembly: alternate predecessor append-reuse seam
 		workCountRecordGSSMutation()                      // work-count-assembly: GSS mutation append-reuse seam
 		return
@@ -161,8 +184,8 @@ func (n *gssNode) appendExtraLinkWithOwner(link gssMainLink, owner *gssScratch) 
 	if capacity > 0 {
 		newCapacity = capacity * 2
 	}
-	if max := maxMainLinkCount - 1; newCapacity > max {
-		newCapacity = max
+	if newCapacity > maxExtraLinks {
+		newCapacity = maxExtraLinks
 	}
 	links := make([]gssMainLink, newCapacity)
 	if count > 0 {
@@ -178,6 +201,9 @@ func (n *gssNode) appendExtraLinkWithOwner(link gssMainLink, owner *gssScratch) 
 		owner.packedLinkBytes += delta
 	}
 	workCountRecordGraphLinkAddition()
+	if workCountInstrumentationEnabled {
+		workCountTopologyRecordLinkInsert(n, link.prev, count+1, false) // work-count-assembly: topology alternate-link-grow seam
+	}
 	workCountRecordAlternatePredecessorLinkAppended() // work-count-assembly: alternate predecessor append-grow seam
 	workCountRecordGSSMutation()                      // work-count-assembly: GSS mutation append-grow seam
 }
@@ -834,6 +860,12 @@ func (s *gssStack) pushEntry(entry stackEntry, scratch *gssScratch) {
 		depth = s.head.depth + 1
 	}
 	n := scratch.allocNode(entry, s.head, depth)
+	if workCountInstrumentationEnabled {
+		workCountTopologyRecordNodeAllocation(n)
+		if s.head != nil {
+			workCountTopologyRecordLinkInsert(n, s.head, 0, true) // work-count-assembly: topology primary-link seam
+		}
+	}
 	if s.head != nil {
 		workCountRecordGraphLinkAddition()
 	}

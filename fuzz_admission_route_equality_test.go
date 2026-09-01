@@ -145,25 +145,14 @@ func FuzzAdmissionRouteEquality(f *testing.F) {
 		languages[i] = admissionRouteEqualityLanguage{name: name, lang: lang, compact: compact, production: production}
 	}
 
-	lockedCWitnesses := loadRouteEqualityLockedCWitnesses(f)
-	lockedCOracleDigests := make(map[string]string, len(lockedCWitnesses))
-	for _, witness := range lockedCWitnesses {
-		key := witness.Language + "\x00" + witness.SourceUTF8
-		if prior := lockedCOracleDigests[key]; prior != "" && prior != witness.Expected.CompactCDeepSHA256 {
-			f.Fatalf("conflicting locked C digests for witness %q", witness.ID)
-		}
-		lockedCOracleDigests[key] = witness.Expected.CompactCDeepSHA256
-	}
-
-	seedAdmissionRouteEqualityCorpus(f, languages, lockedCWitnesses)
+	seedAdmissionRouteEqualityCorpus(f, languages)
 
 	f.Fuzz(func(t *testing.T, src []byte, langSel byte) {
 		if len(src) >= routeEqualityFuzzMaxInputBytes {
 			t.Skip("input at or above the fuzz latency safety cap")
 		}
 		lp := languages[int(langSel)%len(languages)]
-		lockedCDeepSHA256 := lockedCOracleDigests[lp.name+"\x00"+string(src)]
-		exerciseAdmissionRouteEquality(t, lp, src, false, lockedCDeepSHA256)
+		exerciseAdmissionRouteEquality(t, lp, src, false)
 	})
 }
 
@@ -213,11 +202,11 @@ func FuzzJavaScriptAdmissionRouteEquality(f *testing.F) {
 		if len(src) >= routeEqualityFuzzMaxInputBytes {
 			t.Skip("input at or above the fuzz latency safety cap")
 		}
-		exerciseAdmissionRouteEquality(t, lp, src, true, "")
+		exerciseAdmissionRouteEquality(t, lp, src, true)
 	})
 }
 
-func exerciseAdmissionRouteEquality(t *testing.T, lp admissionRouteEqualityLanguage, src []byte, recoveryOracleOwned bool, lockedCDeepSHA256 string) {
+func exerciseAdmissionRouteEquality(t *testing.T, lp admissionRouteEqualityLanguage, src []byte, recoveryOracleOwned bool) {
 	t.Helper()
 	defer func() {
 		if r := recover(); r != nil {
@@ -254,24 +243,6 @@ func exerciseAdmissionRouteEquality(t *testing.T, lp admissionRouteEqualityLangu
 		t.Fatalf("lang=%s production-lane Parse returned a nil tree with no error (input=%s)", lp.name, previewRouteEqualityInput(src))
 	}
 	defer productionTree.Release()
-	if lockedCDeepSHA256 != "" {
-		inspection, err := benchfixtures.InspectGoTree(compactTree.RootNode(), lp.lang)
-		if err != nil {
-			t.Fatalf("lang=%s bytes=%d inspect locked-C compact tree: %v", lp.name, len(src), err)
-		}
-		if inspection.SHA256 != lockedCDeepSHA256 {
-			t.Fatalf("lang=%s bytes=%d compact deep digest=%s, want locked C digest %s (input=%s)",
-				lp.name, len(src), inspection.SHA256, lockedCDeepSHA256, previewRouteEqualityInput(src))
-		}
-		if diff := routeEqualityFirstDivergence(compactTree.RootNode(), productionTree.RootNode(), lp.lang, "root"); diff == "" {
-			t.Fatalf("lang=%s bytes=%d locked-C exception is stale because production now matches compact (input=%s)",
-				lp.name, len(src), previewRouteEqualityInput(src))
-		} else {
-			t.Logf("lang=%s bytes=%d compact tree matches the locked C digest instead of production: %s (input=%s)",
-				lp.name, len(src), diff, previewRouteEqualityInput(src))
-		}
-		return
-	}
 	if recoveryOracleOwned && lp.lang.CompactStrategy2ErrorRegionCertified &&
 		routeEqualityTreeCarriesNativeRecoveryNode(compactTree.RootNode()) {
 		if diff := routeEqualityFirstDivergence(compactTree.RootNode(), productionTree.RootNode(), lp.lang, "root"); diff != "" {
@@ -291,7 +262,7 @@ func exerciseAdmissionRouteEquality(t *testing.T, lp admissionRouteEqualityLangu
 // needed), one smoke snippet per curated language, and an empty-source edge
 // case. languages supplies the language-selector byte for each language
 // name.
-func seedAdmissionRouteEqualityCorpus(f *testing.F, languages []admissionRouteEqualityLanguage, lockedCWitnesses []routeEqualityLockedCWitness) {
+func seedAdmissionRouteEqualityCorpus(f *testing.F, languages []admissionRouteEqualityLanguage) {
 	f.Helper()
 
 	langIndex := make(map[string]byte, len(languages))
@@ -391,15 +362,9 @@ func seedAdmissionRouteEqualityCorpus(f *testing.F, languages []admissionRouteEq
 	f.Add([]byte(" 0%0>>"), langIndex["swift"])
 	f.Add([]byte("0>>"), langIndex["swift"])
 
-	// Issue #984 pins two byte-exact Erlang forms. Compact matches locked C.
-	// Production instead merges three root children into one concatables node.
-	for _, witness := range lockedCWitnesses {
-		idx, ok := langIndex[witness.Language]
-		if !ok {
-			f.Fatalf("locked C witness %q language %q is outside the curated route-equality set", witness.ID, witness.Language)
-		}
-		f.Add([]byte(witness.SourceUTF8), idx)
-	}
+	// Issue #984 pins both byte-exact Erlang forms after route graduation.
+	f.Add([]byte("000\"0A!A \"A\"=0:A0!)A\"0%0000"), langIndex["erlang"])
+	f.Add([]byte("000\"0A!A \"A\"=0:A0!)A\"0%0000\n"), langIndex["erlang"])
 }
 
 // routeEqualityTreeCarriesNativeRecoveryNode reports whether root contains a

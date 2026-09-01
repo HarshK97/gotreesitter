@@ -160,6 +160,56 @@ func TestCompareRawStackEntriesCExactUsesCapturedShapeSnapshot(t *testing.T) {
 	}
 }
 
+func TestCompareRawStackEntriesCExactSupportsZeroChildReceipts(t *testing.T) {
+	left := cExactCompareLeaf(2)
+	right := cExactCompareLeaf(3)
+	stackEntryNode(left).rawShape = rawShapeZeroChildRef
+	stackEntryNode(right).rawShape = rawShapeZeroChildRef
+	if cmp, complete := compareRawStackEntriesCExact(nil, left, right, 1); !complete || cmp != -1 {
+		t.Fatalf("zero-child receipt comparison = %d, complete=%t; want -1, true", cmp, complete)
+	}
+
+	shared := &Node{symbol: 9, flags: nodeFlagNamed, rawShape: rawShapeZeroChildRef}
+	sharedEntry := newStackEntryNode(1, shared)
+	if cmp, complete := compareRawStackEntriesCExact(nil, sharedEntry, sharedEntry, 1); !complete || cmp != 0 {
+		t.Fatalf("shared zero-child receipt = %d, complete=%t; want 0, true", cmp, complete)
+	}
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	leftParent := cExactCompareParent(t, parser, arena, 10, sharedEntry)
+	rightParent := cExactCompareParent(t, parser, arena, 10, sharedEntry)
+	if cmp, complete := compareRawStackEntriesCExact(arena, leftParent, rightParent, 3); !complete || cmp != 0 {
+		t.Fatalf("captured zero-child receipt = %d, complete=%t; want 0, true", cmp, complete)
+	}
+}
+
+func TestCompareRawStackEntriesCapturedZeroUsesLiveChildrenWithoutMutation(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := &Parser{}
+	leftChild := &Node{
+		symbol:   9,
+		flags:    nodeFlagNamed,
+		children: []*Node{{symbol: 2, flags: nodeFlagNamed}},
+	}
+	rightChild := &Node{
+		symbol:   9,
+		flags:    nodeFlagNamed,
+		children: []*Node{{symbol: 3, flags: nodeFlagNamed}},
+	}
+	left := cExactCompareParent(t, parser, arena, 10, newStackEntryNode(1, leftChild))
+	right := cExactCompareParent(t, parser, arena, 10, newStackEntryNode(1, rightChild))
+
+	if cmp := parser.compareRawStackEntries(arena, left, right); cmp != -1 {
+		t.Fatalf("ordinary captured-zero comparison = %d, want -1", cmp)
+	}
+	if leftChild.rawShape != 0 || rightChild.rawShape != 0 {
+		t.Fatalf("ordinary comparison mutated child refs to %d/%d", leftChild.rawShape, rightChild.rawShape)
+	}
+}
+
 func TestCompareRawStackEntriesCExactHasNoDepthCutoff(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
@@ -360,6 +410,118 @@ func TestFastVisibleReduceFromGSSDeclinesMultiLinkSpan(t *testing.T) {
 	}
 	if stack.gss.head != rightNode {
 		t.Fatal("stack mutated by declined fast reduce")
+	}
+}
+
+func TestFastUnaryCollapseFromGSSReplacesLeafReceipt(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	language := &Language{
+		CompactPackedGSSVersionOrderCertified: true,
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "eof", Visible: false},
+			{Name: "child", Visible: true, Named: true},
+		},
+	}
+	merge := &glrMergeScratch{
+		language:                    language,
+		packedGSSVersionOrderActive: true,
+		arena:                       arena,
+	}
+	parser := &Parser{language: language, mergeScratch: merge}
+	merge.parser = parser
+	var gss gssScratch
+	base := gss.allocNode(stackEntry{state: 1}, nil, 1)
+	child := newLeafNodeInArena(arena, 1, true, 0, 2, Point{}, Point{Column: 2})
+	head := gss.allocNode(newStackEntryNode(2, child), base, 2)
+	stack := &glrStack{gss: gssStack{head: head}, byteOffset: 2}
+	act := ParseAction{Type: ParseActionReduce, Symbol: 1, ChildCount: 1}
+	var anyReduced bool
+
+	if !parser.tryFastUnaryCollapseFromGSS(stack, act, Token{}, &anyReduced, arena, nil, &gss, nil) {
+		t.Fatal("fast unary collapse declined")
+	}
+	if !anyReduced {
+		t.Fatal("fast unary collapse did not mark the reduction")
+	}
+	collapsed := stackEntryNode(stack.gss.head.entry)
+	shape, ok := arena.rawShapeForRef(collapsed.rawShape)
+	if !ok || shape.symbol != act.Symbol || shape.childCount() != 1 {
+		t.Fatalf("collapsed raw header = (%v, %t), want symbol %d and child count 1", shape, ok, act.Symbol)
+	}
+
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 2, Point{}, Point{Column: 2})
+	if cStackLinkPayloadsEquivalentAtOffsets(merge, stack.gss.head.entry, newStackEntryNode(2, leaf), 0, true, 0, true) {
+		t.Fatal("collapsed unary compared equal to a true leaf")
+	}
+}
+
+func TestFastUnaryCollapseFromGSSClearsReceiptOutsideCertifiedRoute(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	language := &Language{SymbolMetadata: []SymbolMetadata{
+		{Name: "eof", Visible: false},
+		{Name: "child", Visible: true, Named: true},
+	}}
+	parser := &Parser{language: language}
+	var gss gssScratch
+	base := gss.allocNode(stackEntry{state: 1}, nil, 1)
+	child := newLeafNodeInArena(arena, 1, true, 0, 2, Point{}, Point{Column: 2})
+	ref, shape := arena.allocRawShape()
+	if ref == 0 || shape == nil {
+		t.Fatal("raw-shape setup failed")
+	}
+	shape.symbol = 99
+	child.rawShape = ref
+	head := gss.allocNode(newStackEntryNode(2, child), base, 2)
+	stack := &glrStack{gss: gssStack{head: head}, byteOffset: 2}
+	act := ParseAction{Type: ParseActionReduce, Symbol: 1, ChildCount: 1}
+	var anyReduced bool
+
+	if !parser.tryFastUnaryCollapseFromGSS(stack, act, Token{}, &anyReduced, arena, nil, &gss, nil) {
+		t.Fatal("fast unary collapse declined")
+	}
+	if got := stackEntryRawShapeRef(stack.gss.head.entry); got != 0 {
+		t.Fatalf("ordinary collapsed receipt = %d, want unknown", got)
+	}
+}
+
+func TestFastVisibleTransientReduceFromGSSCapturesRawShapeAndPrecedence(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	language := &Language{CompactPackedGSSVersionOrderCertified: true, SymbolMetadata: []SymbolMetadata{
+		{Name: "eof", Visible: false},
+		{Name: "left", Visible: true, Named: true},
+		{Name: "right", Visible: true, Named: true},
+		{Name: "parent", Visible: true, Named: true},
+	}}
+	merge := &glrMergeScratch{
+		language:                    language,
+		packedGSSVersionOrderActive: true,
+		arena:                       arena,
+	}
+	parser := &Parser{language: language, mergeScratch: merge}
+	merge.parser = parser
+	var gss gssScratch
+	base := gss.allocNode(stackEntry{state: 1}, nil, 1)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	left.dynamicPrecedence = 2
+	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	right.dynamicPrecedence = 3
+	leftHead := gss.allocNode(newStackEntryNode(2, left), base, 2)
+	rightHead := gss.allocNode(newStackEntryNode(3, right), leftHead, 3)
+	stack := &glrStack{gss: gssStack{head: rightHead}, byteOffset: 2}
+	act := ParseAction{Type: ParseActionReduce, Symbol: 3, ChildCount: 2, DynamicPrecedence: 4}
+	var anyReduced bool
+	nodeCount := 0
+
+	if !parser.tryFastVisibleReduceActionFromGSSTransientParents(stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, &gss, nil, true, false) {
+		t.Fatal("fast visible reduce declined")
+	}
+	parent := stackEntryNode(stack.gss.head.entry)
+	shape, ok := arena.rawShapeForRef(parent.rawShape)
+	if !ok || shape.symbol != act.Symbol || shape.childCount() != 2 {
+		t.Fatalf("parent raw header = (%v, %t), want symbol %d and child count 2", shape, ok, act.Symbol)
+	}
+	if parent.dynamicPrecedence != 9 {
+		t.Fatalf("parent dynamic precedence = %d, want 9", parent.dynamicPrecedence)
 	}
 }
 

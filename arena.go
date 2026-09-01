@@ -2529,19 +2529,27 @@ func (a *nodeArena) allocExternalScannerSnapshotRef(src []byte) externalScannerS
 }
 
 func (a *nodeArena) externalScannerSnapshotBytes(ref externalScannerSnapshotRef) []byte {
-	if a == nil || ref.len == 0 {
-		return nil
-	}
-	if int(ref.slab) >= len(a.fieldSourceSlabs) {
+	if !a.externalScannerSnapshotRefValid(ref) {
 		return nil
 	}
 	slab := a.fieldSourceSlabs[ref.slab].data
 	start := int(ref.off)
 	end := start + int(ref.len)
-	if start < 0 || end > len(slab) || start > end {
-		return nil
-	}
 	return slab[start:end]
+}
+
+func (a *nodeArena) externalScannerSnapshotRefValid(ref externalScannerSnapshotRef) bool {
+	if a == nil || ref.len == 0 || int(ref.slab) >= len(a.fieldSourceSlabs) {
+		return false
+	}
+	slab := &a.fieldSourceSlabs[ref.slab]
+	used := slab.used
+	if used < 0 || used > len(slab.data) {
+		return false
+	}
+	start := uint64(ref.off)
+	end := start + uint64(ref.len)
+	return start <= uint64(used) && end <= uint64(used)
 }
 
 func (a *nodeArena) clearBudget() {

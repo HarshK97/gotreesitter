@@ -68,8 +68,9 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		compactConvergedSplitDrops: true,
 	},
 	"erlang": {
-		blobSHA256:                 mustRuntimeProfileSHA256("355deb34ae4b9d8e0bf649c1c36096929d5e403107fa3c8b9c2ee82b138dfdc5"),
-		compactConvergedSplitDrops: true,
+		blobSHA256:                   mustRuntimeProfileSHA256("355deb34ae4b9d8e0bf649c1c36096929d5e403107fa3c8b9c2ee82b138dfdc5"),
+		compactConvergedSplitDrops:   true,
+		compactPackedGSSVersionOrder: true,
 	},
 	// F# has one declaration-name state where C omits a same-span unary
 	// long_identifier below long_identifier_or_op. Expression identifiers and

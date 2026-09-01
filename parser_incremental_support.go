@@ -71,7 +71,9 @@ func (t *incrementalParseTiming) toProfile() IncrementalParseProfile {
 		LastTokenEndByte:                    t.lastTokenEndByte,
 		ExpectedEOFByte:                     t.expectedEOFByte,
 		ArenaBytesAllocated:                 t.arenaBytesAllocated,
+		ArenaBaselineBytes:                  t.arenaBaselineBytes,
 		ScratchBytesAllocated:               t.scratchBytesAllocated,
+		ScratchBaselineBytes:                t.scratchBaselineBytes,
 		EntryScratchBytesAllocated:          int64(t.entryScratchBytesAllocated),
 		GSSBytesAllocated:                   int64(t.gssBytesAllocated),
 		SingleStackIterations:               t.singleStackIterations,
@@ -178,7 +180,9 @@ func (t *incrementalParseTiming) addAttempt(other *incrementalParseTiming) {
 	}
 	t.tokensConsumed += other.tokensConsumed
 	t.arenaBytesAllocated += other.arenaBytesAllocated
+	t.arenaBaselineBytes += other.arenaBaselineBytes
 	t.scratchBytesAllocated += other.scratchBytesAllocated
+	t.scratchBaselineBytes += other.scratchBaselineBytes
 	t.entryScratchBytesAllocated += other.entryScratchBytesAllocated
 	t.gssBytesAllocated += other.gssBytesAllocated
 	t.singleStackIterations += other.singleStackIterations

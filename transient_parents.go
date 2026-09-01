@@ -103,6 +103,20 @@ func (s *transientParentScratch) owns(node *Node) bool {
 	return false
 }
 
+func (s *transientParentScratch) ownsActive(node *Node) bool {
+	if s == nil || node == nil {
+		return false
+	}
+	ptr := unsafe.Pointer(node)
+	for i := range s.slabs {
+		slab := &s.slabs[i]
+		if usedArenaSliceContainsPointer(slab.data, slab.used, ptr) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *transientParentScratch) materializeEntriesUntil(entries []stackEntry, arena *nodeArena, childScratch *transientChildScratch, p *Parser) ParseStopReason {
 	return s.materializeEntriesModeUntil(entries, arena, childScratch, p, false)
 }

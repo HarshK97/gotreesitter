@@ -355,14 +355,21 @@ func TestParserScratchReplayConcurrentProductionPages(t *testing.T) {
 }
 
 type nestedBudgetScratchTokenSource struct {
-	parser   *Parser
-	delegate TokenSource
-	called   bool
+	parser          *Parser
+	delegate        TokenSource
+	called          bool
+	sawOuterScratch bool
+	restoredScratch bool
 }
 
 func (s *nestedBudgetScratchTokenSource) Next() Token {
 	if !s.called {
 		s.called = true
+		outerReduce := s.parser.reduceScratch
+		outerMerge := s.parser.mergeScratch
+		outerBudget := s.parser.budgetScratch
+		outerGoCompatFrames := s.parser.goCompatFrames
+		s.sawOuterScratch = outerReduce != nil && outerMerge != nil && outerBudget != nil && outerGoCompatFrames != nil
 		tree, err := s.parser.Parse([]byte("1+2"))
 		if err != nil {
 			panic(err)
@@ -370,6 +377,10 @@ func (s *nestedBudgetScratchTokenSource) Next() Token {
 		if tree != nil {
 			tree.Release()
 		}
+		s.restoredScratch = s.parser.reduceScratch == outerReduce &&
+			s.parser.mergeScratch == outerMerge &&
+			s.parser.budgetScratch == outerBudget &&
+			s.parser.goCompatFrames == outerGoCompatFrames
 	}
 	return s.delegate.Next()
 }
@@ -394,6 +405,12 @@ func TestParserScratchReplayNestedBudgetScratchRestoresProductionScope(t *testin
 		t.Fatal("nested-scope parse returned no tree")
 	}
 	tree.Release()
+	if !ts.sawOuterScratch {
+		t.Fatal("outer parse did not install all parser scratch pointers")
+	}
+	if !ts.restoredScratch {
+		t.Fatal("nested parse did not restore the active outer parser scratch")
+	}
 	if p.budgetScratch != sentinel {
 		t.Fatal("nested parse did not restore the outer budget scratch")
 	}

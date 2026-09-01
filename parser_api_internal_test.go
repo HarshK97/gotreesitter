@@ -1246,6 +1246,29 @@ func TestIncrementalAcceptedErrorBaseMergeRetryReleasesLosingCandidate(t *testin
 	}
 }
 
+func TestIncrementalParseProfileAggregatesMemoryBaselinesAcrossAttempts(t *testing.T) {
+	timing := &incrementalParseTiming{
+		arenaBytesAllocated:   15 << 20,
+		arenaBaselineBytes:    12 << 20,
+		scratchBytesAllocated: 23 << 20,
+		scratchBaselineBytes:  18 << 20,
+	}
+	timing.addAttempt(&incrementalParseTiming{
+		arenaBytesAllocated:   7 << 20,
+		arenaBaselineBytes:    5 << 20,
+		scratchBytesAllocated: 11 << 20,
+		scratchBaselineBytes:  9 << 20,
+	})
+
+	profile := timing.toProfile()
+	if got, want := profile.ArenaBytesAllocated-profile.ArenaBaselineBytes, int64(5<<20); got != want {
+		t.Fatalf("arena growth = %d, want %d", got, want)
+	}
+	if got, want := profile.ScratchBytesAllocated-profile.ScratchBaselineBytes, int64(7<<20); got != want {
+		t.Fatalf("scratch growth = %d, want %d", got, want)
+	}
+}
+
 func TestCertifiedAcceptedErrorRetryStackCeilingScope(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_STACKS", "")
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")

@@ -504,9 +504,9 @@ func w5RunSampleAtOffset(t *testing.T, spec w5LangSpec, tier w5SizeTier, class w
 
 const (
 	// Every W5 lane, including its independent fresh oracle, stays within a
-	// deterministic linear allocation envelope. The fixed term covers parser
-	// scratch slabs retained from an earlier 1MiB lane in this same process;
-	// the per-KiB term covers grammar/tree density variation.
+	// deterministic linear allocation envelope. Runtime baselines exclude
+	// capacity retained by earlier parses. The per-KiB term covers grammar and
+	// tree density variation.
 	//
 	// Provenance (combined slow-tier run, all languages sequential): maximum
 	// incremental-or-fresh arena+scratch was <42.0MB at 20KB, <49.5MB at
@@ -524,7 +524,7 @@ func w5CheckMemoryAllocation(t *testing.T, s w5Sample) {
 	maxMemory := w5MemoryFixedBytes + kib*w5MemoryPerKiBBytes
 	maxNodes := w5PerKiBCeiling(s.EditedLen, w5MaxNodesPerKiB)
 
-	incrMemory := s.Profile.ArenaBytesAllocated + s.Profile.ScratchBytesAllocated
+	incrMemory := w5ProfileMemoryGrowth(s.Profile)
 	if incrMemory > maxMemory || s.Profile.NewNodesAllocated > maxNodes {
 		t.Fatalf("%s/%s/%s/%s: incremental allocation ceiling exceeded: memory=%d/%d newNodes=%d/%d",
 			s.Lang, s.Size, s.Class, s.Position, incrMemory, maxMemory, s.Profile.NewNodesAllocated, maxNodes)
@@ -536,10 +536,57 @@ func w5CheckMemoryAllocation(t *testing.T, s w5Sample) {
 			s.Lang, s.Size, s.Class, s.Position, fresh.ArenaBytesAllocated, fresh.ScratchBytesAllocated,
 			fresh.EntryScratchBytesAllocated, fresh.GSSBytesAllocated, fresh.NodesAllocated)
 	}
-	freshMemory := fresh.ArenaBytesAllocated + fresh.ScratchBytesAllocated
+	freshMemory := w5RuntimeMemoryGrowth(fresh)
 	if freshMemory > maxMemory || uint64(fresh.NodesAllocated) > maxNodes {
 		t.Fatalf("%s/%s/%s/%s: fresh-oracle allocation ceiling exceeded: memory=%d/%d nodes=%d/%d",
 			s.Lang, s.Size, s.Class, s.Position, freshMemory, maxMemory, fresh.NodesAllocated, maxNodes)
+	}
+}
+
+func w5MemoryGrowth(arenaAllocated, arenaBaseline, scratchAllocated, scratchBaseline int64) int64 {
+	arenaGrowth := arenaAllocated - arenaBaseline
+	if arenaGrowth < 0 {
+		arenaGrowth = 0
+	}
+	scratchGrowth := scratchAllocated - scratchBaseline
+	if scratchGrowth < 0 {
+		scratchGrowth = 0
+	}
+	return arenaGrowth + scratchGrowth
+}
+
+func w5ProfileMemoryGrowth(profile gts.IncrementalParseProfile) int64 {
+	return w5MemoryGrowth(
+		profile.ArenaBytesAllocated,
+		profile.ArenaBaselineBytes,
+		profile.ScratchBytesAllocated,
+		profile.ScratchBaselineBytes,
+	)
+}
+
+func w5RuntimeMemoryGrowth(runtime gts.ParseRuntime) int64 {
+	return w5MemoryGrowth(
+		runtime.ArenaBytesAllocated,
+		runtime.ArenaBaselineBytes,
+		runtime.ScratchBytesAllocated,
+		runtime.ScratchBaselineBytes,
+	)
+}
+
+func TestW5ParseMemoryGrowthExcludesRetainedPoolCapacity(t *testing.T) {
+	runtime := gts.ParseRuntime{
+		ArenaBytesAllocated:   15 << 20,
+		ArenaBaselineBytes:    12 << 20,
+		ScratchBytesAllocated: 23 << 20,
+		ScratchBaselineBytes:  18 << 20,
+	}
+	if got, want := w5RuntimeMemoryGrowth(runtime), int64(8<<20); got != want {
+		t.Fatalf("memory growth=%d, want %d", got, want)
+	}
+	runtime.ArenaBaselineBytes = runtime.ArenaBytesAllocated + 1
+	runtime.ScratchBaselineBytes = runtime.ScratchBytesAllocated + 1
+	if got := w5RuntimeMemoryGrowth(runtime); got != 0 {
+		t.Fatalf("negative growth clamp=%d, want 0", got)
 	}
 }
 
@@ -770,9 +817,9 @@ const (
 	w5TransientMaxRecoverChecksPerKiB = 64
 	w5TransientMaxRetryAttempts       = 1
 	w5TransientMaxStacks              = 6
-	// The transient lane remains tighter than the general envelope. Warm-process
-	// maxima were <32.7MB, <40.6MB, and <135.4MB at 20KB/137KB/1MiB; these
-	// constants yield approximately 37.0MB, 56.2MB, and 201.5MB respectively.
+	// The transient lane remains tighter than the general envelope. Runtime
+	// baselines exclude capacity retained by unrelated parses. The constants
+	// yield approximately 37.0MB, 56.2MB, and 201.5MB for the three tiers.
 	w5TransientMemoryFixedBytes  int64 = 32 << 20
 	w5TransientMemoryPerKiBBytes int64 = 160 << 10
 )
@@ -810,7 +857,7 @@ func w5CheckTransientErrorWork(t *testing.T, s w5Sample) {
 			p.MaxStacksSeen, w5TransientMaxStacks)
 	}
 	kib := int64((s.EditedLen + 1023) / 1024)
-	memory := p.ArenaBytesAllocated + p.ScratchBytesAllocated
+	memory := w5ProfileMemoryGrowth(p)
 	maxMemory := w5TransientMemoryFixedBytes + kib*w5TransientMemoryPerKiBBytes
 	if memory > maxMemory {
 		t.Fatalf("%s/%s/%s-transient-error/%s: arena+scratch memory=%d exceeds affine ceiling %d",
