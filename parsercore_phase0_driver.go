@@ -1234,9 +1234,11 @@ type diagnosticParserCoreHeader struct {
 
 // diagnosticParserCoreVersionState holds immutable state for one header.
 // Keep it separate from the fixed-size header so lexer ownership can grow
-// without changing the header layout.
+// without changing the header layout. Region updates publish a new wrapper
+// while preserving the lexer snapshot, and snapshot updates do the reverse.
 type diagnosticParserCoreVersionState struct {
-	s3Region *diagnosticParserCoreS3Region
+	s3Region      *diagnosticParserCoreS3Region
+	relexSnapshot *diagnosticParserCoreVersionLexerSnapshot
 }
 
 // recoveryRegion returns the optional open strategy-2 region.
@@ -1245,6 +1247,15 @@ func (h diagnosticParserCoreHeader) recoveryRegion() *diagnosticParserCoreS3Regi
 		return nil
 	}
 	return h.versionState.s3Region
+}
+
+// versionLexerSnapshot returns the immutable DFA/scanner state owned by this
+// parser version. The nil value is the single-version fast-path state.
+func (h diagnosticParserCoreHeader) versionLexerSnapshot() *diagnosticParserCoreVersionLexerSnapshot {
+	if h.versionState == nil {
+		return nil
+	}
+	return h.versionState.relexSnapshot
 }
 
 // openRecoveryRegion publishes an open strategy-2 region for this header.
@@ -1261,13 +1272,20 @@ func (h *diagnosticParserCoreHeader) setRecoveryRegion(region *diagnosticParserC
 		h.closeRecoveryRegion()
 		return
 	}
-	h.versionState = &diagnosticParserCoreVersionState{s3Region: region}
+	h.versionState = &diagnosticParserCoreVersionState{
+		s3Region:      cloneDiagnosticParserCoreS3Region(region),
+		relexSnapshot: h.versionLexerSnapshot(),
+	}
 }
 
 // closeRecoveryRegion clears the header's open strategy-2 region.
 func (h *diagnosticParserCoreHeader) closeRecoveryRegion() {
 	if h != nil {
-		h.versionState = nil
+		if snapshot := h.versionLexerSnapshot(); snapshot != nil {
+			h.versionState = &diagnosticParserCoreVersionState{relexSnapshot: snapshot}
+		} else {
+			h.versionState = nil
+		}
 	}
 }
 
@@ -1297,6 +1315,16 @@ func (s *diagnosticParserCoreGenericScheduler) competingRecoveryFrontier() bool 
 		}
 	}
 	return true
+}
+
+// invalidateVerifierHeaderBinding drops the test-only pointer whenever a
+// frontier mutation can replace or compact its backing array.
+func (s *diagnosticParserCoreGenericScheduler) invalidateVerifierHeaderBinding() {
+	if s == nil {
+		return
+	}
+	s.verifierHeaderPtr = nil
+	s.verifierBound = 0
 }
 
 // retireTrailingRecoveryNoActionLineage ports one exact C condense-tail
@@ -1336,6 +1364,7 @@ func (s *diagnosticParserCoreGenericScheduler) retireTrailingRecoveryNoActionLin
 	}
 
 	survivor.clearRecoveryLineage()
+	s.invalidateVerifierHeaderBinding()
 	clear(s.headers[1:])
 	s.headers = s.headers[:1]
 	s.recoveryIsolation = false
@@ -1380,6 +1409,20 @@ type diagnosticParserCoreS3Region struct {
 	startByte uint32
 	endByte   uint32
 	children  []core.SubtreeID
+}
+
+// cloneDiagnosticParserCoreS3Region makes the header's recovery region
+// independent from the caller's region and child backing array.
+func cloneDiagnosticParserCoreS3Region(region *diagnosticParserCoreS3Region) *diagnosticParserCoreS3Region {
+	if region == nil {
+		return nil
+	}
+	owned := *region
+	if region.children != nil {
+		owned.children = make([]core.SubtreeID, len(region.children))
+		copy(owned.children, region.children)
+	}
+	return &owned
 }
 
 func nextDiagnosticParserCoreCleanPathLineage(next *uint16) (uint16, error) {
@@ -1885,10 +1928,23 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 }
 
 type diagnosticParserCorePhaseHead struct {
-	head       core.Head
-	checkpoint core.CheckpointID
-	shifted    bool
-	accepted   bool
+	head         core.Head
+	checkpoint   core.CheckpointID
+	shifted      bool
+	accepted     bool
+	versionState *diagnosticParserCoreVersionState
+}
+
+// clearDiagnosticParserCoreHeaderSuffix clears header values that no longer
+// belong to a logical slice. Keep the range bounded by the prior length.
+func clearDiagnosticParserCoreHeaderSuffix(headers []diagnosticParserCoreHeader, keep int) {
+	if keep < 0 {
+		keep = 0
+	}
+	if keep >= len(headers) {
+		return
+	}
+	clear(headers[keep:])
 }
 
 type diagnosticParserCoreCanonicalScratch struct {
@@ -2007,6 +2063,23 @@ func diagnosticParserCoreCanonicalGroupFlags(header *diagnosticParserCoreHeader)
 
 const diagnosticParserCoreLinearCanonicalLimit = 8
 
+func (s *diagnosticParserCoreCanonicalScratch) headerBufferFor(target, length int) []diagnosticParserCoreHeader {
+	previous := s.headerBuffers[target]
+	if length < len(previous) {
+		clearDiagnosticParserCoreHeaderSuffix(previous, length)
+	}
+	if cap(previous) < length {
+		// The previous logical contents become unreachable from this buffer when
+		// it grows into a different backing array.
+		clear(previous)
+		if length <= len(s.inlineHeaders[target]) {
+			return s.inlineHeaders[target][:length]
+		}
+		return make([]diagnosticParserCoreHeader, length)
+	}
+	return previous[:length]
+}
+
 func (s *diagnosticParserCoreCanonicalScratch) canonicalize(compact *core.Core, headers []diagnosticParserCoreHeader) ([]diagnosticParserCoreHeader, error) {
 	out, _, err := s.canonicalizeWithMutation(compact, headers)
 	return out, err
@@ -2022,16 +2095,7 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeWithMutation(
 	if len(headers) != 0 && cap(s.headerBuffers[target]) != 0 && &headers[0] == &s.headerBuffers[target][:1][0] {
 		target ^= 1
 	}
-	normalized := s.headerBuffers[target]
-	if cap(normalized) < len(headers) {
-		if len(headers) <= len(s.inlineHeaders[target]) {
-			normalized = s.inlineHeaders[target][:len(headers)]
-		} else {
-			normalized = make([]diagnosticParserCoreHeader, len(headers))
-		}
-	} else {
-		normalized = normalized[:len(headers)]
-	}
+	normalized := s.headerBufferFor(target, len(headers))
 	copy(normalized, headers)
 	s.headerBuffers[target] = normalized
 	// Single-head frontiers never reach canonicalizeLinear/canonicalizeMapped,
@@ -2042,9 +2106,13 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeWithMutation(
 	// copy above still runs unchanged, since the aliasing check above and on
 	// the next call depends on the returned slice living in s.headerBuffers.
 	if len(normalized) == 1 {
+		clear(s.keys)
+		s.keys = s.keys[:0]
 		header := &normalized[0]
 		state, byteOffset, err := compact.Boundary(header.head)
 		if err != nil {
+			clear(normalized)
+			s.headerBuffers[target] = normalized[:0]
 			return nil, 0, err
 		}
 		if canonical, ok := compact.CanonicalBoundary(state, byteOffset, header.shifted, header.checkpoint); ok {
@@ -2054,25 +2122,37 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeWithMutation(
 		s.nextBuffer = uint8(target ^ 1)
 		return normalized, 0, nil
 	}
+	previousKeys := s.keys
 	if cap(s.keys) < len(headers) {
+		clear(previousKeys)
 		if len(headers) <= len(s.inlineKeys) {
 			s.keys = s.inlineKeys[:len(headers)]
 		} else {
 			s.keys = make([]diagnosticParserCorePhaseHead, len(headers))
 		}
 	} else {
+		if len(previousKeys) > len(headers) {
+			clear(previousKeys[len(headers):])
+		}
 		s.keys = s.keys[:len(headers)]
 	}
 	for index := range normalized {
 		header := &normalized[index]
 		state, byteOffset, err := compact.Boundary(header.head)
 		if err != nil {
+			clear(normalized)
+			clear(s.keys)
+			s.headerBuffers[target] = normalized[:0]
+			s.keys = s.keys[:0]
 			return nil, 0, err
 		}
 		if canonical, ok := compact.CanonicalBoundary(state, byteOffset, header.shifted, header.checkpoint); ok {
 			header.head = canonical
 		}
-		key := diagnosticParserCorePhaseHead{head: header.head, shifted: header.shifted, accepted: header.accepted, checkpoint: header.checkpoint}
+		key := diagnosticParserCorePhaseHead{
+			head: header.head, shifted: header.shifted, accepted: header.accepted,
+			checkpoint: header.checkpoint, versionState: header.versionState,
+		}
 		s.keys[index] = key
 	}
 	var out []diagnosticParserCoreHeader
@@ -2087,6 +2167,10 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeWithMutation(
 		out, mutation, err = s.canonicalizeMappedCheckedWithMutation(compact, normalized)
 	}
 	if err != nil {
+		clear(normalized)
+		clear(s.keys)
+		s.headerBuffers[target] = normalized[:0]
+		s.keys = s.keys[:0]
 		return nil, 0, err
 	}
 	s.headerBuffers[target] = out
@@ -2114,19 +2198,12 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeRecoveryWithMutation(
 	if len(headers) != 0 && cap(s.headerBuffers[target]) != 0 && &headers[0] == &s.headerBuffers[target][:1][0] {
 		target ^= 1
 	}
-	normalized := s.headerBuffers[target]
-	if cap(normalized) < len(headers) {
-		if len(headers) <= len(s.inlineHeaders[target]) {
-			normalized = s.inlineHeaders[target][:len(headers)]
-		} else {
-			normalized = make([]diagnosticParserCoreHeader, len(headers))
-		}
-	} else {
-		normalized = normalized[:len(headers)]
-	}
+	normalized := s.headerBufferFor(target, len(headers))
 	copy(normalized, headers)
 	for index := range normalized {
 		if _, _, err := compact.Boundary(normalized[index].head); err != nil {
+			clear(normalized)
+			s.headerBuffers[target] = normalized[:0]
 			return nil, 0, err
 		}
 		normalized[index].freshness = 0
@@ -2236,6 +2313,11 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinearCheckedWithMuta
 			break
 		}
 	}
+	clearDiagnosticParserCoreHeaderSuffix(normalized, write)
+	if write < len(s.keys) {
+		clear(s.keys[write:])
+	}
+	s.keys = s.keys[:write]
 	var mutation core.DropCohortProducerMutation
 	if merged {
 		mutation = core.DropCohortProducerLinearCanonicalization
@@ -2322,6 +2404,11 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMappedCheckedWithMuta
 		}
 		write++
 	}
+	clearDiagnosticParserCoreHeaderSuffix(normalized, write)
+	if write < len(s.keys) {
+		clear(s.keys[write:])
+	}
+	s.keys = s.keys[:write]
 	var mutation core.DropCohortProducerMutation
 	if merged {
 		mutation = core.DropCohortProducerMappedCanonicalization
@@ -2444,18 +2531,21 @@ type diagnosticParserCoreGenericScheduler struct {
 	selectedRecoveryAbsorbLineage bool
 	// s5MissingInsertions counts recovery forks created by S5. The counter
 	// bounds zero-width progress across one parse.
-	s5MissingInsertions        uint32
-	tokens                     uint64
-	dispatches                 uint64
-	branchOrder                uint64
-	nextSeq                    uint64
-	nextCleanPathLineage       uint16
-	options                    DiagnosticParserCorePrefixOptions
-	receiptBacking             DiagnosticParserCoreGenericScheduler
-	receipt                    *DiagnosticParserCoreGenericScheduler
-	summaryHeaderScratch       []DiagnosticParserCoreHeaderReceipt
-	headerRollbackScratch      diagnosticParserCoreHeaderRollbackScratch
-	canonicalScratch           diagnosticParserCoreCanonicalScratch
+	s5MissingInsertions   uint32
+	tokens                uint64
+	dispatches            uint64
+	branchOrder           uint64
+	nextSeq               uint64
+	nextCleanPathLineage  uint16
+	options               DiagnosticParserCorePrefixOptions
+	receiptBacking        DiagnosticParserCoreGenericScheduler
+	receipt               *DiagnosticParserCoreGenericScheduler
+	summaryHeaderScratch  []DiagnosticParserCoreHeaderReceipt
+	headerRollbackScratch diagnosticParserCoreHeaderRollbackScratch
+	canonicalScratch      diagnosticParserCoreCanonicalScratch
+	// footprintRefs is reusable poll scratch. It is cleared after every
+	// footprint calculation so the retained backing array owns no state.
+	footprintRefs              []diagnosticParserCoreFootprintRef
 	dispatchScratch            diagnosticParserCoreDispatchScratch
 	conflictScratch            diagnosticParserCoreConflictScratch
 	reductionOutputs           []core.ReductionOutput
@@ -3548,10 +3638,17 @@ func (s *diagnosticParserCoreGenericScheduler) applyCompactEOFRecoveryAdmission(
 	noActionDropsBefore := s.receipt.NoActionDrops
 	receiptBefore := s.eofRecoveryAdmission
 	rollback := func(cause error) (bool, error) {
-		if cap(s.headers) >= len(headersBefore) {
-			s.headers = s.headers[:len(headersBefore)]
-			copy(s.headers, headersBefore[:])
+		s.invalidateVerifierHeaderBinding()
+		current := s.headers
+		if cap(current) < len(headersBefore) {
+			clear(current)
+			current = make([]diagnosticParserCoreHeader, len(headersBefore))
+		} else {
+			clearDiagnosticParserCoreHeaderSuffix(current, len(headersBefore))
+			current = current[:len(headersBefore)]
 		}
+		copy(current, headersBefore[:])
+		s.headers = current
 		s.dispatches, s.work = dispatchesBefore, workBefore
 		s.epochProgress = epochProgressBefore
 		s.acceptedHead = acceptedHeadBefore
@@ -3828,10 +3925,51 @@ func resetDiagnosticParserCoreRetainedSlice[T any](items []T) []T {
 	return items[:0]
 }
 
+func clearDiagnosticParserCoreHeaderBacking(headers []diagnosticParserCoreHeader) {
+	if cap(headers) == 0 {
+		return
+	}
+	clear(headers[:cap(headers)])
+}
+
+func clearDiagnosticParserCorePhaseHeadBacking(heads []diagnosticParserCorePhaseHead) {
+	if cap(heads) == 0 {
+		return
+	}
+	clear(heads[:cap(heads)])
+}
+
+// clearDiagnosticParserCoreGenericSchedulerVersionState drops every retained
+// header and phase-key reference before the scheduler struct is replaced.
+// Callers can retain aliases to these backing arrays, so dropping the fields
+// alone does not release the immutable per-version state they point to.
+func clearDiagnosticParserCoreGenericSchedulerVersionState(scheduler *diagnosticParserCoreGenericScheduler) {
+	if scheduler == nil {
+		return
+	}
+	clearDiagnosticParserCoreHeaderBacking(scheduler.headers)
+	clearDiagnosticParserCoreHeaderBacking(scheduler.seedHeaders[:])
+	clearDiagnosticParserCoreHeaderBacking(scheduler.headerRollbackScratch.headers)
+	clearDiagnosticParserCoreHeaderBacking(scheduler.headerRollbackScratch.inline[:])
+	for _, headers := range scheduler.canonicalScratch.headerBuffers {
+		clearDiagnosticParserCoreHeaderBacking(headers)
+	}
+	for index := range scheduler.canonicalScratch.inlineHeaders {
+		clearDiagnosticParserCoreHeaderBacking(scheduler.canonicalScratch.inlineHeaders[index][:])
+	}
+	clearDiagnosticParserCoreHeaderBacking(scheduler.conflictScratch.outputs)
+	clearDiagnosticParserCoreHeaderBacking(scheduler.conflictScratch.headerAssembly)
+	clearDiagnosticParserCoreHeaderBacking(scheduler.reductionReplacements)
+	clearDiagnosticParserCorePhaseHeadBacking(scheduler.canonicalScratch.keys)
+	clearDiagnosticParserCorePhaseHeadBacking(scheduler.canonicalScratch.inlineKeys[:])
+	clear(scheduler.canonicalScratch.groups)
+}
+
 func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGenericScheduler) error {
 	if scheduler.dispatchScratch.busy || scheduler.conflictScratch.busy {
 		return errors.New("parser-core phase zero: seed scheduler scratch is active")
 	}
+	clearDiagnosticParserCoreGenericSchedulerVersionState(scheduler)
 	summaryHeaders := resetDiagnosticParserCoreRetainedSlice(scheduler.summaryHeaderScratch)
 	dispatchCells := resetDiagnosticParserCoreRetainedSlice(scheduler.dispatchScratch.cells)
 	noActionIndices := resetDiagnosticParserCoreRetainedSlice(scheduler.dispatchScratch.noActionIndices)
@@ -3843,6 +3981,7 @@ func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGe
 	conflictHeaderAssembly := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.headerAssembly)
 	reductionOutputs := resetDiagnosticParserCoreRetainedSlice(scheduler.reductionOutputs)
 	reductionReplacements := resetDiagnosticParserCoreRetainedSlice(scheduler.reductionReplacements)
+	footprintRefs := resetDiagnosticParserCoreRetainedSlice(scheduler.footprintRefs)
 	classifiedBoundaries := resetDiagnosticParserCoreRetainedSlice(scheduler.classifiedBoundaries)
 	condenseCandidates := resetDiagnosticParserCoreRetainedSlice(scheduler.condenseCandidates)
 	electStates := resetDiagnosticParserCoreRetainedSlice(scheduler.electStates)
@@ -3860,6 +3999,7 @@ func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGe
 		},
 		reductionOutputs:      reductionOutputs,
 		reductionReplacements: reductionReplacements,
+		footprintRefs:         footprintRefs,
 		classifiedBoundaries:  classifiedBoundaries,
 		condenseCandidates:    condenseCandidates,
 		electStates:           electStates,
@@ -4331,9 +4471,8 @@ type diagnosticParserCoreDispatchScratch struct {
 // The inline buffer covers the common one-to-eight-header frontier. Wider
 // frontiers retain the existing heap-backed growth path.
 //
-// diagnosticParserCoreHeader is pointer-free today. reset nevertheless clears
-// the retained capacity at the end of the scheduler lifecycle so adding a
-// pointer-bearing field later cannot make this scratch retain parse state.
+// Header values can own immutable per-version state. Clear the populated
+// snapshot range when the scratch operation finishes.
 type diagnosticParserCoreHeaderRollbackScratch struct {
 	inline  [8]diagnosticParserCoreHeader
 	busy    bool
@@ -4366,16 +4505,23 @@ func (scratch *diagnosticParserCoreHeaderRollbackScratch) finish(headers *[]diag
 	if scratch == nil || !scratch.busy {
 		return
 	}
+	snapshot := scratch.headers
 	if rollback && headers != nil {
 		restored := *headers
-		if cap(restored) < len(scratch.headers) {
+		aliasesSnapshot := len(restored) != 0 && len(snapshot) != 0 && &restored[0] == &snapshot[0]
+		if cap(restored) < len(snapshot) {
+			if !aliasesSnapshot {
+				clear(restored)
+			}
 			restored = make([]diagnosticParserCoreHeader, len(scratch.headers))
 		} else {
+			clearDiagnosticParserCoreHeaderSuffix(restored, len(scratch.headers))
 			restored = restored[:len(scratch.headers)]
 		}
 		copy(restored, scratch.headers)
 		*headers = restored
 	}
+	clear(snapshot)
 	scratch.headers = scratch.headers[:0]
 	scratch.busy = false
 }
@@ -4384,7 +4530,7 @@ func (scratch *diagnosticParserCoreHeaderRollbackScratch) reset() {
 	if scratch == nil {
 		return
 	}
-	clear(scratch.headers[:cap(scratch.headers)])
+	clear(scratch.headers)
 	scratch.headers = nil
 	scratch.busy = false
 }
@@ -6106,22 +6252,152 @@ func diagnosticParserCoreSliceAliases[T any](items []T, inline []T) bool {
 	return unsafe.Pointer(&items[:cap(items)][0]) == unsafe.Pointer(&inline[0])
 }
 
+type diagnosticParserCoreFootprintRef struct {
+	pointer unsafe.Pointer
+	kind    uint8
+}
+
+const (
+	diagnosticParserCoreFootprintState uint8 = iota + 1
+	diagnosticParserCoreFootprintRegion
+	diagnosticParserCoreFootprintSnapshot
+)
+
+func appendDiagnosticParserCoreFootprintRef(
+	refs []diagnosticParserCoreFootprintRef,
+	kind uint8,
+	pointer unsafe.Pointer,
+) []diagnosticParserCoreFootprintRef {
+	if pointer == nil {
+		return refs
+	}
+	return append(refs, diagnosticParserCoreFootprintRef{pointer: pointer, kind: kind})
+}
+
+func appendDiagnosticParserCoreVersionFootprintRefs(
+	refs []diagnosticParserCoreFootprintRef,
+	state *diagnosticParserCoreVersionState,
+) []diagnosticParserCoreFootprintRef {
+	if state == nil {
+		return refs
+	}
+	refs = appendDiagnosticParserCoreFootprintRef(refs, diagnosticParserCoreFootprintState, unsafe.Pointer(state))
+	refs = appendDiagnosticParserCoreFootprintRef(refs, diagnosticParserCoreFootprintRegion, unsafe.Pointer(state.s3Region))
+	return appendDiagnosticParserCoreFootprintRef(refs, diagnosticParserCoreFootprintSnapshot, unsafe.Pointer(state.relexSnapshot))
+}
+
+func appendDiagnosticParserCoreHeaderFootprintRefs(
+	refs []diagnosticParserCoreFootprintRef,
+	headers []diagnosticParserCoreHeader,
+) []diagnosticParserCoreFootprintRef {
+	for index := 0; index < cap(headers); index++ {
+		refs = appendDiagnosticParserCoreVersionFootprintRefs(refs, headers[:cap(headers)][index].versionState)
+	}
+	return refs
+}
+
+func appendDiagnosticParserCoreCanonicalScratchFootprintRefs(
+	refs []diagnosticParserCoreFootprintRef,
+	scratch *diagnosticParserCoreCanonicalScratch,
+) []diagnosticParserCoreFootprintRef {
+	if scratch == nil {
+		return refs
+	}
+	for _, key := range scratch.keys {
+		refs = appendDiagnosticParserCoreVersionFootprintRefs(refs, key.versionState)
+	}
+	for key := range scratch.groups {
+		refs = appendDiagnosticParserCoreVersionFootprintRefs(refs, key.versionState)
+	}
+	return refs
+}
+
+func compareDiagnosticParserCoreFootprintRefs(
+	left, right diagnosticParserCoreFootprintRef,
+) int {
+	if left.kind < right.kind {
+		return -1
+	}
+	if left.kind > right.kind {
+		return 1
+	}
+	leftPointer, rightPointer := uintptr(left.pointer), uintptr(right.pointer)
+	if leftPointer < rightPointer {
+		return -1
+	}
+	if leftPointer > rightPointer {
+		return 1
+	}
+	return 0
+}
+
 func diagnosticParserCoreSchedulerFootprintBytes(s *diagnosticParserCoreGenericScheduler) uint64 {
 	if s == nil {
 		return 0
 	}
 	total := uint64(0)
-	add := func(count int, size uintptr) {
-		if count <= 0 {
+	addBytes := func(bytes uint64) {
+		if total == math.MaxUint64 || bytes == 0 {
 			return
 		}
-		bytes := uint64(count) * uint64(size)
 		if math.MaxUint64-total < bytes {
 			total = math.MaxUint64
 			return
 		}
 		total += bytes
 	}
+	add := func(count int, size uintptr) {
+		if count <= 0 || size == 0 || total == math.MaxUint64 {
+			return
+		}
+		countBytes := uint64(count)
+		sizeBytes := uint64(size)
+		if countBytes > math.MaxUint64/sizeBytes {
+			total = math.MaxUint64
+			return
+		}
+		addBytes(countBytes * sizeBytes)
+	}
+	// Header copies share immutable version-state pointers. Count each owned
+	// wrapper, region, and lexer snapshot once across the active frontier,
+	// canonical keys/groups, and retained header scratch. The scheduler-owned
+	// buffer keeps repeated polls allocation-free while growing exactly for a
+	// wider frontier.
+	refs := s.footprintRefs[:0]
+	defer func() {
+		clear(refs)
+		s.footprintRefs = refs[:0]
+	}()
+	refs = appendDiagnosticParserCoreHeaderFootprintRefs(refs, s.headers)
+	refs = appendDiagnosticParserCoreHeaderFootprintRefs(refs, s.headerRollbackScratch.headers)
+	refs = appendDiagnosticParserCoreHeaderFootprintRefs(refs, s.headerRollbackScratch.inline[:])
+	for index := range s.canonicalScratch.inlineHeaders {
+		refs = appendDiagnosticParserCoreHeaderFootprintRefs(refs, s.canonicalScratch.inlineHeaders[index][:])
+		refs = appendDiagnosticParserCoreHeaderFootprintRefs(refs, s.canonicalScratch.headerBuffers[index])
+	}
+	refs = appendDiagnosticParserCoreHeaderFootprintRefs(refs, s.conflictScratch.outputs)
+	refs = appendDiagnosticParserCoreHeaderFootprintRefs(refs, s.conflictScratch.headerAssembly)
+	refs = appendDiagnosticParserCoreHeaderFootprintRefs(refs, s.reductionReplacements)
+	refs = appendDiagnosticParserCoreHeaderFootprintRefs(refs, s.seedHeaders[:])
+	refs = appendDiagnosticParserCoreCanonicalScratchFootprintRefs(refs, &s.canonicalScratch)
+	slices.SortFunc(refs, compareDiagnosticParserCoreFootprintRefs)
+	for index := 0; index < len(refs); {
+		ref := refs[index]
+		next := index + 1
+		for next < len(refs) && compareDiagnosticParserCoreFootprintRefs(ref, refs[next]) == 0 {
+			next++
+		}
+		switch ref.kind {
+		case diagnosticParserCoreFootprintState:
+			addBytes(uint64(unsafe.Sizeof(diagnosticParserCoreVersionState{})))
+		case diagnosticParserCoreFootprintRegion:
+			addBytes(diagnosticParserCoreVersionS3RegionFootprintBytes((*diagnosticParserCoreS3Region)(ref.pointer)))
+		case diagnosticParserCoreFootprintSnapshot:
+			addBytes(diagnosticParserCoreVersionLexerSnapshotFootprintBytes((*diagnosticParserCoreVersionLexerSnapshot)(ref.pointer)))
+		}
+		index = next
+	}
+	add(cap(refs), unsafe.Sizeof(diagnosticParserCoreFootprintRef{}))
 	add(cap(s.headers), unsafe.Sizeof(diagnosticParserCoreHeader{}))
 	add(cap(s.summaryHeaderScratch), unsafe.Sizeof(DiagnosticParserCoreHeaderReceipt{}))
 	add(len(s.headerRollbackScratch.inline), unsafe.Sizeof(diagnosticParserCoreHeader{}))
@@ -6141,13 +6417,6 @@ func diagnosticParserCoreSchedulerFootprintBytes(s *diagnosticParserCoreGenericS
 		add(cap(s.canonicalScratch.keys), unsafe.Sizeof(diagnosticParserCorePhaseHead{}))
 	}
 	add(len(s.canonicalScratch.inlineKeys), unsafe.Sizeof(diagnosticParserCorePhaseHead{}))
-	addBytes := func(bytes uint64) {
-		if math.MaxUint64-total < bytes {
-			total = math.MaxUint64
-			return
-		}
-		total += bytes
-	}
 	addBytes(s.canonicalScratch.groupsRetainedBytes)
 	add(cap(s.dispatchScratch.cells), unsafe.Sizeof(diagnosticParserCoreGenericCell{}))
 	add(cap(s.dispatchScratch.noActionIndices), unsafe.Sizeof(int(0)))
@@ -6216,7 +6485,14 @@ func (s *diagnosticParserCoreGenericScheduler) stopControlMemoryBudgetReason() P
 			footprint = diagnosticParserCoreSchedulerFootprintBytes(s)
 			haveFootprint = true
 		}
-		return footprint*stopControlFootprintChurnRatio >= uint64(bytes)
+		ratio := uint64(stopControlFootprintChurnRatio)
+		scaled := footprint
+		if ratio != 0 && footprint > math.MaxUint64/ratio {
+			scaled = math.MaxUint64
+		} else {
+			scaled = footprint * ratio
+		}
+		return scaled >= uint64(bytes)
 	}
 	if footprintAtLeast(s.options.stopControlMemoryBudgetBytes) {
 		return ParseStopMemoryBudget
@@ -7508,10 +7784,12 @@ func (s *diagnosticParserCoreGenericScheduler) s4TryStackSummaryRecovery(index i
 	absorbHeader.head = scanHead
 	absorbHeader.paused = false
 	absorbHeader.shifted = false
+	s.invalidateVerifierHeaderBinding()
 	s.headers[index] = absorbHeader
 	recoveredHeader := absorbHeader
 	recoveredHeader.creationSeq = s.nextSeq
 	restore := func() {
+		s.invalidateVerifierHeaderBinding()
 		clear(s.headers)
 		s.headers = s.headers[:1]
 		s.headers[0] = original
@@ -7547,6 +7825,7 @@ func (s *diagnosticParserCoreGenericScheduler) s4TryStackSummaryRecovery(index i
 	recoveredHeader.shifted = false
 	s.headers[index].markRecoveryLineage()
 	recoveredHeader.markRecoveryLineage()
+	s.invalidateVerifierHeaderBinding()
 	s.headers = append(s.headers, recoveredHeader)
 	s.recoveryIsolation = true
 	s.nextSeq++
@@ -7684,8 +7963,10 @@ func (s *diagnosticParserCoreGenericScheduler) s5TryMissingTokenInsertion(index 
 	missingHeader := absorbHeader
 	missingHeader.creationSeq = s.nextSeq
 	replacements := [...]diagnosticParserCoreHeader{absorbHeader, missingHeader}
+	s.invalidateVerifierHeaderBinding()
 	s.headers = replaceDiagnosticParserCoreHeader(s.headers, index, replacements[:])
 	restore := func() {
+		s.invalidateVerifierHeaderBinding()
 		clear(s.headers)
 		s.headers = s.headers[:1]
 		s.headers[0] = original
@@ -7978,11 +8259,12 @@ func (s *diagnosticParserCoreGenericScheduler) collapseToRecoveryWinner(winner i
 		s.headers[0].creationSeq < s.headers[1].creationSeq
 	winnerHeader := s.headers[winner]
 	winnerHeader.clearRecoveryLineage()
-	clear(s.headers[:cap(s.headers)])
+	s.invalidateVerifierHeaderBinding()
+	clear(s.headers)
 	for target := range s.canonicalScratch.headerBuffers {
 		buffer := s.canonicalScratch.headerBuffers[target]
 		if cap(buffer) != 0 {
-			clear(buffer[:cap(buffer)])
+			clear(buffer)
 		}
 	}
 	s.headers = s.headers[:1]
@@ -8941,6 +9223,7 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 			convergedReductionSplitDrops++
 		}
 	}
+	s.invalidateVerifierHeaderBinding()
 	write := 0
 	next := 0
 	for read := range s.headers {
@@ -9241,7 +9524,14 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		}
 	}
 	s.reductionOutputs = outputs
-	s.reductionReplacements = s.reductionReplacements[:0]
+	s.invalidateVerifierHeaderBinding()
+	previousReplacements := s.reductionReplacements
+	clear(previousReplacements)
+	s.reductionReplacements = previousReplacements[:0]
+	defer func() {
+		clear(s.reductionReplacements)
+		s.reductionReplacements = s.reductionReplacements[:0]
+	}()
 	replacements := s.reductionReplacements
 	madeFreshProgress := false
 	for outputIndex, output := range outputs {
@@ -9288,7 +9578,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		switch output.Freshness {
 		case core.ReductionUnchanged:
 			if convergedHistory || resurrectionUnproved {
-				if _, err := s.adoptUpdatedReductionSiblingOwned(
+				adopted, err := s.adoptUpdatedReductionSiblingOwned(
 					owner,
 					cell.headerIndex,
 					output.Head,
@@ -9300,19 +9590,24 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 					convergedHistory,
 					resurrectionUnproved,
 					core.DropCohortProducerSiblingAdoption,
-				); err != nil {
+				)
+				if err != nil {
 					return err
 				}
-				if reductionFrontierSequence != 0 {
-					s.attachDiagnosticParserCoreFrontierToHead(output.Head, reductionFrontierSequence)
+				if adopted {
+					if reductionFrontierSequence != 0 {
+						s.attachDiagnosticParserCoreFrontierToHead(output.Head, reductionFrontierSequence)
+					}
+					continue
 				}
 			}
-			continue
 		case core.ReductionNew, core.ReductionUpdated:
 		default:
 			return errors.New("parser-core phase zero: reduction returned invalid freshness")
 		}
-		madeFreshProgress = true
+		if output.Freshness != core.ReductionUnchanged {
+			madeFreshProgress = true
+		}
 		if output.Freshness == core.ReductionUpdated {
 			adopted, err := s.adoptUpdatedReductionSiblingOwned(
 				owner,
@@ -9478,6 +9773,7 @@ func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(
 		return false, errors.New("parser-core phase zero: sibling adoption source is out of range")
 	}
 	sourceFrontier := s.headers[source].frontierSequence
+	sourceVersionState := s.headers[source].versionState
 	var dropCohortRefs core.DropCohortRefSet
 	var convergedReductionSplit, resurrectionUnproved bool
 	switch len(compat) {
@@ -9517,6 +9813,11 @@ func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(
 			continue
 		}
 		header := s.headers[index]
+		if header.versionState != sourceVersionState {
+			// A canonical head does not prove equal lexer history. Keep forks
+			// with different immutable scanner state as separate versions.
+			continue
+		}
 		state, byteOffset, err := s.compact.Boundary(header.head)
 		if err != nil {
 			return false, err
@@ -9652,12 +9953,6 @@ func (s *diagnosticParserCoreGenericScheduler) reconcileGenericConflictOutputs(f
 			}
 			if ok {
 				adopted++
-				continue
-			}
-			if output.freshness == core.ReductionUnchanged {
-				if err := s.compact.RecordDropCohortProducerMutation(owner, core.DropCohortProducerConflictReconciliation); err != nil {
-					return nil, 0, err
-				}
 				continue
 			}
 		}
@@ -9808,6 +10103,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 		headers = append(headers, suffix...)
 	}
 	s.conflictScratch.headerAssembly = headers
+	s.invalidateVerifierHeaderBinding()
 	s.headers = headers
 	s.branchOrder, s.nextSeq = execution.branchOrder, execution.nextSeq
 	adoptedCount := 0
@@ -10285,6 +10581,9 @@ func replaceDiagnosticParserCoreHeader(headers []diagnosticParserCoreHeader, ind
 		headers = headers[:newLen]
 		copy(headers[index+len(replacements):], headers[index+1:oldLen])
 		copy(headers[index:index+len(replacements)], replacements)
+		// A shrink leaves the old tail inside the retained backing array. Clear
+		// only the previously populated tail because headers can own snapshots.
+		clearDiagnosticParserCoreHeaderSuffix(headers[:oldLen], newLen)
 		return headers
 	}
 	out := make([]diagnosticParserCoreHeader, newLen, max(newLen, 2*cap(headers)))
@@ -10325,6 +10624,7 @@ func (s *diagnosticParserCoreGenericScheduler) canonicalizeOwnedWithMutation(own
 			return err
 		}
 	}
+	s.invalidateVerifierHeaderBinding()
 	s.headers = headers
 	s.work.Canonicalizations++
 	if uint64(len(headers)) > s.work.PeakHeaders {

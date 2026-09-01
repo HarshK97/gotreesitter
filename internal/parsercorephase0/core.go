@@ -1277,17 +1277,20 @@ type Core struct {
 	reductionSourceOwner           uint32
 	transactions                   []uint64
 	nextTransaction                uint64
-	classificationPhase            uint64
-	work                           Work
-	popScratch                     popEnumerationScratch
-	reductionScratch               reductionOutputScratch
-	historicalNodeScratch          []NodeID
-	cohortHeadScratch              []Head
-	factorLinkScratch              []linkRecord
-	selectedBuild                  selectedStoreBuildScratch
-	selectedPoolMu                 sync.Mutex
-	selectedPool                   selectedStoreBacking
-	schedulerFrame                 schedulerTransactionFrame
+	// resetGeneration identifies the retained arena lifetime. It changes only
+	// when Reset clears the core, so phase checkpoints can advance independently.
+	resetGeneration       uint64
+	classificationPhase   uint64
+	work                  Work
+	popScratch            popEnumerationScratch
+	reductionScratch      reductionOutputScratch
+	historicalNodeScratch []NodeID
+	cohortHeadScratch     []Head
+	factorLinkScratch     []linkRecord
+	selectedBuild         selectedStoreBuildScratch
+	selectedPoolMu        sync.Mutex
+	selectedPool          selectedStoreBacking
+	schedulerFrame        schedulerTransactionFrame
 	// metadataConstructionAuthenticated remains true only while every compact
 	// subtree was published through the authenticated shift/reduction seams.
 	// Diagnostic generic publication clears it monotonically until Reset.
@@ -2011,6 +2014,7 @@ func New(tables TableView, limits Limits) (*Core, error) {
 	core := &Core{
 		tables: tables, limits: limits, frontier: 1, boundaries: boundaries,
 		checkpoints:                       newCheckpointInterner(limits.MaxCheckpoints, limits.MaxCheckpointBytes),
+		resetGeneration:                   1,
 		classificationPhase:               1,
 		dropCohortOwner:                   owner,
 		dropCohortEpoch:                   1,
@@ -2049,6 +2053,16 @@ func (c *Core) AuthenticationGeneration() uint64 {
 	return c.classificationPhase
 }
 
+// ResetGeneration identifies the current retained Core arena lifetime. It
+// changes only when Reset clears the arena, not when a frontier or checkpoint
+// advances its authentication phase.
+func (c *Core) ResetGeneration() uint64 {
+	if c == nil {
+		return 0
+	}
+	return c.resetGeneration
+}
+
 // Reset returns the compact core to the same empty frontier created by New
 // while retaining its authenticated tables, limits, diagnostic policy, and
 // arena capacities. Reset is deliberately unavailable during an active
@@ -2066,6 +2080,9 @@ func (c *Core) Reset() error {
 	if c.classificationPhase == math.MaxUint64 {
 		return errors.New("parser-core phase zero: classification phase overflow")
 	}
+	if c.resetGeneration == math.MaxUint64 {
+		return errors.New("parser-core phase zero: reset generation overflow")
+	}
 	if c.dropCohortEpoch == math.MaxUint64 {
 		return errors.New("parser-core phase zero: drop-cohort epoch overflow")
 	}
@@ -2073,6 +2090,7 @@ func (c *Core) Reset() error {
 		return err
 	}
 	c.classificationPhase++
+	c.resetGeneration++
 	if err := c.advanceDropCohortEpoch(); err != nil {
 		return err
 	}

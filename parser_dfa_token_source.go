@@ -2934,10 +2934,19 @@ func (d *dfaTokenSource) CanRelexFromTokenStart(tok Token) bool {
 }
 
 type dfaRelexSnapshot struct {
-	lexerPos      int
-	lexerRow      uint32
-	lexerCol      uint32
-	lexerRangeIdx int
+	lexerPos               int
+	lexerRow               uint32
+	lexerCol               uint32
+	lexerRangeIdx          int
+	externalScannerPresent bool
+
+	// Lexer.scan records the beginning of its most recent failed token
+	// attempt. NextWithErrorRuns uses these coordinates to delimit the next
+	// error run, so a rejected re-lex must restore them with the cursor.
+	failTokenStartPos      int
+	failTokenStartRow      uint32
+	failTokenStartCol      uint32
+	failTokenStartRangeIdx int
 
 	externalPayload []byte
 
@@ -2971,6 +2980,11 @@ func (d *dfaTokenSource) snapshotRelexStateWithExternalBuffer(buf []byte) (dfaRe
 		lexerRow:                    d.lexer.row,
 		lexerCol:                    d.lexer.col,
 		lexerRangeIdx:               d.lexer.includedRangeIdx,
+		externalScannerPresent:      d.hasExternalScanner,
+		failTokenStartPos:           d.lexer.failTokenStartPos,
+		failTokenStartRow:           d.lexer.failTokenStartRow,
+		failTokenStartCol:           d.lexer.failTokenStartCol,
+		failTokenStartRangeIdx:      d.lexer.failTokenStartRangeIdx,
 		lastExternalTokenStartByte:  d.lastExternalTokenStartByte,
 		lastExternalTokenEndByte:    d.lastExternalTokenEndByte,
 		lastExternalTokenValid:      d.lastExternalTokenValid,
@@ -3009,6 +3023,10 @@ func (s dfaRelexSnapshot) restore(d *dfaTokenSource) {
 	d.lexer.row = s.lexerRow
 	d.lexer.col = s.lexerCol
 	d.lexer.includedRangeIdx = s.lexerRangeIdx
+	d.lexer.failTokenStartPos = s.failTokenStartPos
+	d.lexer.failTokenStartRow = s.failTokenStartRow
+	d.lexer.failTokenStartCol = s.failTokenStartCol
+	d.lexer.failTokenStartRangeIdx = s.failTokenStartRangeIdx
 	if d.hasExternalScanner && d.language != nil && d.language.ExternalScanner != nil {
 		d.language.ExternalScanner.Deserialize(d.externalPayload, s.externalPayload)
 	}
