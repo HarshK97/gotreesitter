@@ -4,16 +4,18 @@ package gotreesitter_test
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	gts "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-// TestDiagnosticParserCoreVersionLexerProductionActivation proves the
-// production fresh-full scheduler preempts the shared ragged pass before the
-// wide-token sibling reduces, while recording both owned lexer requests.
+const versionLexerProductionSource = "a<(A<#/x/#)"
+
+// TestDiagnosticParserCoreVersionLexerProductionActivation proves that the
+// fresh-full scheduler owns each lexer cursor after a width disagreement. The
+// shared pass consumes '<#' at byte 4. Both retained versions consume '<' from
+// their own cursors. One lineage then shifts '#' and reaches EOF acceptance.
 func TestDiagnosticParserCoreVersionLexerProductionActivation(t *testing.T) {
 	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
 	entry := grammars.DetectLanguageByName("swift")
@@ -21,129 +23,105 @@ func TestDiagnosticParserCoreVersionLexerProductionActivation(t *testing.T) {
 		t.Fatal("swift grammar is unavailable")
 	}
 	receipt, err := gts.DiagnosticParserCoreVersionLexerProductionActivationForTest(
-		entry.Language(), []byte("a<A<#"),
+		entry.Language(), []byte(versionLexerProductionSource),
 	)
 	if err != nil {
 		t.Fatalf("production scheduler: %v", err)
 	}
-	if !strings.HasPrefix(receipt.Stop.Detail, gts.DiagnosticParserCoreOwnedDispatchPendingDetailForTest()) {
-		t.Fatalf("scheduler stop detail=%q, want owned-dispatch-pending activation", receipt.Stop.Detail)
+	if receipt.Acceptance == nil {
+		t.Fatalf("owned lexer route did not accept: stop=%+v", receipt.Stop)
 	}
-	if receipt.PerVersionLexRequests != 2 || receipt.PerVersionLexRestores != 2 ||
-		receipt.PerVersionLexPublications != 6 || receipt.PerVersionLexAcceptedRaggedSpans != 0 {
-		t.Fatalf("published lexer counters=%d/%d/%d/%d, want 2/2/6/0",
+	if receipt.Stop.Detail != "" {
+		t.Fatalf("accepted scheduler retained stop detail %q", receipt.Stop.Detail)
+	}
+	work := receipt.Acceptance.Work
+	if receipt.PerVersionLexRequests != 4 || receipt.PerVersionLexRestores != 4 ||
+		receipt.PerVersionLexPublications != 14 || receipt.PerVersionLexAcceptedRaggedSpans != 3 ||
+		receipt.PerVersionLexViabilityDrops != 1 {
+		t.Fatalf("published lexer counters=%d/%d/%d/%d/%d, want 4/4/14/3/1",
 			receipt.PerVersionLexRequests, receipt.PerVersionLexRestores,
-			receipt.PerVersionLexPublications, receipt.PerVersionLexAcceptedRaggedSpans)
+			receipt.PerVersionLexPublications, receipt.PerVersionLexAcceptedRaggedSpans,
+			receipt.PerVersionLexViabilityDrops)
 	}
-	if receipt.Stop.Work.PerVersionLexRequests != 2 || receipt.Stop.Work.PerVersionLexRestores != 2 ||
-		receipt.Stop.Work.PerVersionLexPublications != 6 || receipt.Stop.Work.PerVersionLexAcceptedRaggedSpans != 0 {
-		t.Fatalf("stop lexer counters=%d/%d/%d/%d, want 2/2/6/0",
-			receipt.Stop.Work.PerVersionLexRequests, receipt.Stop.Work.PerVersionLexRestores,
-			receipt.Stop.Work.PerVersionLexPublications, receipt.Stop.Work.PerVersionLexAcceptedRaggedSpans)
+	if work.PerVersionLexRequests != 4 || work.PerVersionLexRestores != 4 ||
+		work.PerVersionLexPublications != 14 || work.PerVersionLexAcceptedRaggedSpans != 3 ||
+		work.PerVersionLexViabilityDrops != 1 {
+		t.Fatalf("acceptance lexer counters=%d/%d/%d/%d/%d, want 4/4/14/3/1",
+			work.PerVersionLexRequests, work.PerVersionLexRestores,
+			work.PerVersionLexPublications, work.PerVersionLexAcceptedRaggedSpans,
+			work.PerVersionLexViabilityDrops)
 	}
-	if receipt.PeakLiveVersions != 2 || receipt.Stop.Work.PeakLiveVersions != 2 {
-		t.Fatalf("peak live versions=%d/%d, want 2/2", receipt.PeakLiveVersions, receipt.Stop.Work.PeakLiveVersions)
+	if receipt.PeakLiveVersions != 2 || work.PeakLiveVersions != 2 {
+		t.Fatalf("peak live versions=%d/%d, want 2/2", receipt.PeakLiveVersions, work.PeakLiveVersions)
 	}
-	if got := receipt.Stop.Work.Reductions; got != 2 {
-		t.Fatalf("shared reductions=%d, want 2 before state-524 reduction", got)
+	if work.NoActionDrops != 1 || work.ConvergedReductionSplitDrops != 0 || work.ConvergedCoverageDrops != 0 {
+		t.Fatalf("drop classes=%d/%d/%d, want viability-only 1/0/0",
+			work.NoActionDrops, work.ConvergedReductionSplitDrops, work.ConvergedCoverageDrops)
 	}
-	if receipt.Stop.ElectionIndex < 0 || receipt.Stop.ElectionIndex >= len(receipt.Elections) {
-		t.Fatalf("stop election index=%d outside %d elections", receipt.Stop.ElectionIndex, len(receipt.Elections))
+
+	if len(receipt.Elections) < 5 {
+		t.Fatalf("elections=%d, want activation election", len(receipt.Elections))
 	}
-	election := receipt.Elections[receipt.Stop.ElectionIndex]
-	// Elections record the parser states at token-election start. The shared
-	// state 10 reduces later in this same election into headers 47 and 524.
-	if len(election.States) != 1 || election.States[0] != 10 {
-		t.Fatalf("activation election index=%d states=%v, want initial state [10]", receipt.Stop.ElectionIndex, election.States)
+	activation := receipt.Elections[4]
+	if len(activation.States) != 1 || activation.States[0] != 10 {
+		t.Fatalf("activation states=%v, want [10]", activation.States)
 	}
-	if election.Token.Symbol != 217 || election.Token.StartByte != 3 || election.Token.EndByte != 5 || !election.Token.ExternalScannerToken {
-		t.Fatalf("activation election token=%+v, want external 217 over bytes 3..5", election.Token)
-	}
-	if receipt.Stop.Token != election.Token || receipt.Stop.ElectionIndex != electionIndexForRequests(receipt.VersionLexerRequests) {
-		t.Fatalf("stop/election identity: stop=(election=%d token=%+v), election token=%+v, request election=%d",
-			receipt.Stop.ElectionIndex, receipt.Stop.Token, election.Token, electionIndexForRequests(receipt.VersionLexerRequests))
+	if activation.Token.Symbol != 217 || activation.Token.StartByte != 4 ||
+		activation.Token.EndByte != 6 || !activation.Token.ExternalScannerToken {
+		t.Fatalf("activation token=%+v, want external 217 over bytes 4..6", activation.Token)
 	}
 	assertNineByteCheckpoint := func(label string, checkpoint gts.DiagnosticParserCoreScannerCheckpoint) {
 		t.Helper()
-		if checkpoint.Length != 9 {
-			t.Fatalf("%s checkpoint length=%d, want exact Swift length 9", label, checkpoint.Length)
-		}
-		if checkpoint.SHA256 == [32]byte{} {
-			t.Fatalf("%s checkpoint has an empty digest", label)
+		if checkpoint.Length != 9 || checkpoint.SHA256 == [32]byte{} {
+			t.Fatalf("%s checkpoint=%+v, want authenticated Swift state", label, checkpoint)
 		}
 	}
-	assertNineByteCheckpoint("election scanner-before", election.ScannerBefore)
-	assertNineByteCheckpoint("election scanner-after", election.ScannerAfter)
-	if !election.CurrentCheckpointValid || election.CurrentCheckpointStart != election.ScannerBefore || election.CurrentCheckpointEnd != election.ScannerAfter {
-		t.Fatalf("activation election lost scanner checkpoint identity: %+v", election)
-	}
-	if election.CurrentCheckpointBytes != [2]uint32{3, 5} {
-		t.Fatalf("activation election checkpoint bytes=%v, want [3 5]", election.CurrentCheckpointBytes)
-	}
+	assertNineByteCheckpoint("activation before", activation.ScannerBefore)
+	assertNineByteCheckpoint("activation after", activation.ScannerAfter)
+
 	want := map[gts.StateID]struct {
-		symbol   gts.Symbol
-		endByte  uint32
-		external bool
-		internal bool
+		election      int
+		symbol        gts.Symbol
+		start, end    uint32
+		external, dfa bool
 	}{
-		47:  {symbol: 35, endByte: 4, internal: true},
-		524: {symbol: 217, endByte: 5, external: true},
+		441:  {election: 4, symbol: 35, start: 4, end: 5, dfa: true},
+		1554: {election: 4, symbol: 35, start: 4, end: 5, dfa: true},
+		295:  {election: 5, symbol: 217, start: 5, end: 6, external: true},
+		402:  {election: 5, symbol: gts.Symbol(65535), start: 5, end: 6},
 	}
 	if len(receipt.VersionLexerRequests) != len(want) {
 		t.Fatalf("owned lexer requests=%d, want %d", len(receipt.VersionLexerRequests), len(want))
 	}
-	requestByState := make(map[gts.StateID]gts.DiagnosticParserCoreVersionLexerRequest, len(want))
 	for _, request := range receipt.VersionLexerRequests {
 		expect, ok := want[request.State]
 		if !ok {
-			t.Fatalf("unexpected owned request state=%d", request.State)
+			t.Fatalf("unexpected owned request state=%d: requests=%+v", request.State, receipt.VersionLexerRequests)
 		}
-		if request.Token.Symbol != expect.symbol || request.Token.StartByte != 3 || request.Token.EndByte != expect.endByte {
-			t.Fatalf("state %d token=%+v, want symbol=%d span=3..%d", request.State, request.Token, expect.symbol, expect.endByte)
+		if request.ElectionIndex != expect.election || request.Token.Symbol != expect.symbol ||
+			request.Token.StartByte != expect.start || request.Token.EndByte != expect.end ||
+			request.Token.ExternalScannerToken != expect.external || request.InternalDFAToken != expect.dfa {
+			t.Fatalf("state %d request=%+v, want election=%d symbol=%d span=%d..%d external=%t dfa=%t",
+				request.State, request, expect.election, expect.symbol, expect.start, expect.end,
+				expect.external, expect.dfa)
 		}
-		if request.Token.ExternalScannerToken != expect.external || request.InternalDFAToken != expect.internal {
-			t.Fatalf("state %d provenance external=%t/internal=%t, want external=%t/internal=%t", request.State, request.Token.ExternalScannerToken, request.InternalDFAToken, expect.external, expect.internal)
-		}
-		if request.ElectionIndex != receipt.Stop.ElectionIndex {
-			t.Fatalf("state %d request election=%d, want activation election %d", request.State, request.ElectionIndex, receipt.Stop.ElectionIndex)
-		}
-		assertNineByteCheckpoint(fmt.Sprintf("state %d scanner-before", request.State), request.ScannerBefore)
-		assertNineByteCheckpoint(fmt.Sprintf("state %d scanner-after", request.State), request.ScannerAfter)
-		if request.ScannerBefore != election.ScannerBefore {
-			t.Fatalf("state %d scanner-before=%+v, want shared election-before=%+v", request.State, request.ScannerBefore, election.ScannerBefore)
-		}
-		requestByState[request.State] = request
+		assertNineByteCheckpoint(fmt.Sprintf("state %d before", request.State), request.ScannerBefore)
+		assertNineByteCheckpoint(fmt.Sprintf("state %d after", request.State), request.ScannerAfter)
 	}
-	if len(requestByState) != len(want) {
-		t.Fatalf("owned request state identities=%v, want states 47 and 524", requestByState)
+	if len(receipt.NoActionDrops) != 1 {
+		t.Fatalf("owned viability drops=%d, want 1", len(receipt.NoActionDrops))
 	}
-	if len(receipt.Stop.Headers) != 2 {
-		t.Fatalf("stop headers=%d, want 2 activation headers", len(receipt.Stop.Headers))
+	if got := receipt.NoActionDrops[0].Token; got.Symbol != gts.Symbol(65535) || got.StartByte != 5 || got.EndByte != 6 {
+		t.Fatalf("viability drop token=%+v, want error symbol at 5..6", got)
 	}
-	for index, path := range receipt.Stop.Headers {
-		header := path.Header
-		request, ok := requestByState[header.State]
-		if !ok {
-			t.Fatalf("stop header %d state=%d has no matching owned request", index, header.State)
-		}
-		if header.CreationSeq != request.HeaderCreationSeq || header.ByteOffset != 3 {
-			t.Fatalf("stop header %d identity=%+v, want request seq=%d at byte 3", index, header, request.HeaderCreationSeq)
-		}
-		if header.Checkpoint != election.ScannerAfter.SHA256 {
-			t.Fatalf("stop header %d checkpoint=%x, want shared election-after=%x", index, header.Checkpoint, election.ScannerAfter.SHA256)
-		}
-	}
-}
 
-func electionIndexForRequests(requests []gts.DiagnosticParserCoreVersionLexerRequest) int {
-	if len(requests) == 0 {
-		return -1
+	acceptance := receipt.Acceptance
+	wantEOF := uint32(len(versionLexerProductionSource))
+	if acceptance.Token.Symbol != 0 || acceptance.Token.StartByte != wantEOF || acceptance.Token.EndByte != wantEOF {
+		t.Fatalf("accepted token=%+v, want EOF at byte %d", acceptance.Token, wantEOF)
 	}
-	index := requests[0].ElectionIndex
-	for _, request := range requests[1:] {
-		if request.ElectionIndex != index {
-			return -1
-		}
+	if !acceptance.Header.Header.Accepted || acceptance.Header.Header.ByteOffset != wantEOF ||
+		acceptance.Header.Header.Shifted || acceptance.Header.Header.Paused {
+		t.Fatalf("accepted header=%+v, want sole closed EOF header", acceptance.Header.Header)
 	}
-	return index
 }

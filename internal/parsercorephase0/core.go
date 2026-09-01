@@ -2053,6 +2053,15 @@ func (c *Core) AuthenticationGeneration() uint64 {
 	return c.classificationPhase
 }
 
+// PhaseScannerCheckpoints returns the current scanner checkpoint binding.
+// The exact flag is true only when start and end authenticate one token.
+func (c *Core) PhaseScannerCheckpoints() (checkpoint, start, end CheckpointID, exact bool) {
+	if c == nil {
+		return 0, 0, 0, false
+	}
+	return c.checkpoint, c.externalTokenScannerStart, c.externalTokenScannerEnd, c.externalTokenScannerExact
+}
+
 // ResetGeneration identifies the current retained Core arena lifetime. It
 // changes only when Reset clears the arena, not when a frontier or checkpoint
 // advances its authentication phase.
@@ -2248,16 +2257,31 @@ func (c *Core) SetPhaseCheckpoint(checkpoint CheckpointID) error {
 }
 
 // SetPhaseExternalTokenScannerCheckpoints binds one election to its exact
-// scanner states. It leaves no exact token proof when either identity fails.
+// scanner states. Validation is atomic. A changed pair advances boundary
+// authentication even when its end checkpoint is unchanged.
 func (c *Core) SetPhaseExternalTokenScannerCheckpoints(start, end CheckpointID) error {
-	if err := c.SetPhaseCheckpoint(end); err != nil {
-		return err
+	if len(c.transactions) != 0 {
+		return errors.New("parser-core phase zero: set checkpoint during active transaction")
+	}
+	if end != 0 {
+		if _, ok := c.checkpoints.record(end); !ok {
+			return errors.New("parser-core phase zero: unknown checkpoint identity")
+		}
 	}
 	if start != 0 {
 		if _, ok := c.checkpoints.record(start); !ok {
 			return errors.New("parser-core phase zero: unknown external token start checkpoint identity")
 		}
 	}
+	if c.checkpoint == end && c.externalTokenScannerExact &&
+		c.externalTokenScannerStart == start && c.externalTokenScannerEnd == end {
+		return nil
+	}
+	if c.classificationPhase == math.MaxUint64 {
+		return errors.New("parser-core phase zero: classification phase overflow")
+	}
+	c.classificationPhase++
+	c.checkpoint = end
 	c.externalTokenScannerStart = start
 	c.externalTokenScannerEnd = end
 	c.externalTokenScannerExact = true

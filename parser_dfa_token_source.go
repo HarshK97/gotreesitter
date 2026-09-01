@@ -3,6 +3,7 @@ package gotreesitter
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2967,6 +2968,30 @@ type dfaRelexSnapshot struct {
 
 	zeroWidthPos   int
 	zeroWidthCount int
+}
+
+func (s dfaRelexSnapshot) equal(other dfaRelexSnapshot) bool {
+	return s.lexerPos == other.lexerPos && s.lexerRow == other.lexerRow &&
+		s.lexerCol == other.lexerCol && s.lexerRangeIdx == other.lexerRangeIdx &&
+		s.externalScannerPresent == other.externalScannerPresent &&
+		s.failTokenStartPos == other.failTokenStartPos &&
+		s.failTokenStartRow == other.failTokenStartRow &&
+		s.failTokenStartCol == other.failTokenStartCol &&
+		s.failTokenStartRangeIdx == other.failTokenStartRangeIdx &&
+		bytes.Equal(s.externalPayload, other.externalPayload) &&
+		s.lastExternalTokenStartByte == other.lastExternalTokenStartByte &&
+		s.lastExternalTokenEndByte == other.lastExternalTokenEndByte &&
+		s.lastExternalTokenValid == other.lastExternalTokenValid &&
+		s.lastExternalTokenWasExtra == other.lastExternalTokenWasExtra &&
+		s.externalTokenEndSameAsStart == other.externalTokenEndSameAsStart &&
+		s.lastTokenStartByte == other.lastTokenStartByte &&
+		s.lastTokenEndByte == other.lastTokenEndByte &&
+		s.lastTokenValid == other.lastTokenValid &&
+		bytes.Equal(s.externalTokenStart, other.externalTokenStart) &&
+		bytes.Equal(s.externalTokenEnd, other.externalTokenEnd) &&
+		s.extZeroPos == other.extZeroPos && s.extZeroState == other.extZeroState &&
+		slices.Equal(s.extZeroTried, other.extZeroTried) &&
+		s.zeroWidthPos == other.zeroWidthPos && s.zeroWidthCount == other.zeroWidthCount
 }
 
 // dfaRelexSnapshotScratch owns the mutable slice backing for one transient

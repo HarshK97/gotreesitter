@@ -3,6 +3,7 @@
 package gotreesitter
 
 import (
+	"reflect"
 	"testing"
 	"unsafe"
 
@@ -28,11 +29,11 @@ func TestDiagnosticParserCorePerVersionStatePublishesImmutableCopies(t *testing.
 	if header.versionState == initialState {
 		t.Fatal("setRecoveryRegion reused the previous immutable wrapper")
 	}
-	if got := header.recoveryRegion(); got != second {
-		t.Fatalf("updated region=%p, want %p", got, second)
+	if got := header.recoveryRegion(); got == second || !reflect.DeepEqual(got, second) {
+		t.Fatalf("updated region=%+v, want an independent copy of %+v", got, second)
 	}
-	if got := copyOfHeader.recoveryRegion(); got != first {
-		t.Fatalf("copied header region=%p, want original %p", got, first)
+	if got := copyOfHeader.recoveryRegion(); got == first || !reflect.DeepEqual(got, first) {
+		t.Fatalf("copied header region=%+v, want an independent copy of %+v", got, first)
 	}
 	if copyOfHeader.versionState != initialState {
 		t.Fatal("updating the live header changed the copied header state")
@@ -50,10 +51,10 @@ func TestDiagnosticParserCorePerVersionStateCloseDoesNotMutateSnapshot(t *testin
 	if header.versionState != nil || header.recoveryRegion() != nil {
 		t.Fatal("closeRecoveryRegion left recovery state live")
 	}
-	if snapshot.versionState == nil || snapshot.recoveryRegion() != region {
+	if snapshot.versionState == nil || snapshot.recoveryRegion() == region || !reflect.DeepEqual(snapshot.recoveryRegion(), region) {
 		t.Fatal("closing the live header changed its copied recovery state")
 	}
-	if snapshot.versionState.s3Region != region {
+	if snapshot.versionState.s3Region != snapshot.recoveryRegion() {
 		t.Fatal("closing the live header mutated the immutable wrapper")
 	}
 }
@@ -71,8 +72,8 @@ func TestDiagnosticParserCorePerVersionStateRollbackRestoresCopy(t *testing.T) {
 	headers[0].setRecoveryRegion(second)
 	scratch.finish(&headers, true)
 
-	if got := headers[0].recoveryRegion(); got != first {
-		t.Fatalf("rolled-back region=%p, want %p", got, first)
+	if got := headers[0].recoveryRegion(); got == first || !reflect.DeepEqual(got, first) {
+		t.Fatalf("rolled-back region=%+v, want an independent copy of %+v", got, first)
 	}
 	if headers[0].versionState != originalState {
 		t.Fatal("rollback did not restore the original immutable wrapper")
