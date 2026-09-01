@@ -511,6 +511,22 @@ func admissionCensusStopDecline(scheduler *diagnosticParserCoreGenericScheduler)
 			detail += "]"
 		}
 	}
+	if scheduler.work.StackSummaryRecoveryForks != 0 {
+		marked := 0
+		openRegions := 0
+		for index := range scheduler.headers {
+			if scheduler.headers[index].isRecoveryLineage() {
+				marked++
+			}
+			if scheduler.headers[index].s3Region != nil {
+				openRegions++
+			}
+		}
+		detail += fmt.Sprintf(
+			" [compact-s4-forks=%d headers=%d marked=%d open_regions=%d stop_header=%d]",
+			scheduler.work.StackSummaryRecoveryForks, len(scheduler.headers), marked, openRegions, stop.HeaderIndex,
+		)
+	}
 	return &diagnosticParserCoreDecline{
 		boundary: stop.Boundary,
 		detail:   detail,
