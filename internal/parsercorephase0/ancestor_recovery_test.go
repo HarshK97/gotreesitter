@@ -345,6 +345,10 @@ func TestRecoverToAncestorStateRejectsAmbiguousDeduplicatedCandidate(t *testing.
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("deduplicated candidates=%+v err=%v, want one", candidates, err)
 	}
+	recoverable, err := compact.StackSummaryCandidateRecoverable(candidates[0])
+	if err != nil || recoverable {
+		t.Fatalf("ambiguous candidate recoverable=%t err=%v, want false nil", recoverable, err)
+	}
 
 	before := captureSchedulerTransactionState(compact)
 	err = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {

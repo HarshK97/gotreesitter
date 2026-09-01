@@ -13,6 +13,12 @@ const StackSummaryMaxDepth = 16
 
 const stackSummaryMaxVisitedNodes = 4096
 
+var (
+	errAncestorRecoveryCandidateAmbiguous = errors.New("parser-core phase zero: ancestor recovery candidate has ambiguous pop paths")
+	errAncestorRecoveryCandidateNoPath    = errors.New("parser-core phase zero: stack-summary candidate has no exact pop path")
+	errAncestorRecoveryCandidateLinkDepth = errors.New("parser-core phase zero: stale stack-summary candidate link depth")
+)
+
 // StackSummaryCandidate authenticates one ordered predecessor summary entry.
 // Depth counts non-extra payloads, exactly like tree-sitter's stack summary.
 // The scheduler performs cost comparison before it looks up an action.
@@ -212,6 +218,26 @@ func (c *Core) RecoverToAncestorStateOwned(owner SchedulerTransactionToken, cand
 	return out, c.finishSchedulerOwned(owner, err)
 }
 
+// StackSummaryCandidateRecoverable reports whether one authenticated summary
+// entry identifies exactly one mutable pop path. Summary deduplication can
+// retain an observational entry that is not safe to mutate.
+func (c *Core) StackSummaryCandidateRecoverable(candidate StackSummaryCandidate) (bool, error) {
+	if c == nil || candidate.owner != c || candidate.generation == 0 ||
+		candidate.generation != c.classificationPhase || candidate.source == 0 {
+		return false, nil
+	}
+	_, _, err := c.uniqueAncestorRecoveryPath(candidate)
+	if errors.Is(err, errAncestorRecoveryCandidateAmbiguous) ||
+		errors.Is(err, errAncestorRecoveryCandidateNoPath) ||
+		errors.Is(err, errAncestorRecoveryCandidateLinkDepth) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (c *Core) recoverToAncestorStateUncheckpointed(candidate StackSummaryCandidate) (Head, error) {
 	if candidate.owner != c {
 		return Head{}, errors.New("parser-core phase zero: stack-summary candidate belongs to a different core")
@@ -337,7 +363,7 @@ func (c *Core) uniqueAncestorRecoveryPath(candidate StackSummaryCandidate) ([]li
 			if len(route) != 0 && node.state == candidate.state {
 				matches++
 				if matches > 1 {
-					return errors.New("parser-core phase zero: ancestor recovery candidate has ambiguous pop paths")
+					return errAncestorRecoveryCandidateAmbiguous
 				}
 				if node.byteOffset != candidate.byteOffset {
 					return errors.New("parser-core phase zero: stale stack-summary candidate position")
@@ -385,10 +411,10 @@ func (c *Core) uniqueAncestorRecoveryPath(candidate StackSummaryCandidate) ([]li
 		return nil, 0, err
 	}
 	if matches == 0 {
-		return nil, 0, errors.New("parser-core phase zero: stack-summary candidate has no exact pop path")
+		return nil, 0, errAncestorRecoveryCandidateNoPath
 	}
 	if selectedTarget == 0 || len(selected) != int(candidate.linkDepth) {
-		return nil, 0, errors.New("parser-core phase zero: stale stack-summary candidate link depth")
+		return nil, 0, errAncestorRecoveryCandidateLinkDepth
 	}
 	return selected, selectedTarget, nil
 }

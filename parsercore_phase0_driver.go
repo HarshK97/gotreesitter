@@ -102,6 +102,10 @@ type DiagnosticParserCorePrefixOptions struct {
 	// name-keyed -- design section 7). Recovery must also be true: this
 	// option alone does not admit the fresh-full runner's recovery guard.
 	allowCompactStrategy2ErrorRegion bool
+	// allowCompactStackSummaryRecovery permits the scheduler to fork one
+	// no-action head into ancestor-recovered and error-absorb lineages.
+	// Language.CompactStackSummaryRecoveryCertified is its artifact gate.
+	allowCompactStackSummaryRecovery bool
 	// allowCompactMissingTokenInsertion permits the scheduler to fork one
 	// no-action head into missing-token and error-absorb recovery lineages.
 	// Language.CompactMissingTokenInsertionCertified is its artifact gate.
@@ -116,8 +120,9 @@ type DiagnosticParserCorePrefixOptions struct {
 	// (ts_parser__select_tree). A compact route that requires a sole accepted
 	// head cannot express that outcome at all.
 	//
-	// The admission route sets this only when one artifact certifies both
-	// recovery mechanisms. Other parses retain the conservative false default.
+	// The admission route sets this only when one artifact certifies strategy 2
+	// and at least one competing recovery mechanism. Other parses retain the
+	// conservative false default.
 	allowCompactRecoveryLineageSelection bool
 	// allowCompactRecoveryTrailingLineageRetirement permits C's condense-tail
 	// removal for one exact two-version S5 frontier. The admission route sets
@@ -374,6 +379,9 @@ type DiagnosticParserCoreHeaderPathReceipt struct {
 // from the compact core's physical arena storage.
 type DiagnosticParserCoreGenericWork struct {
 	Passes uint64
+	// StackSummaryRecoveryForks counts S4 forks that retain both the
+	// ancestor-recovered lineage and the error-absorb lineage.
+	StackSummaryRecoveryForks uint64
 	// RecoveryLineageSelections counts accepting frontiers resolved by pricing
 	// competing recovery lineages instead of declining. Every other
 	// head-removal site in this scheduler accounts for itself; without this
@@ -2386,7 +2394,7 @@ type diagnosticParserCoreGenericScheduler struct {
 	tokenCell          diagnosticParserCoreTokenCell
 	electionIndex      int
 	noLookaheadSteps   uint8
-	// recoveryIsolation becomes true only after S5 publishes its two versions.
+	// recoveryIsolation becomes true only after S4 or S5 publishes two versions.
 	// Clean parses retain the canonical scheduler fast path.
 	recoveryIsolation bool
 	// s3RegionOpened records one S3 recovery episode across this parse. A later
@@ -6612,12 +6620,9 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				// s3TryOpenErrorRegion bails (s3Region already set) and the
 				// existing decline applies -- fail-closed, not a guess.
 			case deeperResumeExists:
-				// A stack entry above depth 0 would accept resumeToken: C's
-				// own election could pick that deeper resume instead of
-				// continuing to absorb (strategy 1, out of S3 scope). Keeping
-				// this region growing here would risk swallowing bytes C's
-				// oracle would instead have left outside the ERROR container
-				// entirely -- decline rather than guess which one C picks.
+				// A stack entry above depth 0 would accept resumeToken. C can
+				// recover there instead of continuing to absorb. This S4 unit
+				// owns only the first no-action fork, so decline here.
 				return &diagnosticParserCoreGenericUnsupported{
 					boundary:    DiagnosticParserCoreRoute,
 					detail:      "generic scheduler s3 error region found a deeper stack-summary resume opportunity outside single-path depth-0 scope",
@@ -6881,13 +6886,20 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				if retired {
 					return nil, nil
 				}
-				// Try the certified S5 competition before standalone S3.
-				// Both routes own only the sole-header, sole-no-action shape.
+				// Try each certified recovery competition before standalone S3.
+				// This foundation owns only the sole-header, sole-no-action shape.
 				// Unmodeled ambiguity falls through to the existing decline.
 				if len(s.headers) == 1 && len(noActionIndices) == 1 {
 					handled, s5Err := s.s5TryMissingTokenInsertion(noActionIndices[0])
 					if s5Err != nil {
 						return nil, s5Err
+					}
+					if handled {
+						return nil, nil
+					}
+					handled, s4Err := s.s4TryStackSummaryRecovery(noActionIndices[0])
+					if s4Err != nil {
+						return nil, s4Err
 					}
 					if handled {
 						return nil, nil
@@ -7372,6 +7384,144 @@ func (s *diagnosticParserCoreGenericScheduler) s5MissingTokenAdmitted() bool {
 		s.options.allowCompactRecoveryLineageSelection
 }
 
+// s4StackSummaryRecoveryAdmitted reports whether the complete ancestor-
+// recovery competition is available. S4 needs the summary, absorb, and
+// acceptance capabilities.
+func (s *diagnosticParserCoreGenericScheduler) s4StackSummaryRecoveryAdmitted() bool {
+	return s.options.Recovery &&
+		s.options.allowCompactStackSummaryRecovery &&
+		s.options.allowCompactStrategy2ErrorRegion &&
+		s.options.allowCompactRecoveryLineageSelection
+}
+
+// s4TryStackSummaryRecovery forks one no-action head into two versions. The
+// original version absorbs the real token through S3. Its copied sibling
+// recovers to the first actionable stack-summary entry. This order matches
+// C's version list: strategy 1 appends its fork after the absorbing version.
+func (s *diagnosticParserCoreGenericScheduler) s4TryStackSummaryRecovery(index int) (handled bool, err error) {
+	if !s.s4StackSummaryRecoveryAdmitted() || len(s.headers) != 1 || index != 0 {
+		return false, nil
+	}
+	original := s.headers[index]
+	if original.s3Region != nil || s.token.Missing || s.token.NoLookahead ||
+		s.token.Symbol == 0 || s.token.Symbol == errorSymbol {
+		return false, nil
+	}
+	if s.nextSeq == math.MaxUint64 {
+		return false, errors.New("parser-core phase zero: recovery fork creation sequence overflow")
+	}
+
+	// C closes productions before it records and scans the stack summary.
+	// Keep the original header unchanged unless the complete fork succeeds.
+	closedHead, closedChanged, closeOK, closeErr := s.s3CloseInProgressProductions(original.head)
+	if closeErr != nil {
+		return false, closeErr
+	}
+	if !closeOK {
+		return false, nil
+	}
+	scanHead := original.head
+	if closedChanged {
+		scanHead = closedHead
+	}
+	_, position, boundaryErr := s.compact.Boundary(scanHead)
+	if boundaryErr != nil {
+		return false, boundaryErr
+	}
+
+	electionSymbol := s.token.Symbol
+	if relexed, relexOK := s.s3ErrorModeRelex(s.token.StartByte); relexOK && relexed.Symbol != errorSymbol {
+		electionSymbol = relexed.Symbol
+	}
+	candidates, summaryErr := s.compact.StackSummaryCandidates(scanHead, cRecoverMaxSummaryDepth)
+	if summaryErr != nil {
+		return false, summaryErr
+	}
+	var elected core.StackSummaryCandidate
+	found := false
+	for candidateIndex, candidate := range candidates {
+		if candidateIndex&63 == 0 {
+			if pollErr := s.pollStopControl(); pollErr != nil {
+				return false, pollErr
+			}
+		}
+		// C skips summary entries at the current group position. This first-fork
+		// unit has no older competing version to apply C's better-version gate to.
+		if candidate.ByteOffset() == position || candidate.ByteOffset() > position {
+			continue
+		}
+		recoverable, recoverableErr := s.compact.StackSummaryCandidateRecoverable(candidate)
+		if recoverableErr != nil {
+			return false, recoverableErr
+		}
+		if !recoverable {
+			continue
+		}
+		row, rowErr := s.compact.Actions(candidate.State(), core.Symbol(electionSymbol))
+		if rowErr != nil {
+			return false, rowErr
+		}
+		if row.Len() == 0 {
+			continue
+		}
+		elected = candidate
+		found = true
+		break
+	}
+	if !found {
+		return false, nil
+	}
+
+	absorbHeader := original
+	absorbHeader.head = scanHead
+	absorbHeader.paused = false
+	absorbHeader.shifted = false
+	s.headers[index] = absorbHeader
+	recoveredHeader := absorbHeader
+	recoveredHeader.creationSeq = s.nextSeq
+	restore := func() {
+		clear(s.headers)
+		s.headers = s.headers[:1]
+		s.headers[0] = original
+	}
+
+	absorbed, absorbErr := s.s3TryOpenErrorRegionWithAlternatives(index, true)
+	if absorbErr != nil {
+		restore()
+		return false, absorbErr
+	}
+	if !absorbed || s.headers[index].s3Region == nil || !s.headers[index].shifted {
+		restore()
+		return false, nil
+	}
+
+	var recoveredHead core.Head
+	recover := func(owner core.SchedulerTransactionToken) error {
+		var recoverErr error
+		recoveredHead, recoverErr = s.compact.RecoverToAncestorStateOwned(owner, elected)
+		return recoverErr
+	}
+	if s.freshSessionOwner != nil {
+		err = recover(*s.freshSessionOwner)
+	} else {
+		err = s.compact.ApplySchedulerAtomic(recover)
+	}
+	if err != nil {
+		restore()
+		return false, err
+	}
+	recoveredHeader.head = recoveredHead
+	recoveredHeader.s3Region = nil
+	recoveredHeader.shifted = false
+	s.headers[index].markRecoveryLineage()
+	recoveredHeader.markRecoveryLineage()
+	s.headers = append(s.headers, recoveredHeader)
+	s.recoveryIsolation = true
+	s.nextSeq++
+	s.work.add(&s.work.StackSummaryRecoveryForks, 1)
+	return true, nil
+}
+
 const (
 	s5MissingTokenMaxSpineDepth  = 4096
 	s5MissingTokenMaxSimulations = 256
@@ -7509,7 +7659,7 @@ func (s *diagnosticParserCoreGenericScheduler) s5TryMissingTokenInsertion(index 
 		s.headers[0] = original
 	}
 
-	absorbed, absorbErr := s.s3TryOpenErrorRegionWithMissingFork(index, true)
+	absorbed, absorbErr := s.s3TryOpenErrorRegionWithAlternatives(index, true)
 	if absorbErr != nil {
 		restore()
 		return false, absorbErr
@@ -7543,13 +7693,14 @@ func (s *diagnosticParserCoreGenericScheduler) s5TryMissingTokenInsertion(index 
 // unchanged: recovery is not admitted, the shape is not a single deterministic
 // path, or absorbing would require the EOF wrap S3 does not own.
 func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegion(index int) (handled bool, err error) {
-	return s.s3TryOpenErrorRegionWithMissingFork(index, false)
+	return s.s3TryOpenErrorRegionWithAlternatives(index, false)
 }
 
-// s3TryOpenErrorRegionWithMissingFork opens the absorb side of an S5 fork
-// when pairedMissing is true. The paired missing lineage replaces S3's normal
-// reason to decline a missing-token opportunity.
-func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegionWithMissingFork(index int, pairedMissing bool) (handled bool, err error) {
+// s3TryOpenErrorRegionWithAlternatives opens an absorb lineage after S4 and
+// S5 have either preserved or precisely rejected their alternatives. When
+// alternativesResolved is false, standalone S3 keeps its conservative
+// missing-token and deeper-summary decline guards.
+func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegionWithAlternatives(index int, alternativesResolved bool) (handled bool, err error) {
 	if !s.s3ErrorRegionAdmitted() {
 		return false, nil
 	}
@@ -7651,7 +7802,7 @@ func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegionWithMissingFo
 	// html_log_7 (a dangling start_tag whose next real token is a valid "</"
 	// it cannot use) needs a MISSING ">" here; absorbing "</" as an ordinary
 	// error-region token instead produced a confirmed wrong tree.
-	if !pairedMissing {
+	if !alternativesResolved {
 		missingOpportunity, missingErr := s.s3MissingTokenOpportunityExists(state)
 		if missingErr != nil {
 			return false, missingErr
@@ -7665,7 +7816,7 @@ func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegionWithMissingFo
 	// retains the strategy-2 version because C keeps that version beside its
 	// recovery forks. The artifact gate must prove that the carried versions
 	// produce C's selected result.
-	if !pairedMissing {
+	if !alternativesResolved {
 		deeperResumeExists, deeperErr := s.compact.AncestorStateWithActionExists(header.head, core.Symbol(s.token.Symbol), cRecoverMaxSummaryDepth)
 		if deeperErr != nil {
 			return false, deeperErr

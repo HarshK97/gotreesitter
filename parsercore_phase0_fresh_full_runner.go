@@ -452,6 +452,7 @@ func (r *parserCoreFreshFullRunner) parseWithObserverAndErrorRuns(
 ) (*Tree, error) {
 	savedRecovery := r.options.Recovery
 	savedErrorRegion := r.options.allowCompactStrategy2ErrorRegion
+	savedStackSummary := r.options.allowCompactStackSummaryRecovery
 	savedMissingInsertion := r.options.allowCompactMissingTokenInsertion
 	savedLineageSelection := r.options.allowCompactRecoveryLineageSelection
 	savedTrailingRetirement := r.options.allowCompactRecoveryTrailingLineageRetirement
@@ -459,6 +460,7 @@ func (r *parserCoreFreshFullRunner) parseWithObserverAndErrorRuns(
 	if !recoveryEnabled {
 		r.options.Recovery = false
 		r.options.allowCompactStrategy2ErrorRegion = false
+		r.options.allowCompactStackSummaryRecovery = false
 		r.options.allowCompactMissingTokenInsertion = false
 		r.options.allowCompactRecoveryLineageSelection = false
 		r.options.allowCompactRecoveryTrailingLineageRetirement = false
@@ -467,6 +469,7 @@ func (r *parserCoreFreshFullRunner) parseWithObserverAndErrorRuns(
 	defer func() {
 		r.options.Recovery = savedRecovery
 		r.options.allowCompactStrategy2ErrorRegion = savedErrorRegion
+		r.options.allowCompactStackSummaryRecovery = savedStackSummary
 		r.options.allowCompactMissingTokenInsertion = savedMissingInsertion
 		r.options.allowCompactRecoveryLineageSelection = savedLineageSelection
 		r.options.allowCompactRecoveryTrailingLineageRetirement = savedTrailingRetirement

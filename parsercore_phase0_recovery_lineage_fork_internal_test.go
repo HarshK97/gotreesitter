@@ -136,9 +136,9 @@ func TestS3SecondIndependentErrorRegionDeclines(t *testing.T) {
 	scheduler.s3RegionOpened = true
 	original := scheduler.headers[0]
 
-	handled, err := scheduler.s3TryOpenErrorRegionWithMissingFork(0, true)
+	handled, err := scheduler.s3TryOpenErrorRegionWithAlternatives(0, true)
 	if err == nil || !strings.Contains(err.Error(), "one error region per parse") {
-		t.Fatalf("s3TryOpenErrorRegionWithMissingFork error=%v, want typed single-region decline", err)
+		t.Fatalf("s3TryOpenErrorRegionWithAlternatives error=%v, want typed single-region decline", err)
 	}
 	if handled || scheduler.headers[0] != original {
 		t.Fatalf("second region changed the frontier: handled=%t header=%+v", handled, scheduler.headers[0])

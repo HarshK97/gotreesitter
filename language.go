@@ -822,6 +822,17 @@ type Language struct {
 	// no-action point exactly as before this stage landed.
 	CompactStrategy2ErrorRegionCertified bool
 
+	// CompactStackSummaryRecoveryCertified permits the compact fresh-full
+	// route to scan C's bounded stack summary at a no-action point. A
+	// successful scan forks the head into an ancestor-recovered lineage and
+	// an error-absorb lineage.
+	//
+	// The fork also requires CompactStrategy2ErrorRegionCertified. Both
+	// lineages continue to acceptance, where C-compatible error pricing selects
+	// the result. Exact built-in profiles must certify the complete competition.
+	// Custom and adapted languages retain the false default.
+	CompactStackSummaryRecoveryCertified bool
+
 	// CompactMissingTokenInsertionCertified permits the compact fresh-full
 	// route to scan for C's missing-token recovery candidate. A successful
 	// scan forks the head into missing and error-absorb lineages.
