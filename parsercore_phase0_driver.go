@@ -5068,9 +5068,10 @@ func (s *diagnosticParserCoreGenericScheduler) activateVersionLexerOwnershipAtRa
 		receiptRequestsBefore = len(s.receipt.VersionLexerRequests)
 	}
 	workBefore := s.work
+	rollback := true
 	defer func() {
-		s.headerRollbackScratch.finish(&s.headers, err != nil)
-		if err == nil {
+		s.headerRollbackScratch.finish(&s.headers, rollback)
+		if !rollback {
 			return
 		}
 		clear(s.versionLexerRequests[requestsBefore:])
@@ -5093,6 +5094,7 @@ func (s *diagnosticParserCoreGenericScheduler) activateVersionLexerOwnershipAtRa
 		}
 	}
 	s.versionLexerOwnershipActive = true
+	rollback = false
 	return nil, nil
 }
 
@@ -5134,7 +5136,7 @@ func (s *diagnosticParserCoreGenericScheduler) bindVersionLexerRequest(
 func (s *diagnosticParserCoreGenericScheduler) withVersionLexerRequest(
 	cell diagnosticParserCoreGenericCell,
 	fn func() error,
-) error {
+) (err error) {
 	request, err := s.versionLexerRequestForCell(cell)
 	if err != nil {
 		return err
@@ -5159,15 +5161,33 @@ func (s *diagnosticParserCoreGenericScheduler) withVersionLexerRequest(
 		}
 		return s.compact.SetPhaseCheckpoint(phaseCheckpointBefore)
 	}
-	if err := s.bindVersionLexerRequest(request); err != nil {
+	if err = s.bindVersionLexerRequest(request); err != nil {
 		return err
 	}
-	runErr := fn()
-	restoreErr := restore()
-	if runErr != nil {
-		return runErr
-	}
-	return restoreErr
+	defer func() {
+		panicValue := recover()
+		restoreErr := restore()
+		if panicValue != nil {
+			if restoreErr != nil {
+				panic(fmt.Errorf(
+					"parser-core phase zero: version lexer callback panic=%v; restore: %w",
+					panicValue,
+					restoreErr,
+				))
+			}
+			panic(panicValue)
+		}
+		if restoreErr != nil {
+			wrapped := fmt.Errorf("parser-core phase zero: restore version lexer request: %w", restoreErr)
+			if err != nil {
+				err = errors.Join(err, wrapped)
+			} else {
+				err = wrapped
+			}
+		}
+	}()
+	err = fn()
+	return err
 }
 
 func (s *diagnosticParserCoreGenericScheduler) publishVersionLexerShiftOnHeaderOwned(
@@ -5221,6 +5241,8 @@ func (s *diagnosticParserCoreGenericScheduler) beginNextVersionLexerElection() e
 	}
 	electionBefore := s.electionIndex
 	workBefore := s.work
+	noLookaheadStepsBefore := s.noLookaheadSteps
+	requireEOFBefore := s.requireEOFPostNoLookaheadRoot
 	s.electionIndex++
 	rollback := true
 	defer func() {
@@ -5235,6 +5257,8 @@ func (s *diagnosticParserCoreGenericScheduler) beginNextVersionLexerElection() e
 		}
 		s.electionIndex = electionBefore
 		s.work = workBefore
+		s.noLookaheadSteps = noLookaheadStepsBefore
+		s.requireEOFPostNoLookaheadRoot = requireEOFBefore
 	}()
 	for index := range s.headers {
 		header := &s.headers[index]
@@ -5245,11 +5269,57 @@ func (s *diagnosticParserCoreGenericScheduler) beginNextVersionLexerElection() e
 			return err
 		}
 	}
+	requestNoLookahead := false
+	requestNoLookaheadSet := false
 	for index := range s.headers {
 		reference := s.headers[index].versionLexerRequestReference()
-		if int(reference) <= requestsBefore || s.versionLexerRequestForHeader(index) == nil {
+		request := s.versionLexerRequestForHeader(index)
+		if int(reference) <= requestsBefore || request == nil {
 			return errors.New("parser-core phase zero: next version lexer request was not authenticated")
 		}
+		if !requestNoLookaheadSet {
+			requestNoLookahead = request.token.NoLookahead
+			requestNoLookaheadSet = true
+		} else if request.token.NoLookahead != requestNoLookahead {
+			return &diagnosticParserCoreDecline{
+				boundary: DiagnosticParserCoreRoute,
+				detail:   "generic scheduler owned lexer election mixed no-lookahead and ordinary tokens",
+			}
+		}
+		if request.token.NoLookahead &&
+			(request.token.Symbol != 0 || request.token.StartByte != request.token.EndByte ||
+				request.token.Missing || request.token.ExternalScannerToken ||
+				request.beforeCheckpoint != request.afterCheckpoint) {
+			return &diagnosticParserCoreDecline{
+				boundary: DiagnosticParserCoreRoute,
+				detail:   "generic scheduler owned lexer no-lookahead token is not authenticated synthetic EOF",
+			}
+		}
+		if requireEOFBefore &&
+			(request.token.Symbol != 0 || request.token.StartByte != request.token.EndByte ||
+				request.token.Missing || request.token.NoLookahead || request.token.ExternalScannerToken) {
+			return &diagnosticParserCoreDecline{
+				boundary: DiagnosticParserCoreRoute,
+				detail:   "generic scheduler root reduction on no-lookahead was not followed by authenticated EOF",
+			}
+		}
+	}
+	if requestNoLookahead {
+		if s.noLookaheadSteps == math.MaxUint8 {
+			return &diagnosticParserCoreDecline{
+				boundary: DiagnosticParserCoreCap,
+				detail:   "generic scheduler no-lookahead re-election cap",
+			}
+		}
+		s.noLookaheadSteps++
+		if s.noLookaheadSteps > maxDiagnosticParserCoreNoLookaheadSteps {
+			return &diagnosticParserCoreDecline{
+				boundary: DiagnosticParserCoreCap,
+				detail:   "generic scheduler no-lookahead re-election cap",
+			}
+		}
+	} else {
+		s.noLookaheadSteps = 0
 	}
 	// Build every owned request before advancing the compact frontier. A
 	// request failure can then restore the scheduler without leaving the Core
@@ -5271,6 +5341,9 @@ func (s *diagnosticParserCoreGenericScheduler) beginNextVersionLexerElection() e
 		}
 	}
 	s.epochProgress = false
+	if requireEOFBefore {
+		s.requireEOFPostNoLookaheadRoot = false
+	}
 	rollback = false
 	return nil
 }
@@ -5284,11 +5357,26 @@ func (s *diagnosticParserCoreGenericScheduler) rejoinSharedLexerFromOwnedHeader(
 	if !header.shifted || header.accepted || snapshot == nil {
 		return errors.New("parser-core phase zero: shared lexer rejoin requires one shifted owned header")
 	}
-	if err := snapshot.restore(s.compact, s.tokenSource); err != nil {
+	if err := snapshot.validate(); err != nil {
 		return err
 	}
 	state, _, err := s.compact.Boundary(header.head)
 	if err != nil {
+		return err
+	}
+	priorDFA := s.tokenSource.snapshotRelexState()
+	priorState := s.tokenSource.state
+	priorGLRStates := s.tokenSource.glrStates
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		priorDFA.restore(s.tokenSource)
+		s.tokenSource.SetParserState(priorState)
+		s.tokenSource.SetGLRStates(priorGLRStates)
+	}()
+	if err := snapshot.restore(s.compact, s.tokenSource); err != nil {
 		return err
 	}
 	s.tokenSource.SetParserState(StateID(state))
@@ -5296,6 +5384,9 @@ func (s *diagnosticParserCoreGenericScheduler) rejoinSharedLexerFromOwnedHeader(
 	if err := s.compact.SetPhaseExternalTokenScannerCheckpoints(snapshot.beforeCheckpoint, snapshot.afterCheckpoint); err != nil {
 		return err
 	}
+	// Every remaining operation is an assignment or a bounded slice clear.
+	// Commit the token source after the last operation that can return an error.
+	committed = true
 	s.checkpointBeforeID = snapshot.beforeCheckpoint
 	s.checkpointID = snapshot.afterCheckpoint
 	s.checkpoint = snapshot.afterCheckpointInfo
@@ -7805,7 +7896,7 @@ func (s *diagnosticParserCoreGenericScheduler) versionLexerNoActionDropEligible(
 		if isDrop {
 			drop++
 			request := s.versionLexerRequestForHeader(index)
-			if request == nil || s.headers[index].shifted || s.headers[index].accepted || s.headers[index].paused {
+			if request == nil || s.headers[index].shifted || s.headers[index].accepted {
 				return false
 			}
 			if !startSet {
@@ -7856,6 +7947,18 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchVersionLexerPassActive() 
 	noActionIndices := s.dispatchScratch.noActionIndices[:0]
 	acceptCell, extraCell, reductionCell, conflictCell, shiftCell := -1, -1, -1, -1, -1
 	for index := range s.headers {
+		if s.headers[index].paused {
+			if s.headers[index].shifted || s.headers[index].accepted ||
+				s.versionLexerRequestForHeader(index) == nil {
+				return &diagnosticParserCoreGenericUnsupported{
+					boundary:    DiagnosticParserCoreRoute,
+					detail:      "generic scheduler owned lexer paused head is not authenticated",
+					headerIndex: index,
+				}, nil
+			}
+			noActionIndices = append(noActionIndices, index)
+			continue
+		}
 		cell, noAction, unsupported, err := s.classifyVersionLexerCell(index, true)
 		if err != nil || unsupported != nil {
 			return unsupported, err
@@ -7955,6 +8058,19 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchVersionLexerPassActive() 
 	}
 	if noAction {
 		return nil, errors.New("parser-core phase zero: version lexer action changed before dispatch")
+	}
+	if unsupported := s.validateGenericNoLookaheadReduction(
+		[]diagnosticParserCoreGenericCell{cell},
+		noActionIndices,
+	); unsupported != nil {
+		return unsupported, nil
+	}
+	if operation == core.ActionRowExtraShift {
+		if unsupported := s.zeroWidthExtraShiftWithoutProgress(
+			[]diagnosticParserCoreGenericCell{cell},
+		); unsupported != nil {
+			return unsupported, nil
+		}
 	}
 	err = s.withVersionLexerRequest(cell, func() error {
 		switch operation {
@@ -11252,6 +11368,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflict(before []Dia
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner core.SchedulerTransactionToken, before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) (err error) {
 	branchOrderBefore, nextSeqBefore := s.branchOrder, s.nextSeq
+	token := cell.dispatchToken(s.token)
+	scannerBefore, scannerAfter := s.currentElection.ScannerBefore, s.currentElection.ScannerAfter
+	affectedHead := cell.boundary.Head()
 	var versionLexerRequest *diagnosticParserCoreVersionLexerRequest
 	if cell.versionLexerRequest != 0 {
 		versionLexerRequest, err = s.versionLexerRequestForCell(cell)
@@ -11265,7 +11384,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 	if err = s.reindexCondenseCandidatesOwned(owner, cell.headerIndex); err != nil {
 		return err
 	}
-	externalStatsBefore, err := s.genericExternalStats()
+	externalStatsBefore, err := s.genericExternalStats(affectedHead, token)
 	if err != nil {
 		return err
 	}
@@ -11275,7 +11394,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 	}
 	defer s.conflictScratch.finish()
 	execution, err := executeDiagnosticParserCoreGenericConflictDetailed(
-		s.compact, owner, s.headers[cell.headerIndex], cell.headerIndex, cell.dispatchToken(s.token), cell.boundary,
+		s.compact, owner, s.headers[cell.headerIndex], cell.headerIndex, token, cell.boundary,
 		s.branchOrder, &s.nextCleanPathLineage,
 		s.options.captureLexerSkippedPrefixProvenance,
 		cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFork,
@@ -11283,6 +11402,17 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 	)
 	if err != nil {
 		return err
+	}
+	for ordinal := range execution.armRanges {
+		for _, output := range execution.arm(ordinal) {
+			if output.shifted {
+				affectedHead = output.head
+				break
+			}
+		}
+		if affectedHead != cell.boundary.Head() {
+			break
+		}
 	}
 	if s.conflictPostExecutionFault != nil {
 		if err := s.conflictPostExecutionFault(); err != nil {
@@ -11429,7 +11559,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 		roundIndex = round.Index
 		s.receipt.Rounds = append(s.receipt.Rounds, round)
 		conflict := DiagnosticParserCoreGenericConflict{
-			ElectionIndex: s.electionIndex, Token: cell.dispatchToken(s.token), HeaderIndex: cell.headerIndex,
+			ElectionIndex: s.electionIndex, Token: token, HeaderIndex: cell.headerIndex,
 			BranchOrderBefore: branchOrderBefore, BranchOrderAfter: s.branchOrder,
 			NextCreationSeqBefore: nextSeqBefore, NextCreationSeqAfter: s.nextSeq,
 			Round: round, Prefix: prefixReceipts,
@@ -11443,7 +11573,14 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 		}
 		s.receipt.Conflicts = append(s.receipt.Conflicts, conflict)
 	}
-	return s.recordGenericExternalShift(externalStatsBefore, roundIndex)
+	return s.recordGenericExternalShift(
+		externalStatsBefore,
+		roundIndex,
+		token,
+		scannerBefore,
+		scannerAfter,
+		affectedHead,
+	)
 }
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []DiagnosticParserCoreHeaderReceipt, cells []diagnosticParserCoreGenericCell) (err error) {
@@ -11472,10 +11609,23 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []Diagn
 }
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner core.SchedulerTransactionToken, before []DiagnosticParserCoreHeaderReceipt, cells []diagnosticParserCoreGenericCell) error {
+	if len(cells) == 0 {
+		return errors.New("parser-core phase zero: empty ordinary shift cohort")
+	}
 	if err := s.reserveDispatches(uint64(len(cells))); err != nil {
 		return err
 	}
-	externalStatsBefore, err := s.genericExternalStats()
+	telemetryCell := 0
+	for index := range cells {
+		if cells[index].dispatchToken(s.token).ExternalScannerToken {
+			telemetryCell = index
+			break
+		}
+	}
+	telemetryToken := cells[telemetryCell].dispatchToken(s.token)
+	scannerBefore, scannerAfter := s.currentElection.ScannerBefore, s.currentElection.ScannerAfter
+	affectedHead := cells[telemetryCell].boundary.Head()
+	externalStatsBefore, err := s.genericExternalStats(affectedHead, telemetryToken)
 	if err != nil {
 		return err
 	}
@@ -11503,6 +11653,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 		if err != nil {
 			return err
 		}
+		affectedHead = heads[telemetryCell]
 		for index := range cells {
 			cell := &cells[index]
 			s.headers[cell.headerIndex].head = heads[index]
@@ -11536,6 +11687,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 			)
 			if err != nil {
 				return err
+			}
+			if index == telemetryCell {
+				affectedHead = head
 			}
 			s.headers[cell.headerIndex].head = head
 			s.headers[cell.headerIndex].shifted = true
@@ -11577,7 +11731,14 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 		roundIndex = round.Index
 		s.receipt.Rounds = append(s.receipt.Rounds, round)
 	}
-	return s.recordGenericExternalShift(externalStatsBefore, roundIndex)
+	return s.recordGenericExternalShift(
+		externalStatsBefore,
+		roundIndex,
+		telemetryToken,
+		scannerBefore,
+		scannerAfter,
+		affectedHead,
+	)
 }
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []DiagnosticParserCoreHeaderReceipt, cells []diagnosticParserCoreGenericCell) (err error) {
@@ -11610,11 +11771,21 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 		if err := s.reserveDispatches(uint64(len(cells))); err != nil {
 			return err
 		}
-		externalStatsBefore, err := s.genericExternalStats()
+		token := cells[0].dispatchToken(s.token)
+		telemetryCell := 0
+		for index := range cells {
+			if cells[index].dispatchToken(s.token).ExternalScannerToken {
+				telemetryCell = index
+				break
+			}
+		}
+		telemetryToken := cells[telemetryCell].dispatchToken(s.token)
+		scannerBefore, scannerAfter := s.currentElection.ScannerBefore, s.currentElection.ScannerAfter
+		affectedHead := cells[telemetryCell].boundary.Head()
+		externalStatsBefore, err := s.genericExternalStats(affectedHead, telemetryToken)
 		if err != nil {
 			return err
 		}
-		token := cells[0].dispatchToken(s.token)
 		isolatedRecovery := s.recoveryIsolation
 		if isolatedRecovery {
 			for index := range cells {
@@ -11638,6 +11809,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 				if shiftErr != nil {
 					return shiftErr
 				}
+				if index == telemetryCell {
+					affectedHead = head
+				}
 				s.headers[cell.headerIndex].head = head
 				s.headers[cell.headerIndex].shifted = true
 				markDiagnosticParserCoreExternalLineage(&s.headers[cell.headerIndex], token)
@@ -11660,6 +11834,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 			if shiftErr != nil {
 				return shiftErr
 			}
+			affectedHead = heads[telemetryCell]
 			for index := range cells {
 				cell := &cells[index]
 				var versionLexerRequest *diagnosticParserCoreVersionLexerRequest
@@ -11716,34 +11891,45 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 			roundIndex = round.Index
 			s.receipt.Rounds = append(s.receipt.Rounds, round)
 		}
-		return s.recordGenericExternalShift(externalStatsBefore, roundIndex)
+		return s.recordGenericExternalShift(
+			externalStatsBefore,
+			roundIndex,
+			telemetryToken,
+			scannerBefore,
+			scannerAfter,
+			affectedHead,
+		)
 	})
 }
 
-func (s *diagnosticParserCoreGenericScheduler) genericExternalStats() (core.Stats, error) {
-	if !s.fullReceipts() || !s.token.ExternalScannerToken {
+func (s *diagnosticParserCoreGenericScheduler) genericExternalStats(
+	head core.Head,
+	token Token,
+) (core.Stats, error) {
+	if !s.fullReceipts() || !token.ExternalScannerToken {
 		return core.Stats{}, nil
 	}
-	if len(s.headers) == 0 {
-		return core.Stats{}, errors.New("parser-core phase zero: external shift receipt requires a scheduler head")
-	}
-	return s.compact.Stats(s.headers[0].head)
+	return s.compact.Stats(head)
 }
 
-func (s *diagnosticParserCoreGenericScheduler) recordGenericExternalShift(before core.Stats, roundIndex int) error {
-	if !s.fullReceipts() || !s.token.ExternalScannerToken {
+func (s *diagnosticParserCoreGenericScheduler) recordGenericExternalShift(
+	before core.Stats,
+	roundIndex int,
+	token Token,
+	scannerBefore DiagnosticParserCoreScannerCheckpoint,
+	scannerAfter DiagnosticParserCoreScannerCheckpoint,
+	affectedHead core.Head,
+) error {
+	if !s.fullReceipts() || !token.ExternalScannerToken {
 		return nil
 	}
-	if len(s.headers) == 0 {
-		return errors.New("parser-core phase zero: external shift receipt requires a scheduler head")
-	}
-	after, err := s.compact.Stats(s.headers[0].head)
+	after, err := s.compact.Stats(affectedHead)
 	if err != nil {
 		return err
 	}
 	external := DiagnosticParserCoreGenericExternalShift{
-		ElectionIndex: s.electionIndex, Token: s.token,
-		ScannerBefore: s.currentElection.ScannerBefore, ScannerAfter: s.currentElection.ScannerAfter,
+		ElectionIndex: s.electionIndex, Token: token,
+		ScannerBefore: scannerBefore, ScannerAfter: scannerAfter,
 		RoundIndex: roundIndex,
 	}
 	for id := before.Subtrees + 1; id <= after.Subtrees; id++ {
