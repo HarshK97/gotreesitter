@@ -517,6 +517,22 @@ func TestBuiltinErlangPackedGSSVersionOrderIssue984Tree(t *testing.T) {
 	}
 }
 
+func BenchmarkBuiltinErlangCompactIssue984(b *testing.B) {
+	language := ErlangLanguage()
+	parser := gotreesitter.NewParser(language)
+	parser.SetAdmissionCandidateRoute(true)
+	source := []byte("000\"0A!A \"A\"=0:A0!)A\"0%0000")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		tree, err := parser.Parse(source)
+		if err != nil {
+			b.Fatal(err)
+		}
+		tree.Release()
+	}
+}
+
 func TestBuiltinErlangPackedGSSVersionOrderPreservesLinearRecovery(t *testing.T) {
 	PurgeEmbeddedLanguageCache()
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })

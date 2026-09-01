@@ -1947,7 +1947,7 @@ func (group diagnosticParserCoreCanonicalGroup) hasFlag(flag uint8) bool {
 	return group.flags&flag != 0
 }
 
-func diagnosticParserCoreCanonicalGroupFlags(header diagnosticParserCoreHeader) uint8 {
+func diagnosticParserCoreCanonicalGroupFlags(header *diagnosticParserCoreHeader) uint8 {
 	var flags uint8
 	if !header.paused {
 		flags |= diagnosticParserCoreCanonicalGroupRunnable
@@ -2001,7 +2001,7 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeWithMutation(
 	// copy above still runs unchanged, since the aliasing check above and on
 	// the next call depends on the returned slice living in s.headerBuffers.
 	if len(normalized) == 1 {
-		header := normalized[0]
+		header := &normalized[0]
 		state, byteOffset, err := compact.Boundary(header.head)
 		if err != nil {
 			return nil, 0, err
@@ -2010,7 +2010,6 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeWithMutation(
 			header.head = canonical
 		}
 		header.freshness = 0
-		normalized[0] = header
 		s.nextBuffer = uint8(target ^ 1)
 		return normalized, 0, nil
 	}
@@ -2023,7 +2022,8 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeWithMutation(
 	} else {
 		s.keys = s.keys[:len(headers)]
 	}
-	for index, header := range normalized {
+	for index := range normalized {
+		header := &normalized[index]
 		state, byteOffset, err := compact.Boundary(header.head)
 		if err != nil {
 			return nil, 0, err
@@ -2032,7 +2032,6 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeWithMutation(
 			header.head = canonical
 		}
 		key := diagnosticParserCorePhaseHead{head: header.head, shifted: header.shifted, accepted: header.accepted, checkpoint: header.checkpoint}
-		normalized[index] = header
 		s.keys[index] = key
 	}
 	var out []diagnosticParserCoreHeader
@@ -2114,7 +2113,8 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinearCheckedWithMuta
 	var groups [diagnosticParserCoreLinearCanonicalLimit]linearGroup
 	groupCount := 0
 	merged := false
-	for index, header := range normalized {
+	for index := range normalized {
+		header := &normalized[index]
 		groupIndex := -1
 		for candidate := 0; candidate < groupCount; candidate++ {
 			if s.keys[groups[candidate].keyIndex] == s.keys[index] {
@@ -2166,12 +2166,13 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinearCheckedWithMuta
 			}
 		}
 		group.frontierSequence = mergeDiagnosticParserCoreFrontier(group.frontierSequence, header.frontierSequence)
-		if diagnosticParserCoreCanonicalCandidateWins(normalized[group.winner], header) {
+		if diagnosticParserCoreCanonicalCandidateWins(&normalized[group.winner], header) {
 			group.winner = index
 		}
 	}
 	write := 0
-	for index, header := range normalized {
+	for index := range normalized {
+		header := &normalized[index]
 		for groupIndex := 0; groupIndex < groupCount; groupIndex++ {
 			group := groups[groupIndex].diagnosticParserCoreCanonicalGroup
 			if group.winner != index {
@@ -2187,7 +2188,9 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinearCheckedWithMuta
 			header.dropCohortRefs = group.dropCohortRefs
 			header.frontierSequence = group.frontierSequence
 			header.blended = group.hasFlag(diagnosticParserCoreCanonicalGroupBlended)
-			normalized[write] = header
+			if write != index {
+				normalized[write] = *header
+			}
 			write++
 			break
 		}
@@ -2218,7 +2221,8 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMappedCheckedWithMuta
 		clear(s.groups)
 	}
 	merged := false
-	for index, header := range normalized {
+	for index := range normalized {
+		header := &normalized[index]
 		key := s.keys[index]
 		group, duplicate := s.groups[key]
 		if !duplicate {
@@ -2250,13 +2254,14 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMappedCheckedWithMuta
 				return nil, 0, err
 			}
 		}
-		if diagnosticParserCoreCanonicalCandidateWins(normalized[group.winner], header) {
+		if diagnosticParserCoreCanonicalCandidateWins(&normalized[group.winner], header) {
 			group.winner = index
 		}
 		s.groups[key] = group
 	}
 	write := 0
-	for index, header := range normalized {
+	for index := range normalized {
+		header := &normalized[index]
 		group := s.groups[s.keys[index]]
 		if group.winner != index {
 			continue
@@ -2271,7 +2276,9 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMappedCheckedWithMuta
 		header.dropCohortRefs = group.dropCohortRefs
 		header.frontierSequence = group.frontierSequence
 		header.blended = group.hasFlag(diagnosticParserCoreCanonicalGroupBlended)
-		normalized[write] = header
+		if write != index {
+			normalized[write] = *header
+		}
 		write++
 	}
 	var mutation core.DropCohortProducerMutation
@@ -2281,7 +2288,7 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMappedCheckedWithMuta
 	return normalized[:write], mutation, nil
 }
 
-func diagnosticParserCoreCanonicalCandidateWins(incumbent, candidate diagnosticParserCoreHeader) bool {
+func diagnosticParserCoreCanonicalCandidateWins(incumbent, candidate *diagnosticParserCoreHeader) bool {
 	incumbentFresh := incumbent.freshness != 0
 	candidateFresh := candidate.freshness != 0
 	return incumbentFresh && !candidateFresh ||
