@@ -6477,7 +6477,8 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 	raggedRelexNoActionHeads := 0
 	var raggedRelexWitness Token // the first ragged-end relex this pass, for the decline detail
 	raggedRelexHeaderIndex := 0  // that same relex's own header index, for the decline receipt
-	for index, header := range s.headers {
+	for index := range s.headers {
+		header := &s.headers[index]
 		if header.shifted || header.accepted {
 			continue
 		}
@@ -6602,7 +6603,6 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				}
 				s.headers[index].head = newHead
 				s.headers[index].s3Region = nil
-				header = s.headers[index]
 			case resumeToken.Symbol == 0:
 				// EOF while a region is open: cRecoverEOFAccept's whole-file
 				// wrap is out of S3 scope (s3TryOpenErrorRegion's doc
