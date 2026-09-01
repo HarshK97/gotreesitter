@@ -5352,6 +5352,9 @@ func (s *diagnosticParserCoreGenericScheduler) rejoinSharedLexerFromOwnedHeader(
 	if s == nil || !s.versionLexerOwnershipActive || len(s.headers) != 1 {
 		return errors.New("parser-core phase zero: shared lexer rejoin requires one owned header")
 	}
+	if s.tokenSource == nil || s.tokenSource.lexer == nil {
+		return errors.New("parser-core phase zero: shared lexer rejoin token source is unavailable")
+	}
 	header := &s.headers[0]
 	snapshot := header.versionLexerSnapshot()
 	if !header.shifted || header.accepted || snapshot == nil {

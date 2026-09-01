@@ -194,6 +194,22 @@ func TestDiagnosticParserCoreOwnedLexerRejoinRestoresTokenSourceOnPhaseFailure(t
 	}
 }
 
+func TestDiagnosticParserCoreOwnedLexerRejoinRejectsMissingTokenSource(t *testing.T) {
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		headers:                     []diagnosticParserCoreHeader{{shifted: true}},
+		versionLexerOwnershipActive: true,
+	}
+	if err := scheduler.rejoinSharedLexerFromOwnedHeader(); err == nil ||
+		!strings.Contains(err.Error(), "token source is unavailable") {
+		t.Fatalf("missing token source error=%v", err)
+	}
+	scheduler.tokenSource = &dfaTokenSource{}
+	if err := scheduler.rejoinSharedLexerFromOwnedHeader(); err == nil ||
+		!strings.Contains(err.Error(), "token source is unavailable") {
+		t.Fatalf("missing lexer error=%v", err)
+	}
+}
+
 func TestDiagnosticParserCoreOwnedLexerActivationRollsBackAfterPanic(t *testing.T) {
 	compact, err := core.New(&genericConflictTable{}, core.Limits{})
 	if err != nil {
