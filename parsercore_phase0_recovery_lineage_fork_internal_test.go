@@ -86,10 +86,10 @@ func TestS5MissingInsertionForkPublishesBothRecoveryLineages(t *testing.T) {
 	if !scheduler.recoveryIsolation {
 		t.Fatal("the fork did not activate recovery isolation")
 	}
-	if scheduler.headers[1].shifted || scheduler.headers[1].s3Region != nil {
+	if scheduler.headers[1].shifted || scheduler.headers[1].recoveryRegion() != nil {
 		t.Fatalf("missing lineage consumed the real token: %+v", scheduler.headers[1])
 	}
-	if !scheduler.headers[0].shifted || scheduler.headers[0].s3Region == nil {
+	if !scheduler.headers[0].shifted || scheduler.headers[0].recoveryRegion() == nil {
 		t.Fatalf("absorb lineage did not consume the real token: %+v", scheduler.headers[0])
 	}
 	if scheduler.headers[0].creationSeq != 3 || scheduler.headers[1].creationSeq != 10 || scheduler.nextSeq != 11 {
@@ -118,7 +118,7 @@ func TestS5MissingInsertionForkPublishesBothRecoveryLineages(t *testing.T) {
 		t.Fatalf("missing payload=%+v, want symbol 2 at byte 1", missing)
 	}
 
-	region := scheduler.headers[0].s3Region
+	region := scheduler.headers[0].recoveryRegion()
 	if len(region.children) != 1 || region.startByte != 1 || region.endByte != 2 {
 		t.Fatalf("absorb region=%+v, want one child over bytes 1..2", region)
 	}
@@ -167,8 +167,8 @@ func TestS3RegionMarkerAllowsClosureOnlyRedispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("s3TryOpenErrorRegion: %v", err)
 	}
-	if !handled || scheduler.headers[0].s3Region != nil {
-		t.Fatalf("closure-only redispatch handled=%t region=%+v", handled, scheduler.headers[0].s3Region)
+	if !handled || scheduler.headers[0].recoveryRegion() != nil {
+		t.Fatalf("closure-only redispatch handled=%t region=%+v", handled, scheduler.headers[0].recoveryRegion())
 	}
 	state, _, err := scheduler.compact.Boundary(scheduler.headers[0].head)
 	if err != nil {

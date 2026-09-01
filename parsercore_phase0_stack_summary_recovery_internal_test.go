@@ -87,10 +87,10 @@ func TestS4StackSummaryRecoveryForkPublishesBothLineages(t *testing.T) {
 	if !scheduler.recoveryIsolation {
 		t.Fatal("the fork did not activate recovery isolation")
 	}
-	if !scheduler.headers[0].shifted || scheduler.headers[0].s3Region == nil {
+	if !scheduler.headers[0].shifted || scheduler.headers[0].recoveryRegion() == nil {
 		t.Fatalf("absorb lineage did not consume the real token: %+v", scheduler.headers[0])
 	}
-	if scheduler.headers[1].shifted || scheduler.headers[1].s3Region != nil {
+	if scheduler.headers[1].shifted || scheduler.headers[1].recoveryRegion() != nil {
 		t.Fatalf("recovered lineage consumed the real token: %+v", scheduler.headers[1])
 	}
 	if scheduler.headers[0].creationSeq != 3 || scheduler.headers[1].creationSeq != 10 || scheduler.nextSeq != 11 {

@@ -233,13 +233,13 @@ func TestRecoveryOpenSegmentsDerivesFromLiveState(t *testing.T) {
 	}
 	header.paused = false
 
-	header.s3Region = &diagnosticParserCoreS3Region{}
+	header.openRecoveryRegion(&diagnosticParserCoreS3Region{})
 	if got := header.recoveryOpenSegments(); got != 1 {
 		t.Fatalf("an opened-but-empty error region reported %d open segments, want 1", got)
 	}
 	// Once the region holds absorbed content, its cost lives in the published
 	// subtrees and the open term must stop applying.
-	header.s3Region = &diagnosticParserCoreS3Region{children: []core.SubtreeID{1}}
+	header.setRecoveryRegion(&diagnosticParserCoreS3Region{children: []core.SubtreeID{1}})
 	if got := header.recoveryOpenSegments(); got != 0 {
 		t.Fatalf("a region with absorbed content reported %d open segments, want 0", got)
 	}
@@ -253,13 +253,13 @@ func TestCollapseToRecoveryWinnerSeatsTheWinnerAndClearsLosers(t *testing.T) {
 	scheduler := newLineageSelectionScheduler(t, true)
 	scheduler.headers = append(scheduler.headers, diagnosticParserCoreHeader{})
 	scheduler.headers[2].markRecoveryLineage()
-	scheduler.headers[2].s3Region = &diagnosticParserCoreS3Region{}
+	scheduler.headers[2].openRecoveryRegion(&diagnosticParserCoreS3Region{})
 	scheduler.recoveryIsolation = true
 	retainedRegion := &diagnosticParserCoreS3Region{}
 	for target := range scheduler.canonicalScratch.headerBuffers {
 		buffer := make([]diagnosticParserCoreHeader, 2, 4)
 		buffer[1].markRecoveryLineage()
-		buffer[1].s3Region = retainedRegion
+		buffer[1].openRecoveryRegion(retainedRegion)
 		scheduler.canonicalScratch.headerBuffers[target] = buffer
 	}
 	want := scheduler.headers[1]
@@ -282,13 +282,13 @@ func TestCollapseToRecoveryWinnerSeatsTheWinnerAndClearsLosers(t *testing.T) {
 	// error region for the scheduler's lifetime otherwise.
 	tail := scheduler.headers[:cap(scheduler.headers)][1:3]
 	for index := range tail {
-		if tail[index].s3Region != nil || tail[index].isRecoveryLineage() {
+		if tail[index].recoveryRegion() != nil || tail[index].isRecoveryLineage() {
 			t.Fatalf("dropped header %d is still live in the backing array", index+1)
 		}
 	}
 	for target, buffer := range scheduler.canonicalScratch.headerBuffers {
 		for index, header := range buffer[:cap(buffer)] {
-			if header.s3Region == retainedRegion || header.isRecoveryLineage() {
+			if header.recoveryRegion() == retainedRegion || header.isRecoveryLineage() {
 				t.Fatalf("canonical buffer %d retained loser %d", target, index)
 			}
 		}

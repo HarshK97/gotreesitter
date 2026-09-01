@@ -1212,7 +1212,7 @@ type diagnosticParserCoreHeader struct {
 	lastPersistedBlended bool
 	// recoveryCompetitor marks a header that a native recovery mechanism
 	// created or advanced, and so may compete at acceptance. It sits before
-	// s3Region so it lands in the one padding byte the header already had
+	// versionState so it lands in the one padding byte the header already had
 	// (offset 215); placed after the pointer it would grow every header from
 	// 224 to 232 bytes, which two size ratchets pin.
 	//
@@ -1222,21 +1222,53 @@ type diagnosticParserCoreHeader struct {
 	//
 	// The open-recovery segment count is deliberately NOT stored beside this.
 	// It is derived from live header state at pricing time -- see
-	// recoveryOpenSegments -- because paused and s3Region are mutated by the
-	// ordinary reduce and pause paths, and a stored copy would go stale
-	// without them noticing.
+	// recoveryOpenSegments. Ordinary paths write paused, while region paths
+	// publish versionState. A stored copy could drift from either value.
 	recoveryCompetitor bool
-	// s3Region marks a header carrying an open native strategy-2 recovery
-	// region (campaign v7 tranche B3 stage S3: error-region absorb and
-	// condense-resume). nil for every header outside recovery, mirroring
-	// glrStack.cRec's nil-for-clean-stacks discipline (glr.go) -- the S3
-	// zero-cost clean-path gate (design section 8, G2). Never mutated in
-	// place: s3AdvanceErrorRegion and s3TryOpenErrorRegion always publish a
-	// fresh *diagnosticParserCoreS3Region and reassign this field, so a
-	// header snapshot taken by diagnosticParserCoreHeaderRollbackScratch
-	// (a plain by-value struct copy) restores a correct, independent region
-	// state on rollback without aliasing the live one.
+	// versionState carries optional state owned by this parser version. It is
+	// nil on the single-version fast path. The pointed-to state is immutable.
+	// Accessors publish a fresh wrapper or clear the pointer. A by-value header
+	// snapshot can therefore restore its prior state on rollback.
+	versionState *diagnosticParserCoreVersionState
+}
+
+// diagnosticParserCoreVersionState holds immutable state for one header.
+// Keep it separate from the fixed-size header so lexer ownership can grow
+// without changing the header layout.
+type diagnosticParserCoreVersionState struct {
 	s3Region *diagnosticParserCoreS3Region
+}
+
+// recoveryRegion returns the optional open strategy-2 region.
+func (h diagnosticParserCoreHeader) recoveryRegion() *diagnosticParserCoreS3Region {
+	if h.versionState == nil {
+		return nil
+	}
+	return h.versionState.s3Region
+}
+
+// openRecoveryRegion publishes an open strategy-2 region for this header.
+func (h *diagnosticParserCoreHeader) openRecoveryRegion(region *diagnosticParserCoreS3Region) {
+	h.setRecoveryRegion(region)
+}
+
+// setRecoveryRegion publishes a fresh immutable wrapper for the region.
+func (h *diagnosticParserCoreHeader) setRecoveryRegion(region *diagnosticParserCoreS3Region) {
+	if h == nil {
+		return
+	}
+	if region == nil {
+		h.closeRecoveryRegion()
+		return
+	}
+	h.versionState = &diagnosticParserCoreVersionState{s3Region: region}
+}
+
+// closeRecoveryRegion clears the header's open strategy-2 region.
+func (h *diagnosticParserCoreHeader) closeRecoveryRegion() {
+	if h != nil {
+		h.versionState = nil
+	}
 }
 
 // isRecoveryLineage reports whether this header may compete at acceptance.
@@ -1286,7 +1318,7 @@ func (s *diagnosticParserCoreGenericScheduler) retireTrailingRecoveryNoActionLin
 	survivor := &s.headers[0]
 	loser := &s.headers[1]
 	if !survivor.shifted || survivor.accepted || survivor.paused || loser.shifted || loser.accepted || loser.paused ||
-		survivor.s3Region != nil || loser.s3Region != nil || survivor.creationSeq >= loser.creationSeq ||
+		survivor.recoveryRegion() != nil || loser.recoveryRegion() != nil || survivor.creationSeq >= loser.creationSeq ||
 		survivor.checkpoint != loser.checkpoint || survivor.checkpoint != s.checkpointID ||
 		s.token.Symbol == 0 || s.token.EndByte <= s.token.StartByte {
 		return false, nil
@@ -1322,7 +1354,7 @@ func (s *diagnosticParserCoreGenericScheduler) retireTrailingRecoveryNoActionLin
 //
 // Deriving rather than storing is the point. paused is written by the
 // ordinary reduce and pause paths (they set it false on a fresh reduction and
-// true on a reduction pause) and s3Region is replaced wholesale by the region
+// true on a reduction pause) and versionState is replaced wholesale by the region
 // advance, none of which would update a stored count. A stale count
 // mis-prices the lineage by 500, which is ten times the margin this
 // arbitration turns on.
@@ -1330,7 +1362,8 @@ func (s *diagnosticParserCoreGenericScheduler) retireTrailingRecoveryNoActionLin
 // C's extraRecoveries term has no compact analogue yet: stage S3 does not
 // track unlexable-run re-pauses. When it does, add it here.
 func (h *diagnosticParserCoreHeader) recoveryOpenSegments() int {
-	if h.paused || (h.s3Region != nil && len(h.s3Region.children) == 0) {
+	region := h.recoveryRegion()
+	if h.paused || (region != nil && len(region.children) == 0) {
 		return 1
 	}
 	return 0
@@ -3225,7 +3258,7 @@ func (s *diagnosticParserCoreGenericScheduler) produceCompactEOFRecoveryAdmissio
 		return receipt, nil
 	}
 	for _, header := range s.headers {
-		if header.s3Region != nil {
+		if header.recoveryRegion() != nil {
 			compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission rejects an open strategy-three region")
 			return receipt, nil
 		}
@@ -6495,8 +6528,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			pausedNoActionHeads++
 			continue
 		}
-		if header.s3Region != nil {
-			region := header.s3Region
+		if region := header.recoveryRegion(); region != nil {
 			// A header sitting on an open region is the compact analogue of
 			// a live C stack in ERROR_STATE, which lexes with a completely
 			// different (most-permissive, LexModes[0]) mode than the
@@ -6610,7 +6642,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 					return nil, resumeErr
 				}
 				s.headers[index].head = newHead
-				s.headers[index].s3Region = nil
+				s.headers[index].closeRecoveryRegion()
 			case resumeToken.Symbol == 0:
 				// EOF while a region is open: cRecoverEOFAccept's whole-file
 				// wrap is out of S3 scope (s3TryOpenErrorRegion's doc
@@ -6640,9 +6672,9 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				grown := make([]core.SubtreeID, len(region.children)+1)
 				copy(grown, region.children)
 				grown[len(region.children)] = leafID
-				s.headers[index].s3Region = &diagnosticParserCoreS3Region{
+				s.headers[index].setRecoveryRegion(&diagnosticParserCoreS3Region{
 					state: region.state, startByte: region.startByte, endByte: resumeToken.EndByte, children: grown,
-				}
+				})
 				s.headers[index].shifted = true
 				if resumeToken.EndByte != s.token.EndByte {
 					// The error-mode relex consumed a different span than
@@ -7403,7 +7435,7 @@ func (s *diagnosticParserCoreGenericScheduler) s4TryStackSummaryRecovery(index i
 		return false, nil
 	}
 	original := s.headers[index]
-	if original.s3Region != nil || s.token.Missing || s.token.NoLookahead ||
+	if original.recoveryRegion() != nil || s.token.Missing || s.token.NoLookahead ||
 		s.token.Symbol == 0 || s.token.Symbol == errorSymbol {
 		return false, nil
 	}
@@ -7490,7 +7522,7 @@ func (s *diagnosticParserCoreGenericScheduler) s4TryStackSummaryRecovery(index i
 		restore()
 		return false, absorbErr
 	}
-	if !absorbed || s.headers[index].s3Region == nil || !s.headers[index].shifted {
+	if !absorbed || s.headers[index].recoveryRegion() == nil || !s.headers[index].shifted {
 		restore()
 		return false, nil
 	}
@@ -7511,7 +7543,7 @@ func (s *diagnosticParserCoreGenericScheduler) s4TryStackSummaryRecovery(index i
 		return false, err
 	}
 	recoveredHeader.head = recoveredHead
-	recoveredHeader.s3Region = nil
+	recoveredHeader.closeRecoveryRegion()
 	recoveredHeader.shifted = false
 	s.headers[index].markRecoveryLineage()
 	recoveredHeader.markRecoveryLineage()
@@ -7536,7 +7568,7 @@ func (s *diagnosticParserCoreGenericScheduler) s5TryMissingTokenInsertion(index 
 		return false, nil
 	}
 	original := s.headers[index]
-	if original.s3Region != nil || s.token.Missing || s.token.NoLookahead ||
+	if original.recoveryRegion() != nil || s.token.Missing || s.token.NoLookahead ||
 		s.token.Symbol == errorSymbol || s.s5MissingInsertions >= maxDiagnosticParserCoreMissingInsertions {
 		return false, nil
 	}
@@ -7664,7 +7696,7 @@ func (s *diagnosticParserCoreGenericScheduler) s5TryMissingTokenInsertion(index 
 		restore()
 		return false, absorbErr
 	}
-	if !absorbed || s.headers[index].s3Region == nil || !s.headers[index].shifted {
+	if !absorbed || s.headers[index].recoveryRegion() == nil || !s.headers[index].shifted {
 		restore()
 		return false, nil
 	}
@@ -7705,7 +7737,7 @@ func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegionWithAlternati
 		return false, nil
 	}
 	header := &s.headers[index]
-	if header.s3Region != nil {
+	if header.recoveryRegion() != nil {
 		// Already owned by the per-header advance hook (dispatchPassActive's
 		// s3Region branch); that hook declined to widen absorption to EOF.
 		// Fall through to the existing decline unchanged.
@@ -7833,12 +7865,12 @@ func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegionWithAlternati
 	if leafErr != nil {
 		return false, leafErr
 	}
-	header.s3Region = &diagnosticParserCoreS3Region{
+	header.openRecoveryRegion(&diagnosticParserCoreS3Region{
 		state:     state,
 		startByte: s.token.StartByte,
 		endByte:   s.token.EndByte,
 		children:  []core.SubtreeID{leafID},
-	}
+	})
 	s.s3RegionOpened = true
 	header.shifted = true
 	return true, nil

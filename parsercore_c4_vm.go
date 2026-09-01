@@ -98,7 +98,7 @@ func (s *diagnosticParserCoreGenericScheduler) corridorEligible() bool {
 		return false
 	}
 	header := &s.headers[0]
-	if header.accepted || header.paused || header.s3Region != nil || header.shifted {
+	if header.accepted || header.paused || header.recoveryRegion() != nil || header.shifted {
 		return false
 	}
 	// Checkpoint continuity: the header must sit on the election's own
