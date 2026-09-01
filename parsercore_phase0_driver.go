@@ -321,6 +321,20 @@ type DiagnosticParserCoreElection struct {
 	CurrentCheckpointBytes [2]uint32
 }
 
+// DiagnosticParserCoreVersionLexerRequest records one full owned lexer
+// request. The pair is the scanner state before and after the token, not a
+// cursor-only approximation. Full receipts retain these records so a caller
+// can audit straddled token spans and their authenticated checkpoints.
+type DiagnosticParserCoreVersionLexerRequest struct {
+	ElectionIndex     int
+	HeaderCreationSeq uint64
+	State             StateID
+	Token             Token
+	InternalDFAToken  bool
+	ScannerBefore     DiagnosticParserCoreScannerCheckpoint
+	ScannerAfter      DiagnosticParserCoreScannerCheckpoint
+}
+
 type DiagnosticParserCoreHeaderReceipt struct {
 	CreationSeq uint64
 	State       StateID
@@ -430,9 +444,23 @@ type DiagnosticParserCoreGenericWork struct {
 	ReductionPauses        uint64
 	NoActionDrops          uint64
 	Elections              uint64
-	Canonicalizations      uint64
-	PeakHeaders            uint64
-	Overflow               bool
+	// PerVersionLexRequests counts lexer calls issued for an owned parser
+	// version. The shared lexer election does not contribute to this counter.
+	PerVersionLexRequests uint64
+	// PerVersionLexRestores counts exact DFA and scanner snapshot restores
+	// before an owned request or a state-dependent re-request.
+	PerVersionLexRestores uint64
+	// PerVersionLexPublications counts immutable snapshots published to a
+	// parser header or its scheduler sidecar.
+	PerVersionLexPublications uint64
+	// PerVersionLexAcceptedRaggedSpans counts different-width token views that
+	// the owned scheduler accepted instead of declining at a shared cursor.
+	PerVersionLexAcceptedRaggedSpans uint64
+	// PeakLiveVersions records the largest live owned-header frontier.
+	PeakLiveVersions  uint64
+	Canonicalizations uint64
+	PeakHeaders       uint64
+	Overflow          bool
 }
 
 func (w *DiagnosticParserCoreGenericWork) add(counter *uint64, delta uint64) {
@@ -554,22 +582,28 @@ type DiagnosticParserCoreGenericCompletion struct {
 // DiagnosticParserCoreGenericScheduler records one committed compact scheduler
 // run from the sole authenticated seed lifecycle before its first election.
 type DiagnosticParserCoreGenericScheduler struct {
-	ReceiptMode       DiagnosticParserCoreReceiptMode
-	StartCheckpoint   DiagnosticParserCoreScannerCheckpoint
-	StartHeaders      []DiagnosticParserCoreHeaderPathReceipt
-	Rounds            []DiagnosticParserCoreDispatchRound
-	Conflicts         []DiagnosticParserCoreGenericConflict
-	ExternalShifts    []DiagnosticParserCoreGenericExternalShift
-	Elections         []DiagnosticParserCoreElection
-	NoActionDrops     []DiagnosticParserCoreGenericNoActionDrop
-	Completion        *DiagnosticParserCoreGenericCompletion
-	Acceptance        *DiagnosticParserCoreGenericAcceptance
-	acceptanceBacking DiagnosticParserCoreGenericAcceptance
-	Stop              DiagnosticParserCoreGenericStop
-	Tokens            uint64
-	Dispatches        uint64
-	GlobalBranchOrder uint64
-	NextCreationSeq   uint64
+	ReceiptMode                      DiagnosticParserCoreReceiptMode
+	StartCheckpoint                  DiagnosticParserCoreScannerCheckpoint
+	StartHeaders                     []DiagnosticParserCoreHeaderPathReceipt
+	Rounds                           []DiagnosticParserCoreDispatchRound
+	Conflicts                        []DiagnosticParserCoreGenericConflict
+	ExternalShifts                   []DiagnosticParserCoreGenericExternalShift
+	Elections                        []DiagnosticParserCoreElection
+	VersionLexerRequests             []DiagnosticParserCoreVersionLexerRequest
+	NoActionDrops                    []DiagnosticParserCoreGenericNoActionDrop
+	Completion                       *DiagnosticParserCoreGenericCompletion
+	Acceptance                       *DiagnosticParserCoreGenericAcceptance
+	acceptanceBacking                DiagnosticParserCoreGenericAcceptance
+	Stop                             DiagnosticParserCoreGenericStop
+	Tokens                           uint64
+	Dispatches                       uint64
+	GlobalBranchOrder                uint64
+	NextCreationSeq                  uint64
+	PerVersionLexRequests            uint64
+	PerVersionLexRestores            uint64
+	PerVersionLexPublications        uint64
+	PerVersionLexAcceptedRaggedSpans uint64
+	PeakLiveVersions                 uint64
 }
 
 type DiagnosticParserCorePrefixResult struct {
@@ -2501,19 +2535,41 @@ type diagnosticParserCoreTokenCell struct {
 	valid            bool
 }
 
+// diagnosticParserCoreVersionLexerRequest owns one header's current
+// lookahead. The scheduler keeps this sidecar outside the pinned header so a
+// different token width never changes the compact cell layout.
+type diagnosticParserCoreVersionLexerRequest struct {
+	electionIndex     int
+	headerCreationSeq uint64
+	state             StateID
+	token             Token
+	before            *diagnosticParserCoreVersionLexerSnapshot
+	after             *diagnosticParserCoreVersionLexerSnapshot
+	beforeCheckpoint  DiagnosticParserCoreScannerCheckpoint
+	afterCheckpoint   DiagnosticParserCoreScannerCheckpoint
+	beforeID          core.CheckpointID
+	afterID           core.CheckpointID
+	valid             bool
+}
+
 type diagnosticParserCoreGenericScheduler struct {
-	compact            *core.Core
-	tokenSource        *dfaTokenSource
-	scannerScratch     *[]byte
-	headers            []diagnosticParserCoreHeader
-	token              Token
-	checkpoint         DiagnosticParserCoreScannerCheckpoint
-	checkpointBeforeID core.CheckpointID
-	checkpointID       core.CheckpointID
-	currentElection    DiagnosticParserCoreElection
-	tokenCell          diagnosticParserCoreTokenCell
-	electionIndex      int
-	noLookaheadSteps   uint8
+	compact                      *core.Core
+	tokenSource                  *dfaTokenSource
+	scannerScratch               *[]byte
+	headers                      []diagnosticParserCoreHeader
+	token                        Token
+	checkpoint                   DiagnosticParserCoreScannerCheckpoint
+	checkpointBeforeID           core.CheckpointID
+	checkpointID                 core.CheckpointID
+	currentElection              DiagnosticParserCoreElection
+	tokenCell                    diagnosticParserCoreTokenCell
+	versionLexerBefore           dfaRelexSnapshot
+	versionLexerBeforeValid      bool
+	versionLexerBeforeElection   int
+	versionLexerBeforeCheckpoint core.CheckpointID
+	versionLexerRequests         []diagnosticParserCoreVersionLexerRequest
+	electionIndex                int
+	noLookaheadSteps             uint8
 	// recoveryIsolation becomes true only after S4 or S5 publishes two versions.
 	// Clean parses retain the canonical scheduler fast path.
 	recoveryIsolation bool
@@ -3963,6 +4019,13 @@ func clearDiagnosticParserCoreGenericSchedulerVersionState(scheduler *diagnostic
 	clearDiagnosticParserCorePhaseHeadBacking(scheduler.canonicalScratch.keys)
 	clearDiagnosticParserCorePhaseHeadBacking(scheduler.canonicalScratch.inlineKeys[:])
 	clear(scheduler.canonicalScratch.groups)
+	if cap(scheduler.versionLexerRequests) != 0 {
+		clear(scheduler.versionLexerRequests[:cap(scheduler.versionLexerRequests)])
+	}
+	scheduler.versionLexerBefore = dfaRelexSnapshot{}
+	scheduler.versionLexerBeforeValid = false
+	scheduler.versionLexerBeforeElection = 0
+	scheduler.versionLexerBeforeCheckpoint = 0
 }
 
 func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGenericScheduler) error {
@@ -3987,6 +4050,7 @@ func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGe
 	electStates := resetDiagnosticParserCoreRetainedSlice(scheduler.electStates)
 	electGLRStates := resetDiagnosticParserCoreRetainedSlice(scheduler.electGLRStates)
 	acceptedPayloads := resetDiagnosticParserCoreRetainedSlice(scheduler.acceptedPayloads)
+	versionLexerRequests := resetDiagnosticParserCoreRetainedSlice(scheduler.versionLexerRequests)
 	*scheduler = diagnosticParserCoreGenericScheduler{
 		summaryHeaderScratch: summaryHeaders,
 		dispatchScratch: diagnosticParserCoreDispatchScratch{
@@ -4005,6 +4069,7 @@ func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGe
 		electStates:           electStates,
 		electGLRStates:        electGLRStates,
 		acceptedPayloads:      acceptedPayloads,
+		versionLexerRequests:  versionLexerRequests,
 	}
 	return nil
 }
@@ -4456,6 +4521,245 @@ func (s *diagnosticParserCoreGenericScheduler) relexTokenForState(state StateID,
 		return tok, false
 	}
 	return relexed, true
+}
+
+// withVersionLexerOwner runs one snapshot publication under the scheduler's
+// authenticated owner. Fresh sessions already hold the owner; ordinary
+// diagnostic calls acquire one short transaction for the publication only.
+func (s *diagnosticParserCoreGenericScheduler) withVersionLexerOwner(fn func(core.SchedulerTransactionToken) error) error {
+	if s == nil || s.compact == nil || fn == nil {
+		return errors.New("parser-core phase zero: version lexer owner is unavailable")
+	}
+	if s.freshSessionOwner != nil {
+		return fn(*s.freshSessionOwner)
+	}
+	return s.compact.ApplySchedulerAtomic(fn)
+}
+
+func (s *diagnosticParserCoreGenericScheduler) versionLexerSnapshotForHeader(index int) *diagnosticParserCoreVersionLexerSnapshot {
+	if s == nil || index < 0 || index >= len(s.headers) {
+		return nil
+	}
+	return s.headers[index].versionLexerSnapshot()
+}
+
+func (s *diagnosticParserCoreGenericScheduler) versionLexerRequestForHeader(index int) *diagnosticParserCoreVersionLexerRequest {
+	if s == nil || index < 0 || index >= len(s.headers) {
+		return nil
+	}
+	sequence := s.headers[index].creationSeq
+	state, _, err := s.compact.Boundary(s.headers[index].head)
+	if err != nil {
+		return nil
+	}
+	base := s.versionLexerSnapshotForHeader(index)
+	for requestIndex := range s.versionLexerRequests {
+		request := &s.versionLexerRequests[requestIndex]
+		if request.valid && request.electionIndex == s.electionIndex && request.headerCreationSeq == sequence && request.state == StateID(state) && request.before == base {
+			return request
+		}
+	}
+	return nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) clearVersionLexerRequests() {
+	if s == nil {
+		return
+	}
+	// Every append extends from a reset or a prior logical clear. No pointer can
+	// exist beyond len here. The scheduler reset performs the capacity sweep.
+	clear(s.versionLexerRequests)
+	s.versionLexerRequests = s.versionLexerRequests[:0]
+}
+
+// publishVersionLexerSnapshotOwned installs one immutable cursor snapshot on
+// a header. The wrapper remains copy-on-write, so a header update never
+// changes a by-value rollback copy or a sibling version.
+func (s *diagnosticParserCoreGenericScheduler) publishVersionLexerSnapshotOwned(
+	owner core.SchedulerTransactionToken,
+	index int,
+	snapshot *diagnosticParserCoreVersionLexerSnapshot,
+) error {
+	if s == nil || index < 0 || index >= len(s.headers) {
+		return errors.New("parser-core phase zero: version lexer header index is out of range")
+	}
+	if err := snapshot.validateDestination(s.compact, s.tokenSource.language); err != nil {
+		return err
+	}
+	if _, _, ok := s.compact.CheckpointReceiptOwned(owner, snapshot.beforeCheckpoint); !ok {
+		return errDiagnosticParserCoreUnknownCheckpointIdentity
+	}
+	if _, _, ok := s.compact.CheckpointReceiptOwned(owner, snapshot.afterCheckpoint); !ok {
+		return errDiagnosticParserCoreUnknownCheckpointIdentity
+	}
+	if err := s.headers[index].publishOwnedVersionLexerSnapshot(s.compact, s.tokenSource.language, snapshot); err != nil {
+		return err
+	}
+	s.work.add(&s.work.PerVersionLexPublications, 1)
+	return nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) newVersionLexerSnapshot(
+	owner core.SchedulerTransactionToken,
+	dfa dfaRelexSnapshot,
+	beforeID core.CheckpointID,
+	afterID core.CheckpointID,
+) (*diagnosticParserCoreVersionLexerSnapshot, error) {
+	if s == nil || s.compact == nil || s.tokenSource == nil || s.tokenSource.language == nil {
+		return nil, errors.New("parser-core phase zero: version lexer snapshot context is incomplete")
+	}
+	return newDiagnosticParserCoreVersionLexerSnapshot(
+		s.compact, s.tokenSource.language, owner, dfa, beforeID, afterID,
+	)
+}
+
+// seedVersionLexerOwnership creates a private cursor at the current shared
+// election start. It runs only when a ragged token activates ownership; clean
+// parses retain the zero-overhead shared path.
+func (s *diagnosticParserCoreGenericScheduler) seedVersionLexerOwnership() error {
+	if s == nil || !s.versionLexerBeforeValid || s.tokenSource == nil || s.tokenSource.language == nil {
+		return errors.New("parser-core phase zero: version lexer seed lacks an election snapshot")
+	}
+	if s.versionLexerBeforeElection != s.electionIndex || s.versionLexerBeforeCheckpoint != s.checkpointBeforeID {
+		return errors.New("parser-core phase zero: version lexer seed snapshot belongs to another election")
+	}
+	var seed *diagnosticParserCoreVersionLexerSnapshot
+	err := s.withVersionLexerOwner(func(owner core.SchedulerTransactionToken) error {
+		var seedErr error
+		seed, seedErr = s.newVersionLexerSnapshot(owner, s.versionLexerBefore, s.checkpointBeforeID, s.checkpointBeforeID)
+		return seedErr
+	})
+	if err != nil {
+		return err
+	}
+	if err := seed.validateDestination(s.compact, s.tokenSource.language); err != nil {
+		return err
+	}
+	states := make(map[*diagnosticParserCoreS3Region]*diagnosticParserCoreVersionState)
+	for index := range s.headers {
+		region := s.headers[index].recoveryRegion()
+		state := states[region]
+		if state == nil {
+			state = &diagnosticParserCoreVersionState{s3Region: region, relexSnapshot: seed}
+			states[region] = state
+		}
+		s.headers[index].versionState = state
+		s.work.add(&s.work.PerVersionLexPublications, 1)
+	}
+	if uint64(len(s.headers)) > s.work.PeakLiveVersions {
+		s.work.PeakLiveVersions = uint64(len(s.headers))
+	}
+	return nil
+}
+
+// requestVersionLexerHeader restores one exact owned cursor, sets its parser
+// state, and performs exactly one lexer request. Interner writes occur before
+// the short publication transaction on ordinary scheduler calls.
+func (s *diagnosticParserCoreGenericScheduler) requestVersionLexerHeader(index int) error {
+	if s == nil || s.tokenSource == nil || s.tokenSource.language == nil || index < 0 || index >= len(s.headers) {
+		return errors.New("parser-core phase zero: version lexer request context is incomplete")
+	}
+	if existing := s.versionLexerRequestForHeader(index); existing != nil {
+		return nil
+	}
+	header := &s.headers[index]
+	base := header.versionLexerSnapshot()
+	if base == nil {
+		return errors.New("parser-core phase zero: version lexer header has no owned cursor snapshot")
+	}
+	// A request is a speculative read. Restore the shared source on every exit,
+	// including snapshot validation, checkpoint, and publication failures.
+	// Keep parser state and GLR state with the DFA cursor: the next shared
+	// election must observe exactly the state that preceded this request.
+	priorDFA := s.tokenSource.snapshotRelexState()
+	priorState := s.tokenSource.state
+	priorGLRStates := s.tokenSource.glrStates
+	defer func() {
+		priorDFA.restore(s.tokenSource)
+		s.tokenSource.SetParserState(priorState)
+		s.tokenSource.SetGLRStates(priorGLRStates)
+	}()
+	if err := base.restore(s.compact, s.tokenSource); err != nil {
+		return err
+	}
+	s.work.add(&s.work.PerVersionLexRestores, 1)
+	state, _, err := s.compact.Boundary(header.head)
+	if err != nil {
+		return err
+	}
+	s.tokenSource.SetParserState(StateID(state))
+	s.tokenSource.SetGLRStates(nil)
+	beforeDFA := s.tokenSource.snapshotRelexState()
+	beforeID := base.afterCheckpoint
+	token := s.tokenSource.Next()
+	afterDFA := s.tokenSource.snapshotRelexState()
+	afterBytes := s.tokenSource.captureExternalScannerStateInto(s.scannerScratch)
+	afterID, _, err := diagnosticParserCoreInternCheckpoint(s.compact, afterBytes)
+	if err != nil {
+		return err
+	}
+	var beforeSnapshot, afterSnapshot *diagnosticParserCoreVersionLexerSnapshot
+	if err := s.withVersionLexerOwner(func(owner core.SchedulerTransactionToken) error {
+		var snapshotErr error
+		beforeSnapshot, snapshotErr = s.newVersionLexerSnapshot(owner, beforeDFA, beforeID, beforeID)
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+		afterSnapshot, snapshotErr = s.newVersionLexerSnapshot(owner, afterDFA, afterID, afterID)
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+		return s.publishVersionLexerSnapshotOwned(owner, index, beforeSnapshot)
+	}); err != nil {
+		return err
+	}
+	s.work.add(&s.work.PerVersionLexPublications, 1) // the after snapshot is a sidecar publication
+	request := diagnosticParserCoreVersionLexerRequest{
+		electionIndex:     s.electionIndex,
+		headerCreationSeq: header.creationSeq,
+		state:             StateID(state),
+		token:             token,
+		before:            beforeSnapshot,
+		after:             afterSnapshot,
+		beforeCheckpoint:  beforeSnapshot.afterCheckpointInfo,
+		afterCheckpoint:   afterSnapshot.afterCheckpointInfo,
+		beforeID:          beforeID,
+		afterID:           afterID,
+		valid:             true,
+	}
+	s.versionLexerRequests = append(s.versionLexerRequests, request)
+	s.work.add(&s.work.PerVersionLexRequests, 1)
+	if uint64(len(s.headers)) > s.work.PeakLiveVersions {
+		s.work.PeakLiveVersions = uint64(len(s.headers))
+	}
+	if s.fullReceipts() {
+		s.receipt.VersionLexerRequests = append(s.receipt.VersionLexerRequests, DiagnosticParserCoreVersionLexerRequest{
+			ElectionIndex: s.electionIndex, HeaderCreationSeq: request.headerCreationSeq,
+			State: request.state, Token: request.token, InternalDFAToken: request.token.lexerInternalDFALexed,
+			ScannerBefore: request.beforeCheckpoint, ScannerAfter: request.afterCheckpoint,
+		})
+	}
+	return nil
+}
+
+// requestHeaderLexerToken names the scheduler-owned one-request operation.
+// Keep requestVersionLexerHeader as the implementation name for callers that
+// describe the operation by its target header rather than its lexer result.
+func (s *diagnosticParserCoreGenericScheduler) requestHeaderLexerToken(index int) error {
+	return s.requestVersionLexerHeader(index)
+}
+
+// captureSharedElectionSnapshot records the scanner state around the legacy
+// shared election. It does not change the shared path or publish a version.
+func (s *diagnosticParserCoreGenericScheduler) captureSharedElectionSnapshot() error {
+	if s == nil || s.tokenSource == nil {
+		return errors.New("parser-core phase zero: shared lexer snapshot source is unavailable")
+	}
+	s.versionLexerBefore = s.tokenSource.snapshotRelexState()
+	s.versionLexerBeforeValid = true
+	s.versionLexerBeforeElection = s.electionIndex + 1
+	s.versionLexerBeforeCheckpoint = s.checkpointID
+	return nil
 }
 
 type diagnosticParserCoreDispatchScratch struct {
@@ -6312,6 +6616,41 @@ func appendDiagnosticParserCoreCanonicalScratchFootprintRefs(
 	return refs
 }
 
+func appendDiagnosticParserCoreVersionLexerRequestFootprintRefs(
+	refs []diagnosticParserCoreFootprintRef,
+	requests []diagnosticParserCoreVersionLexerRequest,
+) []diagnosticParserCoreFootprintRef {
+	for index := range requests {
+		refs = appendDiagnosticParserCoreFootprintRef(refs, diagnosticParserCoreFootprintSnapshot, unsafe.Pointer(requests[index].before))
+		refs = appendDiagnosticParserCoreFootprintRef(refs, diagnosticParserCoreFootprintSnapshot, unsafe.Pointer(requests[index].after))
+	}
+	return refs
+}
+
+func diagnosticParserCoreDFARelexSnapshotRetainedBytes(snapshot dfaRelexSnapshot) uint64 {
+	total := uint64(0)
+	add := func(count int, size uintptr) {
+		if count <= 0 || size == 0 || total == math.MaxUint64 {
+			return
+		}
+		if uint64(count) > math.MaxUint64/uint64(size) {
+			total = math.MaxUint64
+			return
+		}
+		bytes := uint64(count) * uint64(size)
+		if math.MaxUint64-total < bytes {
+			total = math.MaxUint64
+			return
+		}
+		total += bytes
+	}
+	add(cap(snapshot.externalPayload), 1)
+	add(cap(snapshot.externalTokenStart), 1)
+	add(cap(snapshot.externalTokenEnd), 1)
+	add(cap(snapshot.extZeroTried), unsafe.Sizeof(bool(false)))
+	return total
+}
+
 func compareDiagnosticParserCoreFootprintRefs(
 	left, right diagnosticParserCoreFootprintRef,
 ) int {
@@ -6380,6 +6719,7 @@ func diagnosticParserCoreSchedulerFootprintBytes(s *diagnosticParserCoreGenericS
 	refs = appendDiagnosticParserCoreHeaderFootprintRefs(refs, s.reductionReplacements)
 	refs = appendDiagnosticParserCoreHeaderFootprintRefs(refs, s.seedHeaders[:])
 	refs = appendDiagnosticParserCoreCanonicalScratchFootprintRefs(refs, &s.canonicalScratch)
+	refs = appendDiagnosticParserCoreVersionLexerRequestFootprintRefs(refs, s.versionLexerRequests)
 	slices.SortFunc(refs, compareDiagnosticParserCoreFootprintRefs)
 	for index := 0; index < len(refs); {
 		ref := refs[index]
@@ -6433,6 +6773,8 @@ func diagnosticParserCoreSchedulerFootprintBytes(s *diagnosticParserCoreGenericS
 	add(cap(s.electStates), unsafe.Sizeof(StateID(0)))
 	add(cap(s.electGLRStates), unsafe.Sizeof(StateID(0)))
 	add(cap(s.acceptedPayloads), unsafe.Sizeof(core.SubtreeID(0)))
+	add(cap(s.versionLexerRequests), unsafe.Sizeof(diagnosticParserCoreVersionLexerRequest{}))
+	addBytes(diagnosticParserCoreDFARelexSnapshotRetainedBytes(s.versionLexerBefore))
 	add(len(s.seedHeaders), unsafe.Sizeof(diagnosticParserCoreHeader{}))
 	add(len(s.corridorCells), unsafe.Sizeof(diagnosticParserCoreGenericCell{}))
 	add(1, unsafe.Sizeof(s.tokenCell))
@@ -10875,6 +11217,11 @@ func (s *diagnosticParserCoreGenericScheduler) publishTotals() {
 	s.receipt.Dispatches = s.dispatches
 	s.receipt.GlobalBranchOrder = s.branchOrder
 	s.receipt.NextCreationSeq = s.nextSeq
+	s.receipt.PerVersionLexRequests = s.work.PerVersionLexRequests
+	s.receipt.PerVersionLexRestores = s.work.PerVersionLexRestores
+	s.receipt.PerVersionLexPublications = s.work.PerVersionLexPublications
+	s.receipt.PerVersionLexAcceptedRaggedSpans = s.work.PerVersionLexAcceptedRaggedSpans
+	s.receipt.PeakLiveVersions = s.work.PeakLiveVersions
 }
 
 func authenticatedParserCoreGoLanguage(scanner ExternalScanner) (*Language, error) {
