@@ -113,6 +113,33 @@ func (i *checkpointInterner) receipt(id CheckpointID) (uint32, [32]byte, bool) {
 	return record.length, record.digest, true
 }
 
+// copyBytes copies one exact serialized checkpoint into dst. It reuses dst's
+// backing array when its capacity is sufficient and never exposes i.bytes.
+// Checkpoint zero is the valid empty checkpoint; every other ID must resolve
+// to a complete retained record.
+func (i *checkpointInterner) copyBytes(id CheckpointID, dst []byte) ([]byte, bool) {
+	if id == 0 {
+		return dst[:0], true
+	}
+	record, ok := i.record(id)
+	if !ok {
+		return nil, false
+	}
+	start := uint64(record.offset)
+	end := start + uint64(record.length)
+	if end < start || end > uint64(len(i.bytes)) {
+		return nil, false
+	}
+	length := int(record.length)
+	if cap(dst) < length {
+		dst = make([]byte, length)
+	} else {
+		dst = dst[:length]
+	}
+	copy(dst, i.bytes[int(start):int(end)])
+	return dst, true
+}
+
 func (i *checkpointInterner) stats() CheckpointInternerStats {
 	return CheckpointInternerStats{Unique: uint32(len(i.records)), SerializedBytes: uint64(len(i.bytes)), DigestCollisions: i.collisions}
 }

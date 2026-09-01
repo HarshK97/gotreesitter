@@ -2359,6 +2359,25 @@ func (c *Core) CheckpointReceiptOwned(owner SchedulerTransactionToken, id Checkp
 	return c.checkpoints.receipt(id)
 }
 
+// CopyCheckpointBytes copies one exact serialized checkpoint into dst. It
+// allows reads during transactions, reuses dst capacity, and returns no
+// retained interner storage to the caller.
+func (c *Core) CopyCheckpointBytes(id CheckpointID, dst []byte) ([]byte, bool) {
+	if c == nil {
+		return nil, false
+	}
+	return c.checkpoints.copyBytes(id, dst)
+}
+
+// CopyCheckpointBytesOwned copies one checkpoint under the active scheduler
+// owner. It follows CheckpointReceiptOwned's stale-owner failure contract.
+func (c *Core) CopyCheckpointBytesOwned(owner SchedulerTransactionToken, id CheckpointID, dst []byte) ([]byte, bool) {
+	if c == nil || c.validateSchedulerTransaction(owner) != nil {
+		return nil, false
+	}
+	return c.checkpoints.copyBytes(id, dst)
+}
+
 // CheckpointInternerStats reports bounded logical scanner-state retention.
 func (c *Core) CheckpointInternerStats() CheckpointInternerStats {
 	if c == nil {

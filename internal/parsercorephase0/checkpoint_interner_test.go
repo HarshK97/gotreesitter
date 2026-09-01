@@ -1,6 +1,7 @@
 package parsercorephase0
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"runtime"
@@ -63,6 +64,97 @@ func TestEmptyCheckpointReceiptIsConstantAndAllocationFree(t *testing.T) {
 		}
 	}); allocs != 0 {
 		t.Fatalf("empty checkpoint receipt allocations=%v, want 0", allocs)
+	}
+}
+
+func TestCheckpointInternerCopyBytesExactAndReusesCapacity(t *testing.T) {
+	interner := newCheckpointInterner(4, 64)
+	want := []byte{1, 2, 3, 4}
+	id, err := interner.intern(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destination := make([]byte, 0, 8)
+	backing := &destination[:cap(destination)][0]
+	got, ok := interner.copyBytes(id, destination)
+	if !ok || !bytes.Equal(got, want) {
+		t.Fatalf("copied checkpoint=(%v,%t), want %v", got, ok, want)
+	}
+	if cap(got) != cap(destination) || &got[:cap(got)][0] != backing {
+		t.Fatalf("copy did not reuse destination capacity: cap=%d/%d", cap(got), cap(destination))
+	}
+
+	got[0] = 9
+	repeated, ok := interner.copyBytes(id, got[:0])
+	if !ok || !bytes.Equal(repeated, want) {
+		t.Fatalf("retained checkpoint changed through copied bytes=(%v,%t), want %v", repeated, ok, want)
+	}
+
+	emptyDestination := make([]byte, 3, 8)
+	empty, ok := interner.copyBytes(0, emptyDestination)
+	if !ok || len(empty) != 0 || cap(empty) != cap(emptyDestination) {
+		t.Fatalf("empty checkpoint copy=(%v,%t), cap=%d, want empty with cap=%d", empty, ok, cap(empty), cap(emptyDestination))
+	}
+
+	sentinel := []byte{7, 8, 9}
+	before := append([]byte(nil), sentinel...)
+	if copied, ok := interner.copyBytes(CheckpointID(99), sentinel); ok || copied != nil {
+		t.Fatalf("invalid checkpoint copy=(%v,%t), want (nil,false)", copied, ok)
+	}
+	if !bytes.Equal(sentinel, before) {
+		t.Fatalf("invalid checkpoint copy mutated destination=%v, want %v", sentinel, before)
+	}
+}
+
+func TestCoreCheckpointByteCopyMatchesReceiptAndOwnerContract(t *testing.T) {
+	compact, err := New(&fakeTable{}, Limits{MaxCheckpoints: 4, MaxCheckpointBytes: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte{4, 5, 6}
+	id := mustInternCheckpoint(t, compact, want)
+	destination := make([]byte, 0, 8)
+
+	length, digest, receiptOK := compact.CheckpointReceipt(id)
+	if !receiptOK || length != uint32(len(want)) || digest != sha256.Sum256(want) {
+		t.Fatalf("checkpoint receipt=(%d,%x,%t)", length, digest, receiptOK)
+	}
+	got, copyOK := compact.CopyCheckpointBytes(id, destination)
+	if !copyOK || !bytes.Equal(got, want) {
+		t.Fatalf("checkpoint copy=(%v,%t), want %v", got, copyOK, want)
+	}
+
+	if err := compact.ApplyAtomic(func() error {
+		inside, ok := compact.CopyCheckpointBytes(id, got[:0])
+		if !ok || !bytes.Equal(inside, want) {
+			t.Fatalf("transaction checkpoint copy=(%v,%t), want %v", inside, ok, want)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if copied, ok := compact.CopyCheckpointBytesOwned(SchedulerTransactionToken{}, id, destination); ok || copied != nil {
+		t.Fatalf("unowned checkpoint copy=(%v,%t), want (nil,false)", copied, ok)
+	}
+	var owner SchedulerTransactionToken
+	if err := compact.ApplySchedulerAtomic(func(token SchedulerTransactionToken) error {
+		owner = token
+		inside, ok := compact.CopyCheckpointBytesOwned(token, id, destination)
+		if !ok || !bytes.Equal(inside, want) {
+			t.Fatalf("owned checkpoint copy=(%v,%t), want %v", inside, ok, want)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if copied, ok := compact.CopyCheckpointBytesOwned(owner, id, destination); ok || copied != nil {
+		t.Fatalf("stale-owner checkpoint copy=(%v,%t), want (nil,false)", copied, ok)
+	}
+
+	if copied, ok := compact.CopyCheckpointBytes(CheckpointID(99), destination); ok || copied != nil {
+		t.Fatalf("invalid core checkpoint copy=(%v,%t), want (nil,false)", copied, ok)
 	}
 }
 
