@@ -2969,9 +2969,126 @@ type dfaRelexSnapshot struct {
 	zeroWidthCount int
 }
 
+// dfaRelexSnapshotScratch owns the mutable slice backing for one transient
+// snapshot. A caller can reuse it only after the prior snapshot is dead.
+// Published parser-version snapshots must still deep-copy these slices.
+type dfaRelexSnapshotScratch struct {
+	externalPayload    []byte
+	externalTokenStart []byte
+	externalTokenEnd   []byte
+	extZeroTried       []bool
+}
+
 func (d *dfaTokenSource) snapshotRelexState() dfaRelexSnapshot {
 	snapshot, _ := d.snapshotRelexStateWithExternalBuffer(nil)
 	return snapshot
+}
+
+// snapshotRelexStateWithScratch captures the same state as
+// snapshotRelexState while reusing one caller-owned backing store. The
+// returned snapshot aliases scratch and remains valid only until the next
+// call with that scratch.
+func (d *dfaTokenSource) snapshotRelexStateWithScratch(scratch *dfaRelexSnapshotScratch) dfaRelexSnapshot {
+	if scratch == nil {
+		return d.snapshotRelexState()
+	}
+	s := d.snapshotRelexStateIntoScratch(scratch)
+	if d.hasExternalScanner && d.language != nil && d.language.ExternalScanner != nil {
+		buf := prepareDFARelexExternalPayloadScratch(scratch)
+		if n := d.language.ExternalScanner.Serialize(d.externalPayload, buf); n > 0 {
+			s.externalPayload = buf[:n]
+			scratch.externalPayload = buf[:n]
+		} else {
+			scratch.externalPayload = buf[:0]
+		}
+	} else {
+		clearDFARelexExternalPayloadScratch(scratch)
+	}
+	return s
+}
+
+// snapshotRelexStateWithScratchFromExternalPayload captures one snapshot
+// from scanner bytes that the caller already serialized at this cursor.
+// This avoids a second Serialize call during a parser election.
+func (d *dfaTokenSource) snapshotRelexStateWithScratchFromExternalPayload(
+	scratch *dfaRelexSnapshotScratch,
+	externalPayload []byte,
+) dfaRelexSnapshot {
+	if scratch == nil {
+		scratch = &dfaRelexSnapshotScratch{}
+	}
+	s := d.snapshotRelexStateIntoScratch(scratch)
+	if d.hasExternalScanner && d.language != nil && d.language.ExternalScanner != nil {
+		buf := prepareDFARelexExternalPayloadScratch(scratch)
+		if n := copy(buf, externalPayload); n > 0 {
+			s.externalPayload = buf[:n]
+			scratch.externalPayload = buf[:n]
+		} else {
+			scratch.externalPayload = buf[:0]
+		}
+	} else {
+		clearDFARelexExternalPayloadScratch(scratch)
+	}
+	return s
+}
+
+func (d *dfaTokenSource) snapshotRelexStateIntoScratch(scratch *dfaRelexSnapshotScratch) dfaRelexSnapshot {
+	s := dfaRelexSnapshot{
+		lexerPos:                    d.lexer.pos,
+		lexerRow:                    d.lexer.row,
+		lexerCol:                    d.lexer.col,
+		lexerRangeIdx:               d.lexer.includedRangeIdx,
+		externalScannerPresent:      d.hasExternalScanner,
+		failTokenStartPos:           d.lexer.failTokenStartPos,
+		failTokenStartRow:           d.lexer.failTokenStartRow,
+		failTokenStartCol:           d.lexer.failTokenStartCol,
+		failTokenStartRangeIdx:      d.lexer.failTokenStartRangeIdx,
+		lastExternalTokenStartByte:  d.lastExternalTokenStartByte,
+		lastExternalTokenEndByte:    d.lastExternalTokenEndByte,
+		lastExternalTokenValid:      d.lastExternalTokenValid,
+		lastExternalTokenWasExtra:   d.lastExternalTokenWasExtra,
+		externalTokenEndSameAsStart: d.externalTokenEndSameAsStart,
+		lastTokenStartByte:          d.lastTokenStartByte,
+		lastTokenEndByte:            d.lastTokenEndByte,
+		lastTokenValid:              d.lastTokenValid,
+		extZeroPos:                  d.extZeroPos,
+		extZeroState:                d.extZeroState,
+		zeroWidthPos:                d.zeroWidthPos,
+		zeroWidthCount:              d.zeroWidthCount,
+	}
+	scratch.externalTokenStart = append(scratch.externalTokenStart[:0], d.externalTokenStart...)
+	if len(d.externalTokenStart) != 0 {
+		s.externalTokenStart = scratch.externalTokenStart
+	}
+	scratch.externalTokenEnd = append(scratch.externalTokenEnd[:0], d.externalTokenEnd...)
+	if len(d.externalTokenEnd) != 0 {
+		s.externalTokenEnd = scratch.externalTokenEnd
+	}
+	scratch.extZeroTried = append(scratch.extZeroTried[:0], d.extZeroTried...)
+	if len(d.extZeroTried) != 0 {
+		s.extZeroTried = scratch.extZeroTried
+	}
+	return s
+}
+
+func prepareDFARelexExternalPayloadScratch(scratch *dfaRelexSnapshotScratch) []byte {
+	if cap(scratch.externalPayload) != externalScannerSerializationBufferSize {
+		if cap(scratch.externalPayload) > 0 {
+			clear(scratch.externalPayload[:cap(scratch.externalPayload)])
+		}
+		scratch.externalPayload = make([]byte, externalScannerSerializationBufferSize)
+	} else {
+		scratch.externalPayload = scratch.externalPayload[:externalScannerSerializationBufferSize]
+		clear(scratch.externalPayload)
+	}
+	return scratch.externalPayload
+}
+
+func clearDFARelexExternalPayloadScratch(scratch *dfaRelexSnapshotScratch) {
+	if cap(scratch.externalPayload) != 0 {
+		clear(scratch.externalPayload[:cap(scratch.externalPayload)])
+		scratch.externalPayload = scratch.externalPayload[:0]
+	}
 }
 
 func (d *dfaTokenSource) snapshotRelexStateWithExternalBuffer(buf []byte) (dfaRelexSnapshot, []byte) {

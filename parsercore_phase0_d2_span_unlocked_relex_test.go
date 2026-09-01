@@ -12,13 +12,12 @@ import (
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-// D2-1 slice: span-unlocked per-header relex with fail-closed ragged-end
-// decline. relexTokenForState used to reject any per-header relex whose
+// D2-1 slice: span-unlocked per-header relex. relexTokenForState used to
+// reject any per-header relex whose
 // span (StartByte and EndByte) did not exactly match the shared election's
 // span. This slice unlocks EndByte: a same-start relex may now return a
-// wider or narrower token than the shared election, and dispatchPassActive
-// declines that shape fail-closed instead of shifting it (see
-// diagnosticParserCoreRaggedRelexDeclineDetail's doc comment).
+// wider or narrower token than the shared election. The scheduler now
+// activates owned per-header lexer requests for that shape.
 //
 // bashRaggedEndWitnessSource ("A(1%") is a real, minimal witness found by
 // targeted fuzzing of FuzzAdmissionRouteEquality's own bash lane (not
@@ -28,20 +27,19 @@ import (
 // deterministically via RelexTokenForStateForTest below. This witness's
 // own no-action head is drop-eligible on every recurrence during a full
 // scheduler run (a sibling header keeps advancing the same pass), so it
-// does not reach the scheduler-level ragged-end decline itself; see
+// does not reach the scheduler-level ownership activation itself; see
 // swiftRaggedEndWitnessSource below for that.
 var bashRaggedEndWitnessSource = []byte("A(1%")
 
-// swiftRaggedEndWitnessSource ("a<A<#-") is the scheduler-level, real
-// witness for the D2-1 ragged-end (different-span) decline (F1): at byte
+// swiftRaggedEndWitnessSource ("a<A<#-") is the scheduler-level witness
+// for D2-1 different-span ownership activation (F1). At byte
 // 3, swift's shared election is a 2-byte external-scanner token (symbol
 // 217, span 3..5, the "<#" raw-string-literal opener); a sibling header's
 // own state (47) relexes the same start byte to a narrower 1-byte token
 // (symbol 35, span 3..4, a plain "<" operator). Unlike
 // bashRaggedEndWitnessSource, every live header here is a no-action head
 // and at least one is ragged, so this shape is not drop-eligible: the
-// terminal Stop for this witness is the ragged-end decline itself (see
-// TestD2SpanUnlockedSchedulerDeclinesRaggedEndRelex).
+// scheduler activates owned lexer requests before a sibling can reduce.
 var swiftRaggedEndWitnessSource = []byte("a<A<#-")
 
 // TestD2SpanUnlockedRelexTokenForStateFindsRaggedEndOnRealBashWitness pins
@@ -99,10 +97,8 @@ func TestD2SpanUnlockedRelexTokenForStateFindsRaggedEndOnRealBashWitness(t *test
 	}
 }
 
-// TestD2SpanUnlockedRaggedRelexDeclineDetailCarriesWiderTokenSpan pins
-// the decline detail's exact format (Phase 1 item 4: receipts must record
-// the wider token's own symbol and span) against the same real witness's
-// exact values.
+// TestD2SpanUnlockedRaggedRelexDeclineDetailCarriesWiderTokenSpan pins the
+// legacy detail format for telemetry migrations.
 func TestD2SpanUnlockedRaggedRelexDeclineDetailCarriesWiderTokenSpan(t *testing.T) {
 	shared := gts.Token{Symbol: 160, StartByte: 2, EndByte: 3}
 	relexed := gts.Token{Symbol: 1, StartByte: 2, EndByte: 4}
@@ -121,29 +117,9 @@ func TestD2SpanUnlockedRaggedRelexDeclineDetailCarriesWiderTokenSpan(t *testing.
 	}
 }
 
-// TestD2SpanUnlockedSchedulerDeclinesRaggedEndRelex is the scheduler-level
-// fail-closed proof (Phase 2 item 1a, F1) for swiftRaggedEndWitnessSource:
-// the terminal Stop for the whole parse is the D2-1 ragged-end decline
-// itself (boundary recovery, detail prefixed by
-// diagnosticParserCoreRaggedRelexDeclineDetail's own text), not the
-// ordinary genuinely-empty-row boundary. Earlier evidence for this slice
-// (bashRaggedEndWitnessSource) claimed that branch was unreachable unless
-// every live header in a pass were simultaneously ragged; that claim was
-// wrong. The true condition is only that every live header is a no-action
-// head and at least one of them is ragged -- a shape swiftRaggedEndWitnessSource
-// exercises directly, and one this test's own mutation-verify step
-// (recorded in the D2-1 report) confirms kills a reverted decline.
-//
-// The primary assertion is the terminal Stop's boundary and detail (F2):
-// asserting there directly proves dispatchPassActive's own fail-closed
-// branch ran. The secondary NoActionDrops loop below is kept only as a
-// weaker check and cannot, on its own, detect a span leak: a
-// DiagnosticParserCoreGenericNoActionDrop's Token is the shared election's
-// own token by construction (a cell can never carry a different EndByte --
-// dispatchPassActive declines that shape before a cell is built), so a
-// leaked shift would remove the drop record entirely rather than change
-// its span.
-func TestD2SpanUnlockedSchedulerDeclinesRaggedEndRelex(t *testing.T) {
+// TestD2SpanUnlockedSchedulerActivatesOwnedLexerRequests proves that the
+// Swift witness preempts the shared pass and publishes both lexer views.
+func TestD2SpanUnlockedSchedulerActivatesOwnedLexerRequests(t *testing.T) {
 	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
 	entry := grammars.DetectLanguageByName("swift")
 	if entry == nil {
@@ -156,25 +132,38 @@ func TestD2SpanUnlockedSchedulerDeclinesRaggedEndRelex(t *testing.T) {
 		t.Fatalf("compact scheduler: %v", err)
 	}
 	if receipt.Acceptance != nil {
-		t.Fatal("compact scheduler unexpectedly accepted the ragged-end witness")
+		t.Fatal("compact scheduler unexpectedly accepted the ownership witness")
 	}
-	if receipt.Stop.Boundary != gts.DiagnosticParserCoreRecovery {
-		t.Fatalf("terminal Stop.Boundary = %q, want %q", receipt.Stop.Boundary, gts.DiagnosticParserCoreRecovery)
+	if receipt.Stop.Boundary != gts.DiagnosticParserCoreRoute {
+		t.Fatalf("terminal Stop.Boundary = %q, want %q", receipt.Stop.Boundary, gts.DiagnosticParserCoreRoute)
 	}
-	wantPrefix := gts.DiagnosticParserCoreRaggedRelexDeclineDetailForTest()
+	wantPrefix := gts.DiagnosticParserCoreOwnedDispatchPendingDetailForTest()
 	if !strings.HasPrefix(receipt.Stop.Detail, wantPrefix) {
 		t.Fatalf("terminal Stop.Detail = %q, want prefix %q", receipt.Stop.Detail, wantPrefix)
 	}
-
-	// Secondary, weaker check (see doc comment above): no no-action drop
-	// ever carries the narrower relexed token in place of the shared
-	// election's own token.
-	for _, drop := range receipt.NoActionDrops {
-		if drop.Token.StartByte != 3 {
-			continue
+	if receipt.PerVersionLexRequests != 2 || receipt.PerVersionLexRestores != 2 ||
+		receipt.PerVersionLexPublications != 6 || receipt.PerVersionLexAcceptedRaggedSpans != 0 {
+		t.Fatalf("owned lexer counters=%d/%d/%d/%d, want 2/2/6/0",
+			receipt.PerVersionLexRequests, receipt.PerVersionLexRestores,
+			receipt.PerVersionLexPublications, receipt.PerVersionLexAcceptedRaggedSpans)
+	}
+	want := map[gts.StateID]struct {
+		symbol  gts.Symbol
+		endByte uint32
+	}{
+		47:  {symbol: 35, endByte: 4},
+		524: {symbol: 217, endByte: 5},
+	}
+	if len(receipt.VersionLexerRequests) != len(want) {
+		t.Fatalf("owned lexer requests=%d, want %d", len(receipt.VersionLexerRequests), len(want))
+	}
+	for _, request := range receipt.VersionLexerRequests {
+		expect, ok := want[request.State]
+		if !ok {
+			t.Fatalf("unexpected owned lexer state=%d", request.State)
 		}
-		if drop.Token.EndByte != 5 || drop.Token.Symbol != 217 {
-			t.Fatalf("no-action drop at byte 3 = %+v, want the shared election's own token (symbol=217, end=5), never the relexed one", drop.Token)
+		if request.Token.Symbol != expect.symbol || request.Token.StartByte != 3 || request.Token.EndByte != expect.endByte {
+			t.Fatalf("state %d token=%+v, want symbol=%d span=3..%d", request.State, request.Token, expect.symbol, expect.endByte)
 		}
 	}
 }
@@ -305,9 +294,9 @@ func TestD2SpanUnlockedSameSpanRelexStillShiftsRealBashInstallWitness(t *testing
 // TestD2SpanUnlockedDisableOptionMatchesLegacyBehavior is the D2-1 Phase 2
 // item 1c anchor (F4): DisablePerHeaderSpanUnlockedRelex restores the
 // pre-D2-1 span-locked probe exactly, using swiftRaggedEndWitnessSource
-// (the same witness TestD2SpanUnlockedSchedulerDeclinesRaggedEndRelex
+// (the same witness TestD2SpanUnlockedSchedulerActivatesOwnedLexerRequests
 // pins) so the two routes are provably different, not just superficially
-// identical: enabled produces the D2-1 ragged-end decline's own detail;
+// identical: enabled activates owned per-header requests;
 // disabled produces exactly diagnosticParserCoreNoTableActionDetail, the
 // origin/main behavior for this witness (relexTokenForState never returns
 // a different-span token at all when disabled, so the no-action head takes
@@ -335,13 +324,14 @@ func TestD2SpanUnlockedDisableOptionMatchesLegacyBehavior(t *testing.T) {
 	if enabled.Acceptance != nil || disabled.Acceptance != nil {
 		t.Fatal("compact scheduler unexpectedly accepted the ragged-end witness")
 	}
-	if enabled.Stop.Boundary != gts.DiagnosticParserCoreRecovery || disabled.Stop.Boundary != gts.DiagnosticParserCoreRecovery {
-		t.Fatalf("enabled/disabled boundaries = %q/%q, want both %q",
-			enabled.Stop.Boundary, disabled.Stop.Boundary, gts.DiagnosticParserCoreRecovery)
+	if enabled.Stop.Boundary != gts.DiagnosticParserCoreRoute || disabled.Stop.Boundary != gts.DiagnosticParserCoreRecovery {
+		t.Fatalf("enabled/disabled boundaries = %q/%q, want %q/%q",
+			enabled.Stop.Boundary, disabled.Stop.Boundary,
+			gts.DiagnosticParserCoreRoute, gts.DiagnosticParserCoreRecovery)
 	}
-	wantEnabledPrefix := gts.DiagnosticParserCoreRaggedRelexDeclineDetailForTest()
+	wantEnabledPrefix := gts.DiagnosticParserCoreOwnedDispatchPendingDetailForTest()
 	if !strings.HasPrefix(enabled.Stop.Detail, wantEnabledPrefix) {
-		t.Fatalf("enabled detail = %q, want prefix %q (the D2-1 ragged-end decline)", enabled.Stop.Detail, wantEnabledPrefix)
+		t.Fatalf("enabled detail = %q, want prefix %q", enabled.Stop.Detail, wantEnabledPrefix)
 	}
 	wantDisabledDetail := gts.DiagnosticParserCoreNoTableActionDetailForTest()
 	if disabled.Stop.Detail != wantDisabledDetail {

@@ -62,8 +62,8 @@ type DiagnosticParserCorePrefixOptions struct {
 	// DisablePerHeaderSpanUnlockedRelex restores relexTokenForState's
 	// pre-D2-1 span-locked probe (only an exact-span relex is eligible; a
 	// relex whose EndByte differs from the shared election is declined the
-	// same way a scan failure is, never routed through the ragged-end
-	// decline). The zero value keeps the span-unlocked probe on. This is a
+	// same way a scan failure is, never routed through owned lexer
+	// activation). The zero value keeps the span-unlocked probe on. This is a
 	// test-and-diagnostic lever only: no production caller sets it, and it
 	// has no operator-facing surface (config flag, CLI flag, or similar).
 	DisablePerHeaderSpanUnlockedRelex bool
@@ -1552,7 +1552,11 @@ func (s *diagnosticParserCoreGenericScheduler) persistHeaderLineageOwned(
 			header.head,
 			uint32(header.creationSeq)+1,
 		); err != nil {
-			return err
+			return fmt.Errorf(
+				"parser-core phase zero: persist header %d head=%d owner=%d lexer_owned=%t recovery_region=%t: %w",
+				index, header.head.Node, header.creationSeq+1,
+				header.versionLexerSnapshot() != nil, header.recoveryRegion() != nil, err,
+			)
 		}
 		if !header.convergedReductionSplit && header.dropCohortRefs.Empty() &&
 			!header.dropCohortRefs.Overflowed() && !header.dropCohortRefs.Blended() {
@@ -2125,6 +2129,11 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeWithMutation(
 	if s == nil {
 		return nil, 0, errors.New("parser-core phase zero: nil canonicalization scratch")
 	}
+	if s.groups != nil {
+		clear(s.groups)
+	}
+	clear(s.keys)
+	s.keys = s.keys[:0]
 	target := int(s.nextBuffer & 1)
 	if len(headers) != 0 && cap(s.headerBuffers[target]) != 0 && &headers[0] == &s.headerBuffers[target][:1][0] {
 		target ^= 1
@@ -2183,9 +2192,15 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeWithMutation(
 		if canonical, ok := compact.CanonicalBoundary(state, byteOffset, header.shifted, header.checkpoint); ok {
 			header.head = canonical
 		}
+		versionState := header.versionState
+		if header.versionLexerSnapshot() == nil {
+			// Preserve the pre-ownership canonical key. Recovery isolation keeps
+			// region-bearing versions separate when that distinction matters.
+			versionState = nil
+		}
 		key := diagnosticParserCorePhaseHead{
 			head: header.head, shifted: header.shifted, accepted: header.accepted,
-			checkpoint: header.checkpoint, versionState: header.versionState,
+			checkpoint: header.checkpoint, versionState: versionState,
 		}
 		s.keys[index] = key
 	}
@@ -2203,6 +2218,9 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeWithMutation(
 	if err != nil {
 		clear(normalized)
 		clear(s.keys)
+		if s.groups != nil {
+			clear(s.groups)
+		}
 		s.headerBuffers[target] = normalized[:0]
 		s.keys = s.keys[:0]
 		return nil, 0, err
@@ -2228,6 +2246,11 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeRecoveryWithMutation(
 	if s == nil || compact == nil {
 		return nil, 0, errors.New("parser-core phase zero: recovery canonicalization requires scratch and core")
 	}
+	if s.groups != nil {
+		clear(s.groups)
+	}
+	clear(s.keys)
+	s.keys = s.keys[:0]
 	target := int(s.nextBuffer & 1)
 	if len(headers) != 0 && cap(s.headerBuffers[target]) != 0 && &headers[0] == &s.headerBuffers[target][:1][0] {
 		target ^= 1
@@ -2564,12 +2587,18 @@ type diagnosticParserCoreGenericScheduler struct {
 	currentElection              DiagnosticParserCoreElection
 	tokenCell                    diagnosticParserCoreTokenCell
 	versionLexerBefore           dfaRelexSnapshot
+	versionLexerBeforeScratch    dfaRelexSnapshotScratch
 	versionLexerBeforeValid      bool
 	versionLexerBeforeElection   int
 	versionLexerBeforeCheckpoint core.CheckpointID
 	versionLexerRequests         []diagnosticParserCoreVersionLexerRequest
-	electionIndex                int
-	noLookaheadSteps             uint8
+	// versionLexerOwnershipActive marks the ragged election that switched this
+	// scheduler from its shared-token fast path to owned per-header cursors.
+	// The current slice only records the activation and declines before action
+	// execution; later slices will consume the pending requests.
+	versionLexerOwnershipActive bool
+	electionIndex               int
+	noLookaheadSteps            uint8
 	// recoveryIsolation becomes true only after S4 or S5 publishes two versions.
 	// Clean parses retain the canonical scheduler fast path.
 	recoveryIsolation bool
@@ -3981,6 +4010,33 @@ func resetDiagnosticParserCoreRetainedSlice[T any](items []T) []T {
 	return items[:0]
 }
 
+func resetDiagnosticParserCoreRetainedScannerBytes(items []byte) []byte {
+	if cap(items) == 0 {
+		return nil
+	}
+	if cap(items) > externalScannerSerializationBufferSize {
+		return nil
+	}
+	clear(items[:cap(items)])
+	return items[:0]
+}
+
+func resetDiagnosticParserCoreDFARelexSnapshotScratch(scratch dfaRelexSnapshotScratch) dfaRelexSnapshotScratch {
+	if cap(scratch.externalPayload) == externalScannerSerializationBufferSize {
+		clear(scratch.externalPayload[:cap(scratch.externalPayload)])
+		scratch.externalPayload = scratch.externalPayload[:0]
+	} else {
+		if cap(scratch.externalPayload) != 0 {
+			clear(scratch.externalPayload[:cap(scratch.externalPayload)])
+		}
+		scratch.externalPayload = nil
+	}
+	scratch.externalTokenStart = resetDiagnosticParserCoreRetainedScannerBytes(scratch.externalTokenStart)
+	scratch.externalTokenEnd = resetDiagnosticParserCoreRetainedScannerBytes(scratch.externalTokenEnd)
+	scratch.extZeroTried = resetDiagnosticParserCoreRetainedSlice(scratch.extZeroTried)
+	return scratch
+}
+
 func clearDiagnosticParserCoreHeaderBacking(headers []diagnosticParserCoreHeader) {
 	if cap(headers) == 0 {
 		return
@@ -4026,6 +4082,7 @@ func clearDiagnosticParserCoreGenericSchedulerVersionState(scheduler *diagnostic
 	scheduler.versionLexerBeforeValid = false
 	scheduler.versionLexerBeforeElection = 0
 	scheduler.versionLexerBeforeCheckpoint = 0
+	scheduler.versionLexerOwnershipActive = false
 }
 
 func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGenericScheduler) error {
@@ -4051,6 +4108,7 @@ func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGe
 	electGLRStates := resetDiagnosticParserCoreRetainedSlice(scheduler.electGLRStates)
 	acceptedPayloads := resetDiagnosticParserCoreRetainedSlice(scheduler.acceptedPayloads)
 	versionLexerRequests := resetDiagnosticParserCoreRetainedSlice(scheduler.versionLexerRequests)
+	versionLexerBeforeScratch := resetDiagnosticParserCoreDFARelexSnapshotScratch(scheduler.versionLexerBeforeScratch)
 	*scheduler = diagnosticParserCoreGenericScheduler{
 		summaryHeaderScratch: summaryHeaders,
 		dispatchScratch: diagnosticParserCoreDispatchScratch{
@@ -4061,15 +4119,16 @@ func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGe
 			outputs: conflictOutputs, armRanges: conflictArmRanges, adopted: conflictAdopted,
 			headerAssembly: conflictHeaderAssembly,
 		},
-		reductionOutputs:      reductionOutputs,
-		reductionReplacements: reductionReplacements,
-		footprintRefs:         footprintRefs,
-		classifiedBoundaries:  classifiedBoundaries,
-		condenseCandidates:    condenseCandidates,
-		electStates:           electStates,
-		electGLRStates:        electGLRStates,
-		acceptedPayloads:      acceptedPayloads,
-		versionLexerRequests:  versionLexerRequests,
+		reductionOutputs:          reductionOutputs,
+		reductionReplacements:     reductionReplacements,
+		footprintRefs:             footprintRefs,
+		classifiedBoundaries:      classifiedBoundaries,
+		condenseCandidates:        condenseCandidates,
+		electStates:               electStates,
+		electGLRStates:            electGLRStates,
+		acceptedPayloads:          acceptedPayloads,
+		versionLexerBeforeScratch: versionLexerBeforeScratch,
+		versionLexerRequests:      versionLexerRequests,
 	}
 	return nil
 }
@@ -4347,8 +4406,8 @@ func dropCohortSelectionClass(selected diagnosticParserCoreCellSelection) core.D
 // the external-scanner/isKeyword bits, which are provenance of the shared
 // token's own lex path, not of tokenization identity). Every other field
 // must already match the shared token exactly; this checks that assumption
-// instead of trusting it. A different EndByte never reaches this function --
-// dispatchPassActive routes that shape to the ragged-end decline instead.
+// instead of trusting it. A different EndByte never reaches this function.
+// dispatchPassActive activates owned per-header lexer requests for that shape.
 func diagnosticParserCoreSameSpanRelex(shared, relexed Token) (Token, bool) {
 	if relexed.Symbol == 0 || relexed.Symbol == shared.Symbol {
 		return Token{}, false
@@ -4455,10 +4514,9 @@ func diagnosticParserCoreConflictPolicyOrdinal(
 // shared election's tokenization. The probe accepts any genuine internal-
 // DFA token that starts where the shared election started; it may differ
 // in Symbol and/or EndByte/EndPoint from the shared token. The caller alone
-// decides what to do with a different EndByte (dispatchPassActive declines
-// that shape fail-closed instead of shifting it -- see the ragged-end
-// handling there); this probe only decides whether a same-start token
-// exists at all.
+// decides what to do with a different EndByte. dispatchPassActive switches
+// that shape to owned per-header requests before any shared action executes.
+// This probe only decides whether a same-start token exists at all.
 //
 // DisablePerHeaderSpanUnlockedRelex restores the pre-D2-1 span-locked
 // probe: only an exact-span (same StartByte and EndByte) relex is eligible.
@@ -4749,17 +4807,98 @@ func (s *diagnosticParserCoreGenericScheduler) requestHeaderLexerToken(index int
 	return s.requestVersionLexerHeader(index)
 }
 
-// captureSharedElectionSnapshot records the scanner state around the legacy
-// shared election. It does not change the shared path or publish a version.
+// captureSharedElectionSnapshot records the scanner state around the shared
+// election. It does not change the shared path or publish a version.
 func (s *diagnosticParserCoreGenericScheduler) captureSharedElectionSnapshot() error {
 	if s == nil || s.tokenSource == nil {
 		return errors.New("parser-core phase zero: shared lexer snapshot source is unavailable")
 	}
-	s.versionLexerBefore = s.tokenSource.snapshotRelexState()
+	s.versionLexerBefore = s.tokenSource.snapshotRelexStateWithScratch(&s.versionLexerBeforeScratch)
+	return s.finishSharedElectionSnapshotCapture()
+}
+
+// captureSharedElectionSnapshotFromExternalPayload uses checkpoint bytes that
+// the election already serialized. This keeps one Serialize call per election.
+func (s *diagnosticParserCoreGenericScheduler) captureSharedElectionSnapshotFromExternalPayload(externalPayload []byte) error {
+	if s == nil || s.tokenSource == nil {
+		return errors.New("parser-core phase zero: shared lexer snapshot source is unavailable")
+	}
+	s.versionLexerBefore = s.tokenSource.snapshotRelexStateWithScratchFromExternalPayload(
+		&s.versionLexerBeforeScratch,
+		externalPayload,
+	)
+	return s.finishSharedElectionSnapshotCapture()
+}
+
+func (s *diagnosticParserCoreGenericScheduler) finishSharedElectionSnapshotCapture() error {
 	s.versionLexerBeforeValid = true
 	s.versionLexerBeforeElection = s.electionIndex + 1
 	s.versionLexerBeforeCheckpoint = s.checkpointID
 	return nil
+}
+
+// activateVersionLexerOwnershipAtRagged starts the owned-cursor tranche at
+// the first different-span relex. Keep this activation separate from action
+// execution: the shared pass must not reduce a sibling after another header
+// proves that its lexer view has a different width.
+//
+// The current tranche records the complete request set and then declines with
+// an explicit pending-action boundary. A later tranche will dispatch those
+// requests under their own scanner phases.
+const diagnosticParserCoreOwnedDispatchPendingDetail = "generic scheduler owned dispatch pending"
+
+// DiagnosticParserCoreOwnedDispatchPendingDetailForTest exposes the stable
+// activation prefix without exposing scheduler internals.
+func DiagnosticParserCoreOwnedDispatchPendingDetailForTest() string {
+	return diagnosticParserCoreOwnedDispatchPendingDetail
+}
+
+func (s *diagnosticParserCoreGenericScheduler) activateVersionLexerOwnershipAtRagged(
+	raggedHeaderIndex int,
+	witness Token,
+) (*diagnosticParserCoreGenericUnsupported, error) {
+	if s == nil || raggedHeaderIndex < 0 || raggedHeaderIndex >= len(s.headers) {
+		return nil, errors.New("parser-core phase zero: ragged lexer ownership header index is out of range")
+	}
+	if s.versionLexerOwnershipActive {
+		return &diagnosticParserCoreGenericUnsupported{
+			boundary:    DiagnosticParserCoreRoute,
+			detail:      diagnosticParserCoreOwnedDispatchPendingDetail + ": ownership is already active",
+			headerIndex: raggedHeaderIndex,
+		}, nil
+	}
+	// A shifted header already consumed the shared token and therefore cannot
+	// be seeded at this election's token start. Keep this activation slice
+	// fail-closed until the scheduler owns that mixed frontier explicitly.
+	for index, header := range s.headers {
+		if header.shifted && !header.accepted {
+			return &diagnosticParserCoreGenericUnsupported{
+				boundary:    DiagnosticParserCoreRoute,
+				detail:      diagnosticParserCoreOwnedDispatchPendingDetail + ": ragged ownership has a shifted sibling",
+				headerIndex: index,
+			}, nil
+		}
+	}
+	if err := s.seedVersionLexerOwnership(); err != nil {
+		return nil, err
+	}
+	for index := range s.headers {
+		if s.headers[index].accepted {
+			continue
+		}
+		if err := s.requestHeaderLexerToken(index); err != nil {
+			return nil, err
+		}
+	}
+	s.versionLexerOwnershipActive = true
+	return &diagnosticParserCoreGenericUnsupported{
+		boundary: DiagnosticParserCoreRoute,
+		detail: fmt.Sprintf(
+			diagnosticParserCoreOwnedDispatchPendingDetail+": per-header lexer ownership activated at header %d for ragged token symbol=%d span=%d..%d",
+			raggedHeaderIndex, witness.Symbol, witness.StartByte, witness.EndByte,
+		),
+		headerIndex: raggedHeaderIndex,
+	}, nil
 }
 
 type diagnosticParserCoreDispatchScratch struct {
@@ -6651,6 +6790,51 @@ func diagnosticParserCoreDFARelexSnapshotRetainedBytes(snapshot dfaRelexSnapshot
 	return total
 }
 
+func diagnosticParserCoreDFARelexSnapshotAndScratchRetainedBytes(
+	snapshot dfaRelexSnapshot,
+	scratch dfaRelexSnapshotScratch,
+) uint64 {
+	total := uint64(0)
+	addPair := func(left, right unsafe.Pointer, leftCap, rightCap int, size uintptr) {
+		if size == 0 || total == math.MaxUint64 {
+			return
+		}
+		count := leftCap + rightCap
+		if left != nil && left == right {
+			count = max(leftCap, rightCap)
+		}
+		if count <= 0 || uint64(count) > math.MaxUint64/uint64(size) {
+			if count > 0 {
+				total = math.MaxUint64
+			}
+			return
+		}
+		bytes := uint64(count) * uint64(size)
+		if math.MaxUint64-total < bytes {
+			total = math.MaxUint64
+			return
+		}
+		total += bytes
+	}
+	bytePointer := func(items []byte) unsafe.Pointer {
+		if cap(items) == 0 {
+			return nil
+		}
+		return unsafe.Pointer(&items[:cap(items)][0])
+	}
+	boolPointer := func(items []bool) unsafe.Pointer {
+		if cap(items) == 0 {
+			return nil
+		}
+		return unsafe.Pointer(&items[:cap(items)][0])
+	}
+	addPair(bytePointer(snapshot.externalPayload), bytePointer(scratch.externalPayload), cap(snapshot.externalPayload), cap(scratch.externalPayload), 1)
+	addPair(bytePointer(snapshot.externalTokenStart), bytePointer(scratch.externalTokenStart), cap(snapshot.externalTokenStart), cap(scratch.externalTokenStart), 1)
+	addPair(bytePointer(snapshot.externalTokenEnd), bytePointer(scratch.externalTokenEnd), cap(snapshot.externalTokenEnd), cap(scratch.externalTokenEnd), 1)
+	addPair(boolPointer(snapshot.extZeroTried), boolPointer(scratch.extZeroTried), cap(snapshot.extZeroTried), cap(scratch.extZeroTried), unsafe.Sizeof(bool(false)))
+	return total
+}
+
 func compareDiagnosticParserCoreFootprintRefs(
 	left, right diagnosticParserCoreFootprintRef,
 ) int {
@@ -6774,7 +6958,9 @@ func diagnosticParserCoreSchedulerFootprintBytes(s *diagnosticParserCoreGenericS
 	add(cap(s.electGLRStates), unsafe.Sizeof(StateID(0)))
 	add(cap(s.acceptedPayloads), unsafe.Sizeof(core.SubtreeID(0)))
 	add(cap(s.versionLexerRequests), unsafe.Sizeof(diagnosticParserCoreVersionLexerRequest{}))
-	addBytes(diagnosticParserCoreDFARelexSnapshotRetainedBytes(s.versionLexerBefore))
+	addBytes(diagnosticParserCoreDFARelexSnapshotAndScratchRetainedBytes(
+		s.versionLexerBefore, s.versionLexerBeforeScratch,
+	))
 	add(len(s.seedHeaders), unsafe.Sizeof(diagnosticParserCoreHeader{}))
 	add(len(s.corridorCells), unsafe.Sizeof(diagnosticParserCoreGenericCell{}))
 	add(1, unsafe.Sizeof(s.tokenCell))
@@ -6915,7 +7101,13 @@ func (s *diagnosticParserCoreGenericScheduler) observeCapPressure() error {
 	return nil
 }
 
+var errDiagnosticParserCoreTerminalSchedulerResume = errors.New("parser-core phase zero: terminal scheduler cannot resume")
+
 func (s *diagnosticParserCoreGenericScheduler) run() error {
+	if s != nil && s.receipt != nil &&
+		(s.receipt.Acceptance != nil || s.receipt.Completion != nil || s.receipt.Stop.Detail != "") {
+		return errDiagnosticParserCoreTerminalSchedulerResume
+	}
 	if err := s.pollStopControl(); err != nil {
 		return err
 	}
@@ -7009,10 +7201,8 @@ const diagnosticParserCoreNoTableActionDetail = "generic scheduler has no table 
 
 // DiagnosticParserCoreNoTableActionDetailForTest exposes
 // diagnosticParserCoreNoTableActionDetail so the external test package can
-// assert on the genuinely-empty-row decline's exact detail -- for example,
-// to prove DisablePerHeaderSpanUnlockedRelex restores this legacy detail
-// exactly in place of the D2-1 ragged-end decline's own detail -- without
-// duplicating the literal string.
+// assert on the genuinely-empty-row decline's exact detail. This proves that
+// DisablePerHeaderSpanUnlockedRelex restores the legacy route.
 func DiagnosticParserCoreNoTableActionDetailForTest() string {
 	return diagnosticParserCoreNoTableActionDetail
 }
@@ -7033,7 +7223,18 @@ func DiagnosticParserCoreContextualCloseAngleDeferralDetailForTest() string {
 	return diagnosticParserCoreContextualCloseAngleDeferralDetail
 }
 
-// diagnosticParserCoreRaggedRelexDeclineDetail is the decline detail prefix
+// diagnosticParserCoreRaggedRelexDeclineDetail is the former shared-cursor
+// decline detail prefix. Keep it for telemetry migrations and regression
+// tests that must distinguish the pre-ownership fallback from activation.
+// It describes a no-action head whose own-mode relex found a different end.
+//
+// The active scheduler now preempts the shared pass and publishes owned lexer
+// requests at the first such witness. It does not emit this detail there.
+//
+// The different-span shape starts where the shared election started but ends
+// at another byte. It can be wider or narrower.
+//
+// Historical detail format:
 // for a no-action head whose own-mode per-header relex (relexTokenForState)
 // found a genuine internal-DFA token starting where the shared election
 // started but ending at a different byte (D2-1's different-span shape,
@@ -7041,8 +7242,7 @@ func DiagnosticParserCoreContextualCloseAngleDeferralDetailForTest() string {
 // still used in a few surrounding identifiers and comments). This
 // scheduler shares one token source's byte cursor across every header in a
 // pass; shifting one header onto a wider or narrower span than every other
-// header sees would desynchronize that shared cursor, so this shape always
-// declines fail-closed instead of shifting -- never a guess. Kept distinct
+// header sees would desynchronize that shared cursor. Kept distinct
 // from diagnosticParserCoreNoTableActionDetail and
 // diagnosticParserCoreContextualCloseAngleDeferralDetail so census,
 // receipts, and tests can tell the three shapes apart even though all three
@@ -7363,20 +7563,21 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				relexed, ok := s.relexTokenForState(state, s.token)
 				if ok {
 					if relexed.EndByte != s.token.EndByte {
-						// A different span (D2-1): this header's own lex mode found a
-						// genuine internal-DFA token starting where the shared
-						// election started but ending at a different byte.
-						// Every header in this pass shares one token source's
-						// byte cursor; shifting only this header onto a wider
-						// or narrower span would desynchronize that cursor for
-						// every other header. Decline fail-closed instead of
-						// guessing -- excluded from the genuinely-empty-row
-						// classification and from s3TryOpenErrorRegion below,
-						// the same way a contextual close-angle deferral is.
 						if raggedRelexNoActionHeads == 0 {
 							raggedRelexWitness = relexed
 							raggedRelexHeaderIndex = index
+							raggedRelexNoActionHeads++
+							// A different span proves that this election cannot
+							// continue on the shared cursor. Discard every cell
+							// classified earlier in this pass before ownership
+							// publishes its per-header requests.
+							s.dispatchScratch.cells = s.dispatchScratch.cells[:0]
+							s.dispatchScratch.noActionIndices = s.dispatchScratch.noActionIndices[:0]
+							return s.activateVersionLexerOwnershipAtRagged(index, relexed)
 						}
+						// A second witness cannot occur in this activation pass,
+						// but keep the legacy accounting if a future caller
+						// continues after the first owned request.
 						raggedRelexNoActionHeads++
 						s.dispatchScratch.noActionIndices = append(s.dispatchScratch.noActionIndices, index)
 						continue
@@ -7502,17 +7703,17 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			return nil, s.dropGenericNoActionHeads(noActionIndices)
 		}
 		if len(noActionIndices) != 0 {
-			// pausedNoActionHeads == 0 && deferredNoActionHeads == 0 &&
-			// raggedRelexNoActionHeads == 0 means every no-action head
+			// pausedNoActionHeads == 0, deferredNoActionHeads == 0, and
+			// raggedRelexNoActionHeads == 0 mean every no-action head
 			// reached this point through a genuinely empty action row (no
 			// table action for the elected token), not through the
 			// unrelated group-election pause tracked by header.paused
 			// above, not through the issue #983 contextual close-angle
 			// deferral tracked by deferredNoActionHeads above, and not
-			// through the D2-1 ragged-end decline tracked by
+			// through the legacy ragged-span fallback tracked by
 			// raggedRelexNoActionHeads above. The close-angle deferral has a
 			// real, non-empty action row the header must not take this pass.
-			// The ragged-end decline's own action row is empty too (that
+			// The legacy ragged-span row is empty too. That
 			// emptiness is what triggers the per-header relex in the first
 			// place), but a live C stack in this exact state may relex its
 			// own version and shift that token instead of entering recovery
@@ -7570,7 +7771,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			}
 			if pausedNoActionHeads == 0 && deferredNoActionHeads == 0 {
 				// raggedRelexNoActionHeads > 0: at least one no-action head
-				// reached this point through the D2-1 ragged-end decline
+				// reached this dormant legacy path
 				// (relexTokenForState found a genuine, same-start relex
 				// whose EndByte differs from the shared election), not a
 				// genuinely empty action row and not the close-angle
@@ -7579,7 +7780,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				// 1, and a ragged relex needs len(s.headers) > 1 (the guard
 				// above), so the two conditions cannot both hold today. The
 				// exclusion documents intent and stays safe if either guard
-				// changes later, instead of silently letting a ragged-end
+				// changes later, instead of silently letting a ragged-span
 				// header reach the S3 resume path, which re-reads the raw
 				// table without this decline's own reasoning and could
 				// bounce forever. Keep the boundary class Recovery so routing is unchanged;
@@ -8608,6 +8809,11 @@ func (s *diagnosticParserCoreGenericScheduler) collapseToRecoveryWinner(winner i
 		if cap(buffer) != 0 {
 			clear(buffer)
 		}
+	}
+	clear(s.canonicalScratch.keys)
+	s.canonicalScratch.keys = s.canonicalScratch.keys[:0]
+	if s.canonicalScratch.groups != nil {
+		clear(s.canonicalScratch.groups)
 	}
 	s.headers = s.headers[:1]
 	s.headers[0] = winnerHeader
@@ -9919,29 +10125,31 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		outputDropCohortRefs := output.DropCohortRefs
 		switch output.Freshness {
 		case core.ReductionUnchanged:
-			if convergedHistory || resurrectionUnproved {
-				adopted, err := s.adoptUpdatedReductionSiblingOwned(
-					owner,
-					cell.headerIndex,
-					output.Head,
-					rank,
-					lineage,
-					outputSet,
-					outputSetBlended,
-					outputDropCohortRefs,
-					convergedHistory,
-					resurrectionUnproved,
-					core.DropCohortProducerSiblingAdoption,
-				)
-				if err != nil {
-					return err
+			// An unchanged output already names a live physical head. Reuse its
+			// existing scheduler slot only when the complete immutable version
+			// identity matches. Distinct owned cursors remain fail-closed until
+			// the physical-head merge package.
+			adopted, err := s.adoptUpdatedReductionSiblingOwned(
+				owner,
+				cell.headerIndex,
+				output.Head,
+				rank,
+				lineage,
+				outputSet,
+				outputSetBlended,
+				outputDropCohortRefs,
+				convergedHistory,
+				resurrectionUnproved,
+				core.DropCohortProducerSiblingAdoption,
+			)
+			if err != nil {
+				return err
+			}
+			if adopted {
+				if reductionFrontierSequence != 0 {
+					s.attachDiagnosticParserCoreFrontierToHead(output.Head, reductionFrontierSequence)
 				}
-				if adopted {
-					if reductionFrontierSequence != 0 {
-						s.attachDiagnosticParserCoreFrontierToHead(output.Head, reductionFrontierSequence)
-					}
-					continue
-				}
+				continue
 			}
 		case core.ReductionNew, core.ReductionUpdated:
 		default:
@@ -10156,8 +10364,8 @@ func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(
 		}
 		header := s.headers[index]
 		if header.versionState != sourceVersionState {
-			// A canonical head does not prove equal lexer history. Keep forks
-			// with different immutable scanner state as separate versions.
+			// A canonical head does not prove equal version history. Keep forks
+			// with distinct immutable state as separate versions.
 			continue
 		}
 		state, byteOffset, err := s.compact.Boundary(header.head)
@@ -11044,6 +11252,13 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 		s.tokenSource.SetGLRStates(glr)
 	}
 	beforeBytes := s.tokenSource.captureExternalScannerStateInto(s.scannerScratch)
+	// Retain the exact DFA and scanner state at this election's token start.
+	// A ragged per-header relex may activate ownership before any shared cell
+	// executes. Reuse the checkpoint serialization instead of serializing the
+	// scanner twice at the same cursor.
+	if err := s.captureSharedElectionSnapshotFromExternalPayload(beforeBytes); err != nil {
+		return err
+	}
 	beforeID, before, err := diagnosticParserCoreInternCheckpoint(s.compact, beforeBytes)
 	if err != nil {
 		return err

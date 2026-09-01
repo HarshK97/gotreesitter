@@ -3,18 +3,21 @@
 package gotreesitter
 
 import (
+	"strings"
 	"testing"
 	"unsafe"
 
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
 
-func TestDiagnosticParserCoreCanonicalVersionStateIdentity(t *testing.T) {
+func TestDiagnosticParserCoreCanonicalVersionLexerSnapshotIdentity(t *testing.T) {
 	compact, head, _ := newDiagnosticParserCoreCanonicalTestCore(t)
 	for _, count := range []int{2, diagnosticParserCoreLinearCanonicalLimit + 1} {
 		t.Run("frontier_"+string(rune('0'+count)), func(t *testing.T) {
-			first := &diagnosticParserCoreVersionState{}
-			second := &diagnosticParserCoreVersionState{}
+			firstSnapshot := &diagnosticParserCoreVersionLexerSnapshot{}
+			secondSnapshot := &diagnosticParserCoreVersionLexerSnapshot{}
+			first := &diagnosticParserCoreVersionState{relexSnapshot: firstSnapshot}
+			second := &diagnosticParserCoreVersionState{relexSnapshot: secondSnapshot}
 			headers := make([]diagnosticParserCoreHeader, count)
 			for index := range headers {
 				headers[index] = diagnosticParserCoreHeader{head: head, versionState: first}
@@ -26,7 +29,7 @@ func TestDiagnosticParserCoreCanonicalVersionStateIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			if len(out) != 2 {
-				t.Fatalf("divergent version states merged: len=%d output=%+v", len(out), out)
+				t.Fatalf("divergent lexer snapshots merged: len=%d output=%+v", len(out), out)
 			}
 			seenFirst, seenSecond := false, false
 			for _, header := range out {
@@ -34,7 +37,7 @@ func TestDiagnosticParserCoreCanonicalVersionStateIdentity(t *testing.T) {
 				seenSecond = seenSecond || header.versionState == second
 			}
 			if !seenFirst || !seenSecond {
-				t.Fatalf("canonical output lost a version identity: %+v", out)
+				t.Fatalf("canonical output lost a lexer snapshot identity: %+v", out)
 			}
 
 			shared := make([]diagnosticParserCoreHeader, count)
@@ -46,16 +49,29 @@ func TestDiagnosticParserCoreCanonicalVersionStateIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			if len(out) != 1 || out[0].versionState != first {
-				t.Fatalf("equal fork states did not merge: len=%d output=%+v", len(out), out)
+				t.Fatalf("equal lexer snapshots did not merge: len=%d output=%+v", len(out), out)
+			}
+
+			shared[count-1].versionState = &diagnosticParserCoreVersionState{
+				s3Region: &diagnosticParserCoreS3Region{}, relexSnapshot: firstSnapshot,
+			}
+			out, err = scratch.canonicalize(compact, shared)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(out) != 2 {
+				t.Fatalf("distinct recovery region merged through equal lexer snapshots: len=%d output=%+v", len(out), out)
 			}
 		})
 	}
 }
 
-func TestDiagnosticParserCoreReductionSiblingAdoptionRequiresVersionStateIdentity(t *testing.T) {
+func TestDiagnosticParserCoreReductionSiblingAdoptionRequiresVersionLexerSnapshotIdentity(t *testing.T) {
 	compact, head, _ := newDiagnosticParserCoreCanonicalTestCore(t)
-	first := &diagnosticParserCoreVersionState{}
-	second := &diagnosticParserCoreVersionState{}
+	firstSnapshot := &diagnosticParserCoreVersionLexerSnapshot{}
+	secondSnapshot := &diagnosticParserCoreVersionLexerSnapshot{}
+	first := &diagnosticParserCoreVersionState{relexSnapshot: firstSnapshot}
+	second := &diagnosticParserCoreVersionState{relexSnapshot: secondSnapshot}
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact,
 		headers: []diagnosticParserCoreHeader{
@@ -70,25 +86,37 @@ func TestDiagnosticParserCoreReductionSiblingAdoptionRequiresVersionStateIdentit
 		t.Fatal(err)
 	}
 	if adopted {
-		t.Fatal("sibling adoption merged divergent version states")
+		t.Fatal("sibling adoption merged divergent lexer snapshots")
 	}
 	if scheduler.headers[1].versionState != second || !scheduler.headers[1].paused {
 		t.Fatalf("divergent sibling changed: %+v", scheduler.headers[1])
 	}
 
+	scheduler.headers[1].versionState = &diagnosticParserCoreVersionState{
+		s3Region: &diagnosticParserCoreS3Region{}, relexSnapshot: firstSnapshot,
+	}
+	adopted, err = scheduler.adoptUpdatedReductionSibling(
+		0, head, core.CleanPathRankUnknown, 0, core.AlternativeSet{}, false, false, false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted {
+		t.Fatal("sibling adoption merged a distinct recovery region")
+	}
 	scheduler.headers[1].versionState = first
 	adopted, err = scheduler.adoptUpdatedReductionSibling(
 		0, head, core.CleanPathRankUnknown, 0, core.AlternativeSet{}, false, false, false,
 	)
 	if err != nil || !adopted {
-		t.Fatalf("equal version states were not adopted: adopted=%t err=%v", adopted, err)
+		t.Fatalf("equal immutable version state was not adopted: adopted=%t err=%v", adopted, err)
 	}
 }
 
-func TestDiagnosticParserCoreReductionUnchangedDistinctStateIsRetained(t *testing.T) {
+func TestDiagnosticParserCoreReductionUnchangedDistinctLexerSnapshotIsRetained(t *testing.T) {
 	compact, head, _ := newDiagnosticParserCoreCanonicalTestCore(t)
-	first := &diagnosticParserCoreVersionState{}
-	second := &diagnosticParserCoreVersionState{}
+	first := &diagnosticParserCoreVersionState{relexSnapshot: &diagnosticParserCoreVersionLexerSnapshot{}}
+	second := &diagnosticParserCoreVersionState{relexSnapshot: &diagnosticParserCoreVersionLexerSnapshot{}}
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact,
 		headers: []diagnosticParserCoreHeader{
@@ -107,7 +135,7 @@ func TestDiagnosticParserCoreReductionUnchangedDistinctStateIsRetained(t *testin
 	}
 }
 
-func TestDiagnosticParserCoreGenericReductionUnchangedDistinctStateIsRetained(t *testing.T) {
+func TestDiagnosticParserCoreGenericReductionUnchangedDistinctLexerSnapshotFailsClosedBeforePhysicalMerge(t *testing.T) {
 	table := &genericConflictTable{
 		cells: map[genericConflictCell][]core.Action{
 			{state: 1, symbol: 8}: {{Type: core.ActionShift, State: 3}},
@@ -120,13 +148,73 @@ func TestDiagnosticParserCoreGenericReductionUnchangedDistinctStateIsRetained(t 
 	if err != nil || len(initial) != 1 {
 		t.Fatalf("initial reduction outputs=%+v err=%v", initial, err)
 	}
-	first := &diagnosticParserCoreVersionState{}
-	second := &diagnosticParserCoreVersionState{}
+	if initial[0].Freshness != core.ReductionNew {
+		t.Fatalf("initial reduction freshness=%v, want new prepopulation", initial[0].Freshness)
+	}
+	first := &diagnosticParserCoreVersionState{relexSnapshot: &diagnosticParserCoreVersionLexerSnapshot{}}
+	second := &diagnosticParserCoreVersionState{relexSnapshot: &diagnosticParserCoreVersionLexerSnapshot{}}
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact,
 		headers: []diagnosticParserCoreHeader{
-			{head: source, versionState: first},
-			{head: initial[0].Head, versionState: second},
+			{head: source, creationSeq: 6, versionState: first},
+			{head: initial[0].Head, creationSeq: 7, versionState: second},
+		},
+		token: Token{Symbol: 9, StartByte: 1, EndByte: 2},
+		options: DiagnosticParserCorePrefixOptions{
+			MaxDispatches: 20,
+			ReceiptMode:   DiagnosticParserCoreReceiptSummary,
+		},
+		receipt: &DiagnosticParserCoreGenericScheduler{},
+	}
+	before, err := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, scheduler.headers[0], 9)
+	err = scheduler.applyGenericReduction(before, cell)
+	if err == nil || !strings.Contains(err.Error(), "compact head has multiple scheduler owners") {
+		t.Fatalf("distinct-snapshot physical alias error=%v, want explicit owner conflict", err)
+	}
+	if len(scheduler.reductionOutputs) != 1 || scheduler.reductionOutputs[0].Freshness != core.ReductionUnchanged {
+		t.Fatalf("repeated reduction outputs=%+v, want one unchanged output", scheduler.reductionOutputs)
+	}
+	if len(scheduler.headers) != 2 {
+		t.Fatalf("distinct unchanged reduction output changed the frontier before failing closed: headers=%+v", scheduler.headers)
+	}
+	seenFirst, seenSecond := false, false
+	for _, header := range scheduler.headers {
+		seenFirst = seenFirst || header.versionState == first
+		seenSecond = seenSecond || header.versionState == second
+	}
+	if !seenFirst || !seenSecond {
+		t.Fatalf("reduction retained the wrong version identities: %+v", scheduler.headers)
+	}
+	if scheduler.headers[0].head != source || scheduler.headers[1].head != initial[0].Head {
+		t.Fatalf("owner-conflict rollback did not restore the original physical heads: headers=%+v", scheduler.headers)
+	}
+}
+
+func TestDiagnosticParserCoreGenericReductionUnchangedEqualSnapshotDoesNotDuplicatePhysicalHead(t *testing.T) {
+	table := &genericConflictTable{
+		cells: map[genericConflictCell][]core.Action{
+			{state: 1, symbol: 8}: {{Type: core.ActionShift, State: 3}},
+			{state: 3, symbol: 9}: {{Type: core.ActionReduce, Symbol: 2, ChildCount: 1}},
+		},
+		gotos: map[genericConflictCell]core.StateID{{state: 1, symbol: 2}: 4},
+	}
+	compact, source := newGenericFreshnessSource(t, table)
+	initial, err := compact.ReduceOutputs(source, 9, 0, core.ForkOrder{})
+	if err != nil || len(initial) != 1 {
+		t.Fatalf("initial reduction outputs=%+v err=%v", initial, err)
+	}
+	if initial[0].Freshness != core.ReductionNew {
+		t.Fatalf("initial reduction freshness=%v, want new prepopulation", initial[0].Freshness)
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact: compact,
+		headers: []diagnosticParserCoreHeader{
+			{head: source, creationSeq: 6},
+			{head: initial[0].Head, creationSeq: 7},
 		},
 		token: Token{Symbol: 9, StartByte: 1, EndByte: 2},
 		options: DiagnosticParserCorePrefixOptions{
@@ -143,16 +231,25 @@ func TestDiagnosticParserCoreGenericReductionUnchangedDistinctStateIsRetained(t 
 	if err := scheduler.applyGenericReduction(before, cell); err != nil {
 		t.Fatal(err)
 	}
-	if len(scheduler.headers) != 2 {
-		t.Fatalf("distinct unchanged reduction output was dropped: headers=%+v", scheduler.headers)
+	if len(scheduler.reductionOutputs) != 1 || scheduler.reductionOutputs[0].Freshness != core.ReductionUnchanged {
+		t.Fatalf("repeated reduction outputs=%+v, want one unchanged output", scheduler.reductionOutputs)
 	}
-	seenFirst, seenSecond := false, false
-	for _, header := range scheduler.headers {
-		seenFirst = seenFirst || header.versionState == first
-		seenSecond = seenSecond || header.versionState == second
+	if len(scheduler.headers) != 2 || scheduler.headers[0].head != source || !scheduler.headers[0].paused ||
+		scheduler.headers[1].head != initial[0].Head || scheduler.headers[1].paused {
+		t.Fatalf("equal-snapshot unchanged output duplicated its physical sibling: %+v", scheduler.headers)
 	}
-	if !seenFirst || !seenSecond {
-		t.Fatalf("reduction retained the wrong version identities: %+v", scheduler.headers)
+	if scheduler.headers[0].head.Node == scheduler.headers[1].head.Node {
+		t.Fatalf("equal-snapshot unchanged output retained duplicate physical node %d", scheduler.headers[0].head.Node)
+	}
+	if err := compact.ApplySchedulerAtomic(func(owner core.SchedulerTransactionToken) error {
+		return compact.RecordHeadOwnerOwned(owner, scheduler.headers[1].head, 9)
+	}); err == nil || !strings.Contains(err.Error(), "multiple scheduler owners") {
+		t.Fatalf("scheduler persistence did not bind the surviving physical head to owner 8: %v", err)
+	}
+	if err := compact.ApplySchedulerAtomic(func(owner core.SchedulerTransactionToken) error {
+		return compact.RecordHeadOwnerOwned(owner, scheduler.headers[1].head, 8)
+	}); err != nil {
+		t.Fatalf("surviving physical head rejected its persisted scheduler owner 8: %v", err)
 	}
 }
 
@@ -288,6 +385,12 @@ func TestDiagnosticParserCoreRecoveryCollapseClearsDiscardedVersionStateTail(t *
 		headers: active,
 		canonicalScratch: diagnosticParserCoreCanonicalScratch{
 			headerBuffers: [2][]diagnosticParserCoreHeader{canonical, canonical},
+			keys: []diagnosticParserCorePhaseHead{
+				{versionState: discarded},
+			},
+			groups: map[diagnosticParserCorePhaseHead]diagnosticParserCoreCanonicalGroup{
+				{versionState: discarded}: {},
+			},
 		},
 	}
 	scheduler.collapseToRecoveryWinner(0)
@@ -301,6 +404,34 @@ func TestDiagnosticParserCoreRecoveryCollapseClearsDiscardedVersionStateTail(t *
 		if buffer[:cap(buffer)][0].versionState != nil || buffer[:cap(buffer)][1].versionState != nil {
 			t.Fatalf("recovery collapse retained canonical buffer %d state", index)
 		}
+	}
+	if len(scheduler.canonicalScratch.keys) != 0 || len(scheduler.canonicalScratch.groups) != 0 {
+		t.Fatalf("recovery collapse retained canonical keys/groups=%d/%d",
+			len(scheduler.canonicalScratch.keys), len(scheduler.canonicalScratch.groups))
+	}
+}
+
+func TestDiagnosticParserCoreMappedCanonicalErrorReleasesVersionStateKeys(t *testing.T) {
+	compact, _, _ := newDiagnosticParserCoreCanonicalTestCore(t)
+	headers := make([]diagnosticParserCoreHeader, 0, diagnosticParserCoreLinearCanonicalLimit+2)
+	for index := 0; index <= diagnosticParserCoreLinearCanonicalLimit; index++ {
+		head, err := compact.Seed(core.StateID(index+10), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		headers = append(headers, diagnosticParserCoreHeader{
+			head: head, versionState: &diagnosticParserCoreVersionState{},
+		})
+	}
+	malformed := headers[0]
+	malformed.dropCohortRefs = core.DropCohortRefSet{Count: 3}
+	headers = append(headers, malformed)
+	var scratch diagnosticParserCoreCanonicalScratch
+	if _, err := scratch.canonicalize(compact, headers); err == nil {
+		t.Fatal("mapped canonicalization accepted an invalid reference set")
+	}
+	if len(scratch.keys) != 0 || len(scratch.groups) != 0 {
+		t.Fatalf("mapped canonical error retained keys/groups=%d/%d", len(scratch.keys), len(scratch.groups))
 	}
 }
 
@@ -356,12 +487,18 @@ func TestDiagnosticParserCoreSchedulerFootprintCountsWideSharedVersionStates(t *
 	}
 }
 
-func TestDiagnosticParserCoreCanonicalKeyAndGroupStatesAreAccounted(t *testing.T) {
+func TestDiagnosticParserCoreCanonicalKeyAndGroupSnapshotsAreAccounted(t *testing.T) {
 	compact, head, _ := newDiagnosticParserCoreCanonicalTestCore(t)
-	keyState := &diagnosticParserCoreVersionState{}
-	groupState := &diagnosticParserCoreVersionState{}
-	key := diagnosticParserCorePhaseHead{head: head, versionState: keyState}
-	groupKey := diagnosticParserCorePhaseHead{head: head, versionState: groupState}
+	keySnapshot := &diagnosticParserCoreVersionLexerSnapshot{}
+	groupSnapshot := &diagnosticParserCoreVersionLexerSnapshot{}
+	keyRegion := &diagnosticParserCoreS3Region{children: make([]core.SubtreeID, 1, 3)}
+	groupRegion := &diagnosticParserCoreS3Region{children: make([]core.SubtreeID, 1, 4)}
+	key := diagnosticParserCorePhaseHead{head: head, versionState: &diagnosticParserCoreVersionState{
+		s3Region: keyRegion, relexSnapshot: keySnapshot,
+	}}
+	groupKey := diagnosticParserCorePhaseHead{head: head, versionState: &diagnosticParserCoreVersionState{
+		s3Region: groupRegion, relexSnapshot: groupSnapshot,
+	}}
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact,
 		canonicalScratch: diagnosticParserCoreCanonicalScratch{
@@ -371,11 +508,53 @@ func TestDiagnosticParserCoreCanonicalKeyAndGroupStatesAreAccounted(t *testing.T
 	}
 	base := diagnosticParserCoreSchedulerFootprintBytes(&diagnosticParserCoreGenericScheduler{compact: compact})
 	got := diagnosticParserCoreSchedulerFootprintBytes(scheduler) - base
-	minimum := uint64(2) * uint64(unsafe.Sizeof(diagnosticParserCoreVersionState{}))
+	minimum := uint64(2)*uint64(unsafe.Sizeof(diagnosticParserCoreVersionLexerSnapshot{})) +
+		uint64(2)*uint64(unsafe.Sizeof(diagnosticParserCoreVersionState{})) +
+		diagnosticParserCoreVersionS3RegionFootprintBytes(keyRegion) +
+		diagnosticParserCoreVersionS3RegionFootprintBytes(groupRegion)
 	if got < minimum {
-		t.Fatalf("canonical key/group states were not accounted: delta=%d minimum=%d", got, minimum)
+		t.Fatalf("canonical key/group version state was not accounted: delta=%d minimum=%d", got, minimum)
 	}
 	if len(scheduler.footprintRefs) != 0 {
 		t.Fatalf("footprint refs retained logical entries: len=%d", len(scheduler.footprintRefs))
+	}
+}
+
+func TestDiagnosticParserCoreCanonicalGroupsReleaseSnapshotKeysOnNarrowPaths(t *testing.T) {
+	compact, head, _ := newDiagnosticParserCoreCanonicalTestCore(t)
+	wide := make([]diagnosticParserCoreHeader, diagnosticParserCoreLinearCanonicalLimit+1)
+	for index := range wide {
+		wide[index] = diagnosticParserCoreHeader{
+			head: head,
+			versionState: &diagnosticParserCoreVersionState{
+				relexSnapshot: &diagnosticParserCoreVersionLexerSnapshot{},
+			},
+		}
+	}
+	var scratch diagnosticParserCoreCanonicalScratch
+	out, err := scratch.canonicalize(compact, wide)
+	if err != nil || len(out) != len(wide) || len(scratch.groups) != len(wide) {
+		t.Fatalf("mapped canonicalization output/groups=%d/%d err=%v, want %d/%d", len(out), len(scratch.groups), err, len(wide), len(wide))
+	}
+	if _, err := scratch.canonicalize(compact, wide[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if len(scratch.groups) != 0 {
+		t.Fatalf("single-header canonicalization retained %d snapshot keys", len(scratch.groups))
+	}
+	if _, err := scratch.canonicalize(compact, wide); err != nil {
+		t.Fatal(err)
+	}
+	if len(scratch.groups) != len(wide) {
+		t.Fatalf("mapped canonicalization repopulated %d groups, want %d", len(scratch.groups), len(wide))
+	}
+	if _, err := scratch.canonicalizeRecovery(compact, wide[:2]); err != nil {
+		t.Fatal(err)
+	}
+	if len(scratch.groups) != 0 {
+		t.Fatalf("recovery canonicalization retained %d snapshot keys", len(scratch.groups))
+	}
+	if len(scratch.keys) != 0 {
+		t.Fatalf("recovery canonicalization retained %d stale phase keys", len(scratch.keys))
 	}
 }
