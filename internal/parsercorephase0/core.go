@@ -1277,17 +1277,20 @@ type Core struct {
 	reductionSourceOwner           uint32
 	transactions                   []uint64
 	nextTransaction                uint64
-	classificationPhase            uint64
-	work                           Work
-	popScratch                     popEnumerationScratch
-	reductionScratch               reductionOutputScratch
-	historicalNodeScratch          []NodeID
-	cohortHeadScratch              []Head
-	factorLinkScratch              []linkRecord
-	selectedBuild                  selectedStoreBuildScratch
-	selectedPoolMu                 sync.Mutex
-	selectedPool                   selectedStoreBacking
-	schedulerFrame                 schedulerTransactionFrame
+	// resetGeneration identifies the retained arena lifetime. It changes only
+	// when Reset clears the core, so phase checkpoints can advance independently.
+	resetGeneration       uint64
+	classificationPhase   uint64
+	work                  Work
+	popScratch            popEnumerationScratch
+	reductionScratch      reductionOutputScratch
+	historicalNodeScratch []NodeID
+	cohortHeadScratch     []Head
+	factorLinkScratch     []linkRecord
+	selectedBuild         selectedStoreBuildScratch
+	selectedPoolMu        sync.Mutex
+	selectedPool          selectedStoreBacking
+	schedulerFrame        schedulerTransactionFrame
 	// metadataConstructionAuthenticated remains true only while every compact
 	// subtree was published through the authenticated shift/reduction seams.
 	// Diagnostic generic publication clears it monotonically until Reset.
@@ -2011,6 +2014,7 @@ func New(tables TableView, limits Limits) (*Core, error) {
 	core := &Core{
 		tables: tables, limits: limits, frontier: 1, boundaries: boundaries,
 		checkpoints:                       newCheckpointInterner(limits.MaxCheckpoints, limits.MaxCheckpointBytes),
+		resetGeneration:                   1,
 		classificationPhase:               1,
 		dropCohortOwner:                   owner,
 		dropCohortEpoch:                   1,
@@ -2049,6 +2053,25 @@ func (c *Core) AuthenticationGeneration() uint64 {
 	return c.classificationPhase
 }
 
+// PhaseScannerCheckpoints returns the current scanner checkpoint binding.
+// The exact flag is true only when start and end authenticate one token.
+func (c *Core) PhaseScannerCheckpoints() (checkpoint, start, end CheckpointID, exact bool) {
+	if c == nil {
+		return 0, 0, 0, false
+	}
+	return c.checkpoint, c.externalTokenScannerStart, c.externalTokenScannerEnd, c.externalTokenScannerExact
+}
+
+// ResetGeneration identifies the current retained Core arena lifetime. It
+// changes only when Reset clears the arena, not when a frontier or checkpoint
+// advances its authentication phase.
+func (c *Core) ResetGeneration() uint64 {
+	if c == nil {
+		return 0
+	}
+	return c.resetGeneration
+}
+
 // Reset returns the compact core to the same empty frontier created by New
 // while retaining its authenticated tables, limits, diagnostic policy, and
 // arena capacities. Reset is deliberately unavailable during an active
@@ -2066,6 +2089,9 @@ func (c *Core) Reset() error {
 	if c.classificationPhase == math.MaxUint64 {
 		return errors.New("parser-core phase zero: classification phase overflow")
 	}
+	if c.resetGeneration == math.MaxUint64 {
+		return errors.New("parser-core phase zero: reset generation overflow")
+	}
 	if c.dropCohortEpoch == math.MaxUint64 {
 		return errors.New("parser-core phase zero: drop-cohort epoch overflow")
 	}
@@ -2073,6 +2099,7 @@ func (c *Core) Reset() error {
 		return err
 	}
 	c.classificationPhase++
+	c.resetGeneration++
 	if err := c.advanceDropCohortEpoch(); err != nil {
 		return err
 	}
@@ -2230,16 +2257,31 @@ func (c *Core) SetPhaseCheckpoint(checkpoint CheckpointID) error {
 }
 
 // SetPhaseExternalTokenScannerCheckpoints binds one election to its exact
-// scanner states. It leaves no exact token proof when either identity fails.
+// scanner states. Validation is atomic. A changed pair advances boundary
+// authentication even when its end checkpoint is unchanged.
 func (c *Core) SetPhaseExternalTokenScannerCheckpoints(start, end CheckpointID) error {
-	if err := c.SetPhaseCheckpoint(end); err != nil {
-		return err
+	if len(c.transactions) != 0 {
+		return errors.New("parser-core phase zero: set checkpoint during active transaction")
+	}
+	if end != 0 {
+		if _, ok := c.checkpoints.record(end); !ok {
+			return errors.New("parser-core phase zero: unknown checkpoint identity")
+		}
 	}
 	if start != 0 {
 		if _, ok := c.checkpoints.record(start); !ok {
 			return errors.New("parser-core phase zero: unknown external token start checkpoint identity")
 		}
 	}
+	if c.checkpoint == end && c.externalTokenScannerExact &&
+		c.externalTokenScannerStart == start && c.externalTokenScannerEnd == end {
+		return nil
+	}
+	if c.classificationPhase == math.MaxUint64 {
+		return errors.New("parser-core phase zero: classification phase overflow")
+	}
+	c.classificationPhase++
+	c.checkpoint = end
 	c.externalTokenScannerStart = start
 	c.externalTokenScannerEnd = end
 	c.externalTokenScannerExact = true
@@ -2357,6 +2399,25 @@ func (c *Core) CheckpointReceiptOwned(owner SchedulerTransactionToken, id Checkp
 		return 0, [32]byte{}, false
 	}
 	return c.checkpoints.receipt(id)
+}
+
+// CopyCheckpointBytes copies one exact serialized checkpoint into dst. It
+// allows reads during transactions, reuses dst capacity, and returns no
+// retained interner storage to the caller.
+func (c *Core) CopyCheckpointBytes(id CheckpointID, dst []byte) ([]byte, bool) {
+	if c == nil {
+		return nil, false
+	}
+	return c.checkpoints.copyBytes(id, dst)
+}
+
+// CopyCheckpointBytesOwned copies one checkpoint under the active scheduler
+// owner. It follows CheckpointReceiptOwned's stale-owner failure contract.
+func (c *Core) CopyCheckpointBytesOwned(owner SchedulerTransactionToken, id CheckpointID, dst []byte) ([]byte, bool) {
+	if c == nil || c.validateSchedulerTransaction(owner) != nil {
+		return nil, false
+	}
+	return c.checkpoints.copyBytes(id, dst)
 }
 
 // CheckpointInternerStats reports bounded logical scanner-state retention.

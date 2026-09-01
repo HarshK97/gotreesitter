@@ -434,7 +434,7 @@ func TestDiagnosticParserCoreCheckpointCompactLayoutsAMD64(t *testing.T) {
 	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 224 {
 		t.Fatalf("scheduler header size=%d, want 224", got)
 	}
-	if got := unsafe.Sizeof(diagnosticParserCorePhaseHead{}); got != 12 {
-		t.Fatalf("canonical phase key size=%d, want 12", got)
+	if got := unsafe.Sizeof(diagnosticParserCorePhaseHead{}); got != 24 {
+		t.Fatalf("canonical phase key size=%d, want 24", got)
 	}
 }

@@ -778,11 +778,20 @@ func TestExternalTokenScannerCheckpointValidation(t *testing.T) {
 	if !core.externalTokenScannerExact {
 		t.Fatal("exact token checkpoint pair was not retained")
 	}
+	phase := core.classificationPhase
 	if err := core.SetPhaseExternalTokenScannerCheckpoints(known, CheckpointID(99)); err == nil {
 		t.Fatal("unknown end checkpoint was accepted after exact proof")
 	}
-	if core.externalTokenScannerExact {
-		t.Fatal("rejected token checkpoint pair retained stale exact proof")
+	if !core.externalTokenScannerExact || core.externalTokenScannerStart != known ||
+		core.externalTokenScannerEnd != known || core.classificationPhase != phase {
+		t.Fatal("rejected token checkpoint pair changed the prior exact proof")
+	}
+	if err := core.SetPhaseExternalTokenScannerCheckpoints(CheckpointID(99), known); err == nil {
+		t.Fatal("unknown start checkpoint was accepted after exact proof")
+	}
+	if !core.externalTokenScannerExact || core.externalTokenScannerStart != known ||
+		core.externalTokenScannerEnd != known || core.classificationPhase != phase {
+		t.Fatal("rejected token start checkpoint changed the prior exact proof")
 	}
 	if err := core.SetPhaseExternalTokenScannerCheckpoints(known, known); err != nil {
 		t.Fatal(err)
@@ -798,6 +807,38 @@ func TestExternalTokenScannerCheckpointValidation(t *testing.T) {
 	}
 	if core.externalTokenScannerExact {
 		t.Fatal("frontier advance retained a stale token checkpoint pair")
+	}
+}
+
+func TestExternalTokenScannerCheckpointStartChangeInvalidatesBoundary(t *testing.T) {
+	core := newTinyCoreWithLimits(t, Limits{})
+	firstStart := mustInternCheckpoint(t, core, []byte{1})
+	secondStart := mustInternCheckpoint(t, core, []byte{2})
+	end := mustInternCheckpoint(t, core, []byte{3})
+	if err := core.SetPhaseExternalTokenScannerCheckpoints(firstStart, end); err != nil {
+		t.Fatal(err)
+	}
+	head, err := core.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	classified, err := core.ClassifyBoundary(head, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := core.AuthenticationGeneration()
+	if err := core.SetPhaseExternalTokenScannerCheckpoints(secondStart, end); err != nil {
+		t.Fatal(err)
+	}
+	if core.AuthenticationGeneration() <= generation {
+		t.Fatalf("scanner start change did not advance authentication: before=%d after=%d", generation, core.AuthenticationGeneration())
+	}
+	_, start, gotEnd, exact := core.PhaseScannerCheckpoints()
+	if !exact || start != secondStart || gotEnd != end {
+		t.Fatalf("scanner pair=(%d,%d,%t), want (%d,%d,true)", start, gotEnd, exact, secondStart, end)
+	}
+	if err := core.validateClassification(classified); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("old boundary validation error=%v, want stale", err)
 	}
 }
 

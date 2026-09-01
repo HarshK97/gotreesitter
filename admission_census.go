@@ -518,7 +518,7 @@ func admissionCensusStopDecline(scheduler *diagnosticParserCoreGenericScheduler)
 			if scheduler.headers[index].isRecoveryLineage() {
 				marked++
 			}
-			if scheduler.headers[index].s3Region != nil {
+			if scheduler.headers[index].recoveryRegion() != nil {
 				openRegions++
 			}
 		}

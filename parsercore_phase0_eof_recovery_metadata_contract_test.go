@@ -357,9 +357,9 @@ func newG4EOFFixture(t *testing.T, spec g4EOFFixtureSpec) *g4EOFFixture {
 	scheduler.options.materializationSource = spec.source
 	scheduler.options.materializationContextSet = true
 	if spec.openS3Region {
-		scheduler.headers[1].s3Region = &diagnosticParserCoreS3Region{
+		scheduler.headers[1].openRecoveryRegion(&diagnosticParserCoreS3Region{
 			state: recoveryFinalState, startByte: 0, endByte: sourceLength,
-		}
+		})
 	}
 	parser := NewParser(language)
 	runner := &parserCoreFreshFullRunner{
